@@ -291,6 +291,7 @@
       "class": "product_detail",
       "path": "/profiles/detail/?slug=andreessen-horowitz&id=5bb7bec0ca00a5212c486ec2&name=Andreessen+Horowitz",
       "source": "api_profiles_detail",
+      "protected_record_handoff": true,
       "required_text": ["ENTITY PROFILE", "Andreessen Horowitz", "Verified in SWFI records"]
     },
     {
@@ -299,6 +300,7 @@
       "class": "product_detail",
       "path": "/transactions/detail/?id=6a2c168b43e7f69d0cd0c923&title=ChatSee.AI+Inc",
       "source": "api_transactions_detail",
+      "protected_record_handoff": true,
       "required_text": ["TRANSACTION DETAILS", "ChatSee.AI Inc", "Buyer Entities", "Verified in SWFI records"]
     },
     {
@@ -307,6 +309,7 @@
       "class": "product_detail",
       "path": "/mandates/detail/?id=68b6f675576df8efb3fdb766&title=ADIA+Hones+in+on+US+Private+Equity+and+Pacing+for+2025",
       "source": "api_compass_detail",
+      "protected_record_handoff": true,
       "required_text": ["COMPASS / RFP DETAIL", "ADIA Hones in on US Private Equity", "Verified in SWFI records"]
     },
     {
@@ -315,6 +318,7 @@
       "class": "product_detail",
       "path": "/people/detail/?id=6a3117c8596879824a782b67&name=Srinivasan+Kesavan",
       "source": "api_people_detail",
+      "protected_record_handoff": true,
       "required_text": ["PERSON DETAIL", "Srinivasan Kesavan", "Verified in SWFI records"]
     },
     {

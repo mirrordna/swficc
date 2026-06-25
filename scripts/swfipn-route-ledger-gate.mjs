@@ -192,6 +192,17 @@ async function inspectRoute(context, route, ledger) {
     selects: [],
   };
   try {
+    if (route.protected_record_handoff && !runAuthCheck) {
+      const response = await context.request.get(urlFor(route.path), { maxRedirects: 0, timeout: routeTimeoutMs });
+      result.http_status = response.status();
+      result.final_url = response.headers().location || "";
+      if (![301, 302, 303, 307, 308].includes(response.status())) result.failures.push(`expected_auth_redirect_got_${response.status()}`);
+      if (!isCanonicalSwfiHandoffUrl(result.final_url)) result.failures.push(`noncanonical_auth_handoff:${result.final_url || "missing"}`);
+      result.body_first = ["Protected record handoff verified against SWFI-owned sign-in."];
+      result.ok = result.failures.length === 0;
+      return result;
+    }
+
     const response = await page.goto(urlFor(route.path), { waitUntil: "domcontentloaded", timeout: routeTimeoutMs });
     result.http_status = response?.status() || null;
     result.final_url = page.url();

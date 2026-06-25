@@ -19,7 +19,7 @@ import { appHref, isSwfiPlatformRecordHref, selfContainedHref, sourceProvenanceH
 import { legacyPostId, mandateDetailHref, personDetailHref, profileDetailHref, researchDetailHref, sourceRecordId, transactionDetailHref } from "@/lib/detailRoutes";
 import SwfiBrandHeader from "@/components/SwfiBrandHeader";
 
-type Kind = "profiles" | "people" | "transactions" | "deals" | "allocators" | "comparisons" | "mandates" | "research" | "intelligence" | "search";
+type Kind = "profiles" | "people" | "transactions" | "deals" | "allocators" | "comparisons" | "mandates" | "alerts" | "research" | "intelligence" | "search";
 type Row = Record<string, unknown>;
 type CellLink = { label: string; href?: string; sourceHref?: string };
 type Cell = string | { label: string; href?: string; sourceHref?: string; citationText?: string; links?: CellLink[] };
@@ -34,6 +34,7 @@ const pageLinks = [
   ["Active Allocators", "/allocators"],
   ["Comparisons", "/comparisons"],
   ["RFPs", "/mandates"],
+  ["Alerts", "/alerts"],
   ["Reports", "/reports"],
   ["Intelligence", "/intelligence"],
   ["Search", "/search"],
@@ -46,6 +47,7 @@ const routeByKind: Record<Kind, string> = {
   allocators: "/allocators",
   comparisons: "/comparisons",
   mandates: "/mandates",
+  alerts: "/alerts",
   research: "/research",
   intelligence: "/intelligence",
   search: "/search",
@@ -86,6 +88,11 @@ const CONFIG: Record<Kind, { title: string; endpoint: string; columns: string[];
     title: "RFPs / Mandates",
     endpoint: "/api/live-opportunities/v1",
     columns: ["Title", "Institution", "Strategy", "Deadline", "Citation"],
+  },
+  alerts: {
+    title: "Alerts",
+    endpoint: "",
+    columns: ["Alert", "Type", "Institution", "Date", "Citation"],
   },
   research: {
     title: "Research / News",
@@ -133,7 +140,10 @@ function rowCells(kind: Kind, row: Row): Cell[] {
     ];
   }
   if (kind === "mandates") return [mandateCell(row), text(row.institution), text(row.strategy || row.asset_class_or_strategy), text(row.deadline || row.due_at), citation(href, "/mandates/")];
-  if (kind === "research" || kind === "intelligence") return [researchCell(row), text(row.source), text(row.published_at || row.date), citation(href || text(row.url || row.source_url), "/intelligence/")];
+  if (kind === "research" || kind === "intelligence") {
+    const researchHref = researchSourceHref(row);
+    return [researchCell(row), text(row.source), text(row.published_at || row.date), citation(researchHref, "/intelligence/")];
+  }
   if (kind === "search") return [text(row.title || row.name), linked(text(row.institution || row.name), href, "/search/"), text(row.sector), disclosedMoney(row.amount_display || row.capital_display || row.amount || row.capital || row.value), citation(href, "/search/")];
   return [];
 }
@@ -230,6 +240,13 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
         return { main: `/api/allocator-activity/v1?days=90&limit=${serverRowLimit}&page=${serverPageIndex + 1}${allocatorQuery}&sort=${encodeURIComponent(allocatorSort)}&direction=${serverSortDir}` };
       }
       if (kind === "mandates") return { main: `/api/live-opportunities/v1?limit=${serverRowLimit}&page=${serverPageIndex + 1}` };
+      if (kind === "alerts") {
+        return {
+          deals: "/api/recent-transactions/v1?days=30&limit=100&page=1",
+          mandates: "/api/live-opportunities/v1?limit=100&page=1",
+          allocators: "/api/allocator-activity/v1?days=90&limit=100&sort=deal_count&direction=desc",
+        };
+      }
       if (kind === "research" || kind === "intelligence") {
         const newsQuery = serverFilterTerm ? `&q=${encodeURIComponent(serverFilterTerm)}` : "";
         return { main: `/api/source-intelligence/news/v1?limit=${serverRowLimit}&page=${serverPageIndex + 1}${newsQuery}` };
@@ -308,6 +325,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
   const sourceRows = useMemo(() => {
     if (isLoading) return [];
     if (kind === "search") return searchRowsFromPackets(packets);
+    if (kind === "alerts") return alertsRowsFromPackets(packets);
     if (!isFact(packet)) return [];
     const packetRows = rows(packet);
     const scopedRows = kind === "deals" && selectedDealEntityTypes.length
@@ -732,6 +750,51 @@ function searchRowsFromPackets(packets: Record<string, Packet>): Cell[][] {
   return results;
 }
 
+function alertsRowsFromPackets(packets: Record<string, Packet>): Cell[][] {
+  const results: Cell[][] = [];
+
+  if (isFact(packets.deals)) {
+    rows(packets.deals).forEach((row) => {
+      const href = sourceHref(row);
+      results.push([
+        transactionCell(row),
+        "New deals",
+        entityListCell(row, "buyer"),
+        text(row.closed_at || row.announced_at || row.activity_date || row.date),
+        citation(href, "/transactions/"),
+      ]);
+    });
+  }
+
+  if (isFact(packets.mandates)) {
+    rows(packets.mandates).forEach((row) => {
+      const href = sourceHref(row);
+      results.push([
+        mandateCell(row),
+        "New mandates",
+        text(row.institution),
+        text(row.deadline || row.due_at || row.relevant_date),
+        citation(href, "/mandates/"),
+      ]);
+    });
+  }
+
+  if (isFact(packets.allocators)) {
+    rows(packets.allocators).forEach((row) => {
+      const href = sourceHref(row);
+      results.push([
+        allocatorProfileCell(row),
+        "Investor activity",
+        compactParts([row.country, row.region]),
+        text(row.latest_transaction_date || row.most_recent_activity_date || row.last_transaction_date),
+        citation(href, "/allocators/"),
+      ]);
+    });
+  }
+
+  return results;
+}
+
 function compactParts(values: unknown[]): string {
   const parts = values
     .map((value) => text(value, ""))
@@ -771,12 +834,20 @@ function sourceHref(row: Row): string | undefined {
   return undefined;
 }
 
+function researchSourceHref(row: Row): string | undefined {
+  const explicit = sourceHref(row);
+  if (explicit) return explicit;
+  const legacy = text(row.legacy_post || row.legacy_post_id || row.post_id || row.wordpress_id, "");
+  if (/^\d+$/.test(legacy)) return `https://www.swfi.com/?p=${encodeURIComponent(legacy)}`;
+  return undefined;
+}
+
 function linked(label: string, href?: string, fallback = "/"): Cell {
   return href ? { label, href: productHref(href, fallback), sourceHref: sourceProvenanceHref(href) } : label;
 }
 
 function researchCell(row: Row): Cell {
-  const provenance = sourceHref(row);
+  const provenance = researchSourceHref(row);
   return {
     label: text(row.title || row.name),
     href: researchDetailHref(row, provenance),
@@ -987,6 +1058,15 @@ function totalCount(kind: Kind, packet: Packet | undefined, packets: Record<stri
       if (!isFact(item)) return sum;
       const value = packetNumber(item, ["count"]);
       return sum + (value ?? rows(item, key === "institutions" ? "results" : "rows").length);
+    }, 0);
+    return Math.max(total, fallback);
+  }
+  if (kind === "alerts") {
+    const total = ["deals", "mandates", "allocators"].reduce((sum, key) => {
+      const item = packets[key];
+      if (!isFact(item)) return sum;
+      const value = packetNumber(item, ["count", "row_count"]);
+      return sum + (value ?? rows(item).length);
     }, 0);
     return Math.max(total, fallback);
   }
