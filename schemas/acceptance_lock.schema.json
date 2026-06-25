@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SWFICCAcceptanceLock",
+  "type": "object",
+  "required": [
+    "timestamp",
+    "git_commit",
+    "tested_scope",
+    "loop_budget",
+    "criteria_matrix",
+    "required_receipts",
+    "blockers",
+    "phase_2_non_blockers",
+    "final_verdict"
+  ],
+  "properties": {
+    "timestamp": {
+      "type": "string"
+    },
+    "git_commit": {
+      "type": "string"
+    },
+    "tested_scope": {
+      "type": "string"
+    },
+    "loop_budget": {
+      "type": "object"
+    },
+    "criteria_matrix": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "required_receipts": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "phase_2_non_blockers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "final_verdict": {
+      "enum": [
+        "go",
+        "go_with_caveat",
+        "no_go"
+      ]
+    }
+  }
+}

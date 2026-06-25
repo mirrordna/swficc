@@ -1,0 +1,193 @@
+name: swfi2-self-contained
+
+services:
+  mongo:
+    image: mongo:7.0
+    restart: unless-stopped
+    command: ["mongod", "--bind_ip_all", "--auth"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:?MONGO_INITDB_ROOT_USERNAME is required}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:?MONGO_INITDB_ROOT_PASSWORD is required}
+    volumes:
+      - swfi2_mongo_data:/data/db
+      - swfi2_mongo_config:/data/configdb
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mongosh --quiet --username \"$${MONGO_INITDB_ROOT_USERNAME}\" --password \"$${MONGO_INITDB_ROOT_PASSWORD}\" --authenticationDatabase admin --eval 'db.adminCommand({ ping: 1 }).ok' | grep 1",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  swfi2-sync-init:
+    build:
+      context: ${SWFI2_BACKEND_CONTEXT:-../../../SWFI2.0-final}
+      dockerfile: Dockerfile
+    image: swfi2/backend:self-contained
+    restart: "no"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      SWFI_MONGO_URI: ${SWFI_MONGO_URI:?SWFI_MONGO_URI must point at the in-stack mongo service}
+      SWFI_MONGO_DB: ${SWFI_MONGO_DB:-swfi}
+      SWFI_ATLAS_URI: ${SWFI_ATLAS_URI:?SWFI_ATLAS_URI is required for bootstrap sync}
+    command: ["python", "scripts/sync_mongo_stream.py"]
+
+  swfi2-backend:
+    build:
+      context: ${SWFI2_BACKEND_CONTEXT:-../../../SWFI2.0-final}
+      dockerfile: Dockerfile
+    image: swfi2/backend:self-contained
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+      swfi2-sync-init:
+        condition: service_completed_successfully
+    environment:
+      SWFI2_SERVICE_NAME: swfi2-self-contained-backend
+      SWFI2_HOST: 0.0.0.0
+      SWFI2_PORT: 8362
+      SWFI2_FACT_SOURCE: mongo
+      SWFI2_STRICT_BOOT: "1"
+      SWFI2_ALLOW_UNAUTH_LOCAL: "0"
+      SWFI2_MONGO_CUTOVER_GUARD: "1"
+      SWFI_MONGO_DB: ${SWFI_MONGO_DB:-swfi}
+      SWFI_MONGO_URI: ${SWFI_MONGO_URI:?SWFI_MONGO_URI must point at the in-stack mongo service}
+      SWFI2_API_TOKEN: ${SWFI2_API_TOKEN:?SWFI2_API_TOKEN is required}
+    expose:
+      - "8362"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8362/healthz', timeout=5).read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  swfipn-web:
+    build:
+      context: ${SWFIPN_FRONTEND_CONTEXT:-../..}
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_SWFI_BACKEND_URL: same-origin
+        NEXT_PUBLIC_BACKEND_URL: same-origin
+    image: swfi2/web:self-contained
+    restart: unless-stopped
+    depends_on:
+      swfi2-backend:
+        condition: service_healthy
+    environment:
+      SWFIPN_HOST: 0.0.0.0
+      SWFIPN_PORT: 8353
+      SWFIPN_ROOT: /app/out
+      SWFIPN_BACKEND: http://swfi2-backend:8362
+      SWFIPN_BACKEND_TIMEOUT: "75"
+      SWFIPN_BACKEND_TOKEN_USE_KEYCHAIN: "0"
+      SWFIPN_BACKEND_TOKEN: ${SWFIPN_BACKEND_TOKEN:?SWFIPN_BACKEND_TOKEN must match SWFI2_API_TOKEN}
+      SWFIPN_AUTH_USERNAME: ${SWFIPN_AUTH_USERNAME:?SWFIPN_AUTH_USERNAME is required}
+      SWFIPN_AUTH_PASSWORD: ${SWFIPN_AUTH_PASSWORD:?SWFIPN_AUTH_PASSWORD is required}
+      SWFIPN_AUTH_SESSION_SECRET: ${SWFIPN_AUTH_SESSION_SECRET:?SWFIPN_AUTH_SESSION_SECRET is required}
+    expose:
+      - "8353"
+    healthcheck:
+      test: ["CMD", "python", "/app/swfipn-container-healthcheck.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  swfi2-sync:
+    image: swfi2/backend:self-contained
+    profiles: ["sync"]
+    restart: "no"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      SWFI_MONGO_URI: ${SWFI_MONGO_URI:?SWFI_MONGO_URI must point at the in-stack mongo service}
+      SWFI_MONGO_DB: ${SWFI_MONGO_DB:-swfi}
+      SWFI_ATLAS_URI: ${SWFI_ATLAS_URI:?SWFI_ATLAS_URI is required for sync}
+    command: ["python", "scripts/sync_mongo_stream.py"]
+
+  swfi2-sync-loop:
+    image: swfi2/backend:self-contained
+    profiles: ["sync-loop"]
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      SWFI_MONGO_URI: ${SWFI_MONGO_URI:?SWFI_MONGO_URI must point at the in-stack mongo service}
+      SWFI_MONGO_DB: ${SWFI_MONGO_DB:-swfi}
+      SWFI_ATLAS_URI: ${SWFI_ATLAS_URI:?SWFI_ATLAS_URI is required for sync}
+    command:
+      [
+        "sh",
+        "-c",
+        "while true; do python scripts/sync_mongo_stream.py; sleep \"$${SWFI_SYNC_INTERVAL_SECONDS:-900}\"; done",
+      ]
+
+  swfi2-backup:
+    image: mongo:7.0
+    profiles: ["backup"]
+    restart: "no"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      SWFI_MONGO_URI: ${SWFI_MONGO_URI:?SWFI_MONGO_URI must point at the in-stack mongo service}
+    volumes:
+      - swfi2_mongo_backups:/backups
+    command:
+      [
+        "sh",
+        "-c",
+        "mongodump --uri \"$${SWFI_MONGO_URI}\" --archive=\"/backups/swfi-$$(date -u +%Y%m%dT%H%M%SZ).archive\" --gzip",
+      ]
+
+  swfi2-restore:
+    image: mongo:7.0
+    profiles: ["restore"]
+    restart: "no"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      SWFI_MONGO_URI: ${SWFI_MONGO_URI:?SWFI_MONGO_URI must point at the in-stack mongo service}
+      SWFI_RESTORE_ARCHIVE: ${SWFI_RESTORE_ARCHIVE:-}
+    volumes:
+      - swfi2_mongo_backups:/backups
+    command:
+      [
+        "sh",
+        "-c",
+        "test -n \"$${SWFI_RESTORE_ARCHIVE}\" || { echo 'SWFI_RESTORE_ARCHIVE is required for restore profile' >&2; exit 2; }; mongorestore --uri \"$${SWFI_MONGO_URI}\" --archive=\"/backups/$${SWFI_RESTORE_ARCHIVE}\" --gzip --drop",
+      ]
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    depends_on:
+      swfipn-web:
+        condition: service_healthy
+    environment:
+      SWFIPN_DOMAIN: ${SWFIPN_DOMAIN:?SWFIPN_DOMAIN is required}
+      ACME_EMAIL: ${ACME_EMAIL:-admin@activemirror.ai}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - swfi2_caddy_data:/data
+      - swfi2_caddy_config:/config
+
+volumes:
+  swfi2_mongo_data:
+  swfi2_mongo_config:
+  swfi2_mongo_backups:
+  swfi2_caddy_data:
+  swfi2_caddy_config:

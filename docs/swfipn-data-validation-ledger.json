@@ -1,0 +1,162 @@
+{
+  "schema_version": "swfipn.data_validation_ledger.v1",
+  "surface": "/swficc",
+  "fact_rail": "Mongo/backend SWFI records",
+  "provenance_rail": "SWFI.com source URLs",
+  "currency_rule": "Display monetary values in the currency returned by the SWFI record; do not synthesize conversions. AUM ranking rows must include currency and as-of date when disclosed by SWFI.",
+  "freshness_rules": {
+    "live": "Fetched from same-origin backend at render time with no-store client fetches.",
+    "static": "Source-parity brand/page copy in the repository; not used for dashboard facts.",
+    "blocked": "Not accepted until an approved source contract or endpoint exists."
+  },
+  "modules": [
+    {
+      "id": "dashboard_total_institutions",
+      "label": "Total Institutions Tracked",
+      "frontend_routes": ["/"],
+      "endpoint": "/api/swfi/dashboard-metrics/v1",
+      "data_source": "SWFI production Mongo mirror entity records",
+      "source_collections": ["swfi.entities"],
+      "query_rule": "Read dashboard metrics card `institutions` from the backend metrics packet.",
+      "calculation_rule": "Backend count of approved production entity records.",
+      "freshness": "live",
+      "duplicate_rule": "Entity count is unique by backend entity record.",
+      "empty_state": "Render Not disclosed by SWFI.com; do not infer from frontend constants.",
+      "approved_business_logic": "Card value must be returned as a factual SWFI packet."
+    },
+    {
+      "id": "active_allocators",
+      "label": "Active Allocators / Top Active Investors",
+      "frontend_routes": ["/", "/allocators/"],
+      "endpoint": "/api/allocator-activity/v1?days=90&limit=25&page=1&sort=deal_count&direction=desc",
+      "data_source": "Completed SWFI transaction rows grouped by buyer/acquirer entity.",
+      "source_collections": ["swfi.transactions", "swfi.entities"],
+      "query_rule": "Use completed transactions in the selected 90-day window; derive rankings from buyer/acquirer side only.",
+      "calculation_rule": "Group by buyer/acquirer entity; count deals; sum disclosed deal values; keep latest transaction date.",
+      "sort_rule": ["deal_count desc", "total_deal_value desc", "latest_transaction_date desc"],
+      "freshness": "live",
+      "duplicate_rule": "Transactions may count for multiple buyers only when the source row lists multiple buyer/acquirer entities.",
+      "empty_state": "Render Not disclosed by SWFI.com or an empty table; never show historical out-of-window rows as active.",
+      "approved_business_logic": "The BDO 2024 issue remains blocked by requiring completed buyer/acquirer transactions inside the selected window."
+    },
+    {
+      "id": "recent_transactions",
+      "label": "Recent Transactions / Newest Transactions / Recent Deals",
+      "frontend_routes": ["/", "/transactions/", "/deals/"],
+      "endpoint": "/api/recent-transactions/v1?days=30&limit=25&page=1",
+      "data_source": "SWFI transaction records.",
+      "source_collections": ["swfi.transactions"],
+      "query_rule": "Use transaction activity date within the selected period; expose buyer/acquirer and source URL for internal routing.",
+      "calculation_rule": "Sort by transaction activity date descending. Deal value displays only when disclosed by SWFI.",
+      "sort_rule": ["activity_date desc"],
+      "freshness": "live",
+      "duplicate_rule": "A transaction appears once per transaction record in transaction/deal lists.",
+      "empty_state": "Render Not disclosed by SWFI.com or an empty table when no factual rows are available.",
+      "approved_business_logic": "Rows must not appear merely because a non-business timestamp changed."
+    },
+    {
+      "id": "live_rfps",
+      "label": "Live RFPs / Mandates / Recently Fundraising",
+      "frontend_routes": ["/", "/mandates/"],
+      "endpoint": "/api/live-opportunities/v1?limit=25&page=1",
+      "data_source": "SWFI Compass opportunity, RFP, and mandate records.",
+      "source_collections": ["swfi.compass"],
+      "query_rule": "Return open Compass rows with due date on or after the current date.",
+      "calculation_rule": "Count and list open RFP/mandate rows; display disclosed deadline, strategy, region, and internal detail route.",
+      "sort_rule": ["deadline asc", "posted_at desc"],
+      "freshness": "live",
+      "duplicate_rule": "One row per Compass source record.",
+      "empty_state": "Render Not disclosed by SWFI.com or an empty table.",
+      "approved_business_logic": "Expired mandates must not count as live."
+    },
+    {
+      "id": "sector_market_activity",
+      "label": "Market Activity / Sector Flow",
+      "frontend_routes": ["/", "/reports/"],
+      "endpoint": "/api/sector-flows/v1?days=365",
+      "data_source": "SWFI transaction rows grouped by sector, region, and industry.",
+      "source_collections": ["swfi.transactions"],
+      "query_rule": "Use transaction rows in the selected 365-day activity window grouped by normalized sector fields.",
+      "calculation_rule": "Count rows and sum disclosed capital by facet; undisclosed values remain Not disclosed by SWFI.com.",
+      "sort_rule": ["count desc", "capital_deployed desc"],
+      "freshness": "live",
+      "duplicate_rule": "A transaction may appear in one sector facet and one region facet; cross-category duplication is intentional and documented.",
+      "empty_state": "Render Not disclosed by SWFI.com rather than illustrative market-flow values.",
+      "approved_business_logic": "Do not generate sector flows from report copy or LLM summaries."
+    },
+    {
+      "id": "compare_entities",
+      "label": "Compare Entities",
+      "frontend_routes": ["/comparisons/"],
+      "endpoint": "/api/source-data/search/v1?collection=entities&limit=25&page=1",
+      "data_source": "Canonical SWFI entity/profile records.",
+      "source_collections": ["swfi.entities", "swfi.entitiesAUM"],
+      "query_rule": "Use the same canonical entity/profile search packet used by profiles.",
+      "calculation_rule": "Compare disclosed AUM, country, region, entity type, and profile detail fields from canonical profile packets.",
+      "sort_rule": ["entity name asc by default; user-selected table sort thereafter"],
+      "freshness": "live",
+      "duplicate_rule": "One comparison row per entity record.",
+      "empty_state": "Render Not disclosed by SWFI.com for unavailable profile fields.",
+      "approved_business_logic": "Compare rows must not use a separate seed or demo-only entity list."
+    },
+    {
+      "id": "aum_rankings",
+      "label": "AUM Rankings",
+      "frontend_routes": ["/profiles/", "/reports/"],
+      "endpoint": "/v1/swfi/top20?limit=200",
+      "data_source": "SWFI entity/AUM records.",
+      "source_collections": ["swfi.entities", "swfi.entitiesAUM"],
+      "query_rule": "Return ranked entity rows with disclosed assets/AUM values.",
+      "calculation_rule": "Sort by numeric AUM/assets descending. Display currency and as-of date when disclosed by SWFI.",
+      "sort_rule": ["aum desc"],
+      "freshness": "live",
+      "duplicate_rule": "One ranking row per entity.",
+      "empty_state": "Render Not disclosed by SWFI.com when AUM or as-of date is not disclosed.",
+      "approved_business_logic": "Do not infer AUM from unrelated profile text or generated summaries."
+    },
+    {
+      "id": "source_intelligence_news",
+      "label": "Source Intelligence / News",
+      "frontend_routes": ["/", "/intelligence/", "/research/"],
+      "endpoint": "/api/source-intelligence/news/v1?limit=25&page=1",
+      "data_source": "SWFI source intelligence and legacy CMS article records.",
+      "source_collections": ["swfi.news", "swfi.cms_articles"],
+      "query_rule": "Return SWFI article rows with title, source URL, and legacy/CMS identifier when disclosed by SWFI.",
+      "calculation_rule": "Display article facts exactly as returned by the backend packet; legacy source URLs route to SWFIPN research detail pages for preview.",
+      "sort_rule": ["published_at desc", "source_record_id desc"],
+      "freshness": "live",
+      "duplicate_rule": "One row per SWFI article/source record.",
+      "empty_state": "Render an empty intelligence table; do not generate article headlines or article dates.",
+      "approved_business_logic": "No generated, inferred, or fallback article facts may appear as source-backed intelligence."
+    },
+    {
+      "id": "search",
+      "label": "Smart Search",
+      "frontend_routes": ["/search/"],
+      "endpoint": "/api/v1/public/search?q=Real%20Estate&limit=100",
+      "data_source": "SWFI public search plus source-backed people and transaction packets.",
+      "source_collections": ["swfi.entities", "swfi.people", "swfi.transactions"],
+      "query_rule": "Use the submitted query against approved SWFI search/source endpoints.",
+      "calculation_rule": "Merge institution, people, and strategy result sets for display; route records internally where possible.",
+      "freshness": "live",
+      "duplicate_rule": "The same text query may return different record classes; cross-class duplication is intentional.",
+      "empty_state": "Show a clean empty/search prompt state.",
+      "approved_business_logic": "No public-search substitute may override SWFI source packets."
+    }
+  ],
+  "blocked_acceptance_items": [],
+  "phase_2_items": [
+    {
+      "id": "analytics_tracking",
+      "criterion": "Basic usage events are captured: dashboard view, module click, row click, login redirect, profile click, and failed link.",
+      "status": "phase_2",
+      "reason": "No approved SWFIPN analytics endpoint or retention policy is currently contracted. Do not add ad-hoc tracking that could capture restricted data."
+    },
+    {
+      "id": "role_permissions",
+      "criterion": "User role permissions are respected for all linked pages.",
+      "status": "phase_2",
+      "reason": "Current demo auth is subscriber-session gating, not a full SWFI role/entitlement matrix."
+    }
+  ]
+}

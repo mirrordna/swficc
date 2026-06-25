@@ -4,7 +4,7 @@
 
 import type { DashboardPayload } from "./types";
 
-const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || "https://institutionalinvestorhub.com";
+const BACKEND = (process.env.NEXT_PUBLIC_BACKEND_URL || "").replace(/\/$/, "");
 
 /** Server-side fetch — direct to backend, forwards cookies */
 export async function fetchDashboard(cookie?: string): Promise<DashboardPayload> {

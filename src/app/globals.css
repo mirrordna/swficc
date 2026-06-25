@@ -5,11 +5,11 @@
   --swfi-blue: #1a5276;
   --swfi-red: #a61c20;
   --swfi-red-dark: #8b1518;
-  --font-sans: var(--font-open-sans), "Open Sans", system-ui, -apple-system, sans-serif;
+  --font-sans: "Open Sans", Arial, system-ui, -apple-system, sans-serif;
 }
 
 @theme inline {
-  --font-sans: var(--font-open-sans);
+  --font-sans: "Open Sans", Arial, system-ui, -apple-system, sans-serif;
 }
 
 body {

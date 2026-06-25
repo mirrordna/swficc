@@ -1,27 +1,35 @@
 "use client";
 
 import type { SnapshotKPI } from "@/lib/types";
+import { selfContainedHref, sourceProvenanceHref } from "@/lib/selfContainedLinks";
 
 export default function KPICards({ kpis }: { kpis: SnapshotKPI[] }) {
   return (
-    <section className="grid grid-cols-4 gap-3.5 max-lg:grid-cols-2" aria-label="Key performance indicators">
-      {kpis.slice(0, 4).map((kpi) => (
+    <section className="border border-gray-300" aria-label="KPI cards">
+      <h2 className="m-0 border-b border-gray-300 px-3 py-2 text-base font-semibold">KPI CARDS</h2>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+      {kpis.slice(0, 4).map((kpi) => {
+        const provenance = sourceProvenanceHref(kpi.href);
+        return (
         <a
           key={kpi.label}
-          href={kpi.href || "#"}
-          className="flex flex-col gap-2 p-[18px] bg-white border border-gray-200 rounded-[10px] shadow-sm no-underline text-inherit hover:border-[#1a5276] hover:shadow-md transition-all"
+          href={selfContainedHref(kpi.href, "/")}
+          data-source-url={provenance}
+          title={provenance ? `Source: ${provenance}` : undefined}
+          className="flex flex-col gap-1 border-r border-gray-300 px-3 py-2 text-inherit no-underline last:border-r-0 hover:bg-gray-50"
         >
-          <span className="text-gray-500 text-[0.68rem] font-bold font-mono uppercase tracking-wider">
+          <span className="text-sm text-black">
             {kpi.label}
           </span>
-          <strong className="text-[1.8rem] leading-none text-[#0a1628] font-extrabold">
+          <strong className="text-xl leading-none text-black">
             {kpi.value}
           </strong>
-          <p className="m-0 text-gray-500 text-[0.78rem] leading-snug">
+          <p className="m-0 text-xs leading-snug text-gray-600">
             {kpi.note}
           </p>
         </a>
-      ))}
+      );})}
+      </div>
     </section>
   );
 }

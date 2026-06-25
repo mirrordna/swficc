@@ -1,16 +1,13 @@
 import type { Metadata } from "next";
-import { Open_Sans } from "next/font/google";
+import StaleCacheGuard from "@/components/StaleCacheGuard";
 import "./globals.css";
 
-const openSans = Open_Sans({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  variable: "--font-open-sans",
-});
-
 export const metadata: Metadata = {
-  title: "SWFI | Dashboard",
-  description: "SWFI dashboard — discover, analyze, and act on institutional capital flows in under 60 seconds.",
+  title: "Sovereign Wealth Fund Institute",
+  description: "SWFI institutional investor intelligence and capital activity dashboard.",
+  icons: {
+    icon: "/swficc/favicon.ico",
+  },
 };
 
 export default function RootLayout({
@@ -19,8 +16,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${openSans.variable} h-full antialiased`}>
+    <html lang="en" className="h-full antialiased">
       <body className="min-h-full flex flex-col bg-[#f5f7fa] text-gray-900 font-sans">
+        <StaleCacheGuard />
         {children}
       </body>
     </html>

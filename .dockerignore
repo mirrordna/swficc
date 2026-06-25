@@ -1,0 +1,11 @@
+.git
+.next
+node_modules
+out
+output
+tmp
+.env*
+*.log
+*.jsonl
+Dockerfile.local
+coverage

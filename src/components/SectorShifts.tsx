@@ -1,17 +1,27 @@
 "use client";
 
 import type { SectorShiftItem } from "@/lib/types";
+import { selfContainedHref, sourceProvenanceHref } from "@/lib/selfContainedLinks";
+import SourceGap from "./SourceGap";
 
 export default function SectorShifts({ shifts }: { shifts: SectorShiftItem[] }) {
   return (
-    <article className="bg-white border border-gray-200 rounded-[10px] shadow-sm p-[18px]">
-      <div className="mb-3.5">
-        <p className="m-0 mb-1 text-[#1a5276] text-[0.66rem] font-bold font-mono uppercase tracking-wider">Sector Shifts</p>
-        <h3 className="m-0 text-[1.08rem] font-bold text-gray-900">Sector Shift Heatmap</h3>
+    <article className="border border-gray-300 bg-white p-3">
+      <div className="mb-3">
+        <h3 className="m-0 text-base font-semibold text-black">Sector Shift Heatmap</h3>
       </div>
-      <div className="grid gap-2.5">
-        {shifts.slice(0, 5).map((s) => (
-          <a key={s.sector} href={s.href || "/source-data?collection=transactions"} className="grid gap-1.5 p-3 border border-gray-200 rounded-lg no-underline text-inherit hover:border-[#1a5276] transition-colors">
+      <div className="grid gap-2">
+        {!shifts.length && <SourceGap message="Sector-shift heatmap requires approved SWFI year-over-year transaction series. No illustrative percentages are shown." />}
+        {shifts.slice(0, 5).map((s) => {
+          const provenance = sourceProvenanceHref(s.href);
+          return (
+          <a
+            key={s.sector}
+            href={selfContainedHref(s.href, "/transactions/")}
+            data-source-url={provenance}
+            title={provenance ? `Source: ${provenance}` : undefined}
+            className="grid gap-1.5 border border-gray-300 p-2 no-underline text-inherit hover:bg-gray-50"
+          >
             <strong className="text-gray-900 text-sm">{s.sector}</strong>
             <div className="flex gap-3">
               {s.cells.map((c, i) => (
@@ -23,7 +33,8 @@ export default function SectorShifts({ shifts }: { shifts: SectorShiftItem[] }) 
             </div>
             <p className="m-0 text-gray-500 text-xs italic">{s.insight}</p>
           </a>
-        ))}
+          );
+        })}
       </div>
     </article>
   );
