@@ -30,6 +30,8 @@
     "brd:compass:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ node scripts/swfipn-compass-brd-gate.mjs",
     "brd:people-profile:gate": "node scripts/swfipn-people-profile-brd-gate.mjs",
     "brd:people-profile:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ SWFIPN_BACKEND_ORIGIN=https://swfipn.activemirror.ai node scripts/swfipn-people-profile-brd-gate.mjs",
+    "brd:people-enrichment:gate": "node scripts/swfipn-people-enrichment-demo-gate.mjs",
+    "brd:people-enrichment:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ node scripts/swfipn-people-enrichment-demo-gate.mjs",
     "brd:section-visualization:gate": "node scripts/swfipn-section-visualization-brd-gate.mjs",
     "brd:section-visualization:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ node scripts/swfipn-section-visualization-brd-gate.mjs",
     "brd:aggregates:gate": "node scripts/swfipn-aggregates-brd-gate.mjs",
@@ -136,7 +138,9 @@
     "route-parity:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ SWFIPN_BACKEND_ORIGIN=https://swfipn.activemirror.ai node scripts/swfipn-route-parity-gate.mjs",
     "route-parity:statistical": "node scripts/swfipn-route-parity-statistical-gate.mjs",
     "route-parity:statistical:public": "SWFIPN_BACKEND_ORIGIN=https://swfipn.activemirror.ai node scripts/swfipn-route-parity-statistical-gate.mjs",
-    "parity:full:public": "npm run universe:map:public && npm run route-parity:gate:public && npm run route-parity:statistical:public"
+    "parity:full:public": "npm run universe:map:public && npm run route-parity:gate:public && npm run route-parity:statistical:public",
+    "demo:smoke": "node scripts/swfipn-pre-demo-smoke.mjs",
+    "demo:smoke:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ SWFIPN_BACKEND_ORIGIN=https://swfipn.activemirror.ai node scripts/swfipn-pre-demo-smoke.mjs"
   },
   "dependencies": {
     "gsap": "^3.15.0",
