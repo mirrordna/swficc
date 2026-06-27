@@ -129,7 +129,13 @@
     "acceptance-lock": "python3 tools/loop-budget/swficc_acceptance_lock.py --repo . --out output/swfipn-acceptance-lock-latest.json",
     "loop-collapse": "python3 tools/loop-budget/loop_collapse_detector.py --repo . --out output/swfipn-loop-collapse-latest.json",
     "universe:map": "node scripts/swfipn-full-universe-mapping-gate.mjs",
-    "universe:map:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ SWFIPN_BACKEND_ORIGIN=https://swfipn.activemirror.ai node scripts/swfipn-full-universe-mapping-gate.mjs"
+    "universe:map:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ SWFIPN_BACKEND_ORIGIN=https://swfipn.activemirror.ai node scripts/swfipn-full-universe-mapping-gate.mjs",
+    "universe:map:verify": "node scripts/swfipn-full-universe-map-gate.mjs",
+    "universe:map:verify:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ SWFIPN_BACKEND_ORIGIN=https://swfipn.activemirror.ai node scripts/swfipn-full-universe-map-gate.mjs",
+    "route-parity:gate": "node scripts/swfipn-route-parity-gate.mjs",
+    "route-parity:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ SWFIPN_BACKEND_ORIGIN=https://swfipn.activemirror.ai node scripts/swfipn-route-parity-gate.mjs",
+    "route-parity:statistical": "node scripts/swfipn-route-parity-statistical-gate.mjs",
+    "route-parity:statistical:public": "SWFIPN_BACKEND_ORIGIN=https://swfipn.activemirror.ai node scripts/swfipn-route-parity-statistical-gate.mjs"
   },
   "dependencies": {
     "gsap": "^3.15.0",
