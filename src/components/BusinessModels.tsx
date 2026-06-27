@@ -32,8 +32,8 @@ export default function BusinessModels({ models }: { models: BusinessModelItem[]
                   <td className="border border-gray-300 px-2 py-1.5">
                     <a
                       href={selfContainedHref(m.href, "/transactions/")}
-                      data-source-url={provenance}
-                      title={provenance ? `Source: ${provenance}` : undefined}
+                      data-source-state={provenance ? "on-file" : undefined}
+                      title={provenance ? "Source on file" : undefined}
                       className="text-black no-underline hover:underline"
                     >
                       {m.sector}

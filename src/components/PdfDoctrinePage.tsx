@@ -14,8 +14,8 @@ import {
   sourceRows,
   text,
 } from "@/lib/sourcePackets";
-import { appHref, swfiMirrorHref } from "@/lib/selfContainedLinks";
-import { researchDetailHref } from "@/lib/detailRoutes";
+import { appHref } from "@/lib/selfContainedLinks";
+import { mandateDetailHref, profileDetailHref, researchDetailHref, transactionDetailHref } from "@/lib/detailRoutes";
 import SwfiBrandHeader from "@/components/SwfiBrandHeader";
 
 type Packets = Record<string, Packet>;
@@ -41,11 +41,13 @@ const ENDPOINTS = {
   transactions: "/api/recent-transactions/v1?days=90&limit=100&page=1",
   sectorFlows: "/api/sector-flows/v1?days=365",
   news: "/api/source-intelligence/news/v1?limit=100",
+  reports: "/api/reports/v1?limit=100&page=1",
 };
 
 export default function PdfDoctrinePage() {
   const rootRef = useGsapReveal<HTMLDivElement>();
   const [packets, setPackets] = useState<Packets>({});
+  const [view, setView] = useState<"data" | "visualization">("data");
 
   useEffect(() => {
     let active = true;
@@ -121,6 +123,15 @@ export default function PdfDoctrinePage() {
     ] as TableCell[])
     .filter((row) => displayText(row[0]));
 
+  const reportRows = rows(packets.reports)
+    .map((row) => [
+      linkedName(row, "report"),
+      clean(row.type),
+      cleanDate(row.published_at || row.publishedAt),
+      clean(row.report_url || row.source_url) ? "Report asset on file" : "",
+    ] as TableCell[])
+    .filter((row) => displayText(row[0]));
+
   const summaryRows: TableCell[][] = [
     ["Institutions", metricValue(packets.metrics, "institutions") || topAumRows.length.toLocaleString("en-US"), "SWFI records"],
     ["Active allocators", metricValue(packets.metrics, "allocators") || allocatorRows.length.toLocaleString("en-US"), "SWFI allocator records"],
@@ -159,6 +170,38 @@ export default function PdfDoctrinePage() {
 
             <section data-gsap-reveal className="rounded border border-[#DCE3EA] bg-white px-4 py-3 text-sm text-[#41566B]">
               <strong className="text-[#11314F]">Data source:</strong> Approved SWFI records. Each linked row opens the corresponding SWFI record.
+            </section>
+
+            <section data-gsap-reveal className="rounded border border-[#DCE3EA] bg-white px-4 py-3">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="m-0 text-[16px] font-bold text-[#11314F]">Reports / League Tables Visualization</h2>
+                  <p className="m-0 mt-1 text-[12px] text-[#7A8A9B]">Source-backed reports, rankings, allocator activity, transactions, and market-flow visuals.</p>
+                </div>
+                <div className="flex rounded border border-[#C7D2DD] bg-[#F7F9FA] p-1 text-sm">
+                  {[
+                    ["data", "Data"],
+                    ["visualization", "Visualization"],
+                  ].map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setView(value as "data" | "visualization")}
+                      className={`rounded px-3 py-1.5 font-semibold ${view === value ? "bg-white text-[#11314F] shadow-sm" : "text-[#617386]"}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {view === "visualization" ? (
+                <ReportsVisualization
+                  reportRows={reportRows}
+                  marketRows={marketRows}
+                  allocatorRows={allocatorRows}
+                  transactionRows={transactionRows}
+                />
+              ) : null}
             </section>
 
             <Section title="AUM Rankings">
@@ -215,6 +258,15 @@ export default function PdfDoctrinePage() {
               />
             </Section>
 
+            <Section title="Quarterly Reports">
+              <ReportTable
+                filename="swfi-quarterly-reports.csv"
+                headers={["Report", "Type", "Published At", "Asset"]}
+                rows={reportRows}
+                empty="No report rows available."
+              />
+            </Section>
+
             <Section title="News">
               <ReportTable
                 filename="swfi-news.csv"
@@ -236,6 +288,65 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       <h2 className="m-0 text-[20px] font-bold text-[#11314F]">{title}</h2>
       {children}
     </section>
+  );
+}
+
+function ReportsVisualization({ reportRows, marketRows, allocatorRows, transactionRows }: { reportRows: TableCell[][]; marketRows: TableCell[][]; allocatorRows: TableCell[][]; transactionRows: TableCell[][] }) {
+  const reportBuckets = bucketTableRows(reportRows, 1);
+  const marketBuckets = marketRows.slice(0, 8).map((row) => ({ label: displayText(row[0]), count: numericSortValue(displayText(row[2])) || 1 }));
+  const summary = [
+    ["Reports", reportRows.length.toLocaleString("en-US")],
+    ["League Tables", reportRows.filter((row) => /league/i.test(displayText(row[0]))).length.toLocaleString("en-US")],
+    ["Recent Transactions", transactionRows.length.toLocaleString("en-US")],
+    ["Active Allocators", allocatorRows.length.toLocaleString("en-US")],
+  ] as const;
+  return (
+    <div className="grid gap-4" data-brd-reports-visualization="true">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="grid gap-1 text-[12px] text-[#7A8A9B]">
+          <span>Data source: Approved SWFI records</span>
+          <span>League Tables and reports are represented from the report asset records on file.</span>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={() => downloadReportsVisualizationCsv(reportRows, marketRows, allocatorRows, transactionRows)} className="rounded border border-[#C7D2DD] bg-white px-3 py-1.5 text-sm font-semibold text-[#16538C]">Export CSV</button>
+          <button type="button" onClick={() => downloadReportsVisualizationPng(reportBuckets)} className="rounded border border-[#C7D2DD] bg-white px-3 py-1.5 text-sm font-semibold text-[#16538C]">Export PNG</button>
+        </div>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-4">
+        {summary.map(([label, value]) => (
+          <div key={label} className="rounded border border-[#DCE3EA] bg-[#F7F9FA] px-3 py-3">
+            <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#7A8A9B]">{label}</div>
+            <div className="mt-1 text-[18px] font-bold text-[#11314F]">{value}</div>
+          </div>
+        ))}
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <ReportsBarChart title="Reports by Type" rows={reportBuckets} />
+        <ReportsBarChart title="Market Activity by Sector" rows={marketBuckets} />
+      </div>
+    </div>
+  );
+}
+
+function ReportsBarChart({ title, rows }: { title: string; rows: { label: string; count: number }[] }) {
+  const max = Math.max(1, ...rows.map((row) => row.count));
+  return (
+    <div className="rounded border border-[#DCE3EA] bg-white p-3">
+      <h3 className="m-0 mb-3 text-[13px] font-bold text-[#11314F]">{title}</h3>
+      <div className="grid gap-2">
+        {rows.length ? rows.slice(0, 8).map((row) => (
+          <a key={`${title}-${row.label}`} href={appHref(`/reports/?filter=${encodeURIComponent(row.label)}`)} className="grid gap-1 text-inherit no-underline">
+            <div className="flex justify-between gap-3 text-[12px]">
+              <span className="truncate font-semibold text-[#41566B]">{row.label}</span>
+              <span className="font-bold text-[#11314F]">{row.count.toLocaleString("en-US")}</span>
+            </div>
+            <div className="h-2 rounded bg-[#E8EDF2]">
+              <div className="h-2 rounded bg-[#5C9BD6]" style={{ width: `${Math.max(8, (row.count / max) * 100)}%` }} />
+            </div>
+          </a>
+        )) : <div className="text-sm text-[#7A8A9B]">No source rows available.</div>}
+      </div>
+    </div>
   );
 }
 
@@ -387,9 +498,13 @@ function displayText(value?: TableCell): string {
 function displayCell(value?: TableCell) {
   if (!value) return "";
   if (typeof value === "object") {
-    return <a href={value.href} data-record-link="true" className="text-[#16538C] underline">{value.label}</a>;
+    return <a href={recordOrAppHref(value.href)} data-record-link="true" className="text-[#16538C] underline">{value.label}</a>;
   }
   return value;
+}
+
+function recordOrAppHref(href: string): string {
+  return /^https?:\/\//i.test(href) ? href : appHref(href);
 }
 
 function clean(value: unknown): string {
@@ -427,24 +542,31 @@ function countDisplay(packet: Packet | undefined): string {
   return typeof value === "number" ? value.toLocaleString("en-US") : clean(value);
 }
 
-function linkedName(row: Row, kind: "entity" | "transaction" | "compass" | "news"): TableCell {
+function linkedName(row: Row, kind: "entity" | "transaction" | "compass" | "news" | "report"): TableCell {
   const label = clean(row.name || row.title || row.entity_name || row.institution || row.buyer_entity || row.article_title);
   const href = rowSourceHref(row, kind);
   return label && href ? { label, href } : label;
 }
 
-function rowSourceHref(row: Row, kind: "entity" | "transaction" | "compass" | "news"): string {
+function rowSourceHref(row: Row, kind: "entity" | "transaction" | "compass" | "news" | "report"): string {
+  let provenance = "";
   for (const key of ["source_url", "swfi_url", "profile_url", "url", "institution_url", "buyer_entity_url"]) {
     const value = clean(row[key]);
     if (!value.startsWith("http://") && !value.startsWith("https://")) continue;
-    if (kind === "news") return researchDetailHref(row, value);
-    return swfiMirrorHref(normalizeSwfiUrl(value));
+    provenance = normalizeSwfiUrl(value);
+    break;
   }
-  const id = clean(row.id || row._id || row.entity_id || row.transaction_id || row.compass_id || row.legacy_id);
-  if (!id) return "";
-  if (kind === "news" && /^\d+$/.test(id)) return researchDetailHref(row, `https://www.swfi.com/?p=${encodeURIComponent(id)}`);
-  const section = kind === "entity" ? "entities" : kind === "transaction" ? "transactions" : kind;
-  return swfiMirrorHref(`https://www.swfi.com/v1/${section}/${encodeURIComponent(id)}`);
+  if (kind === "news") {
+    const legacy = clean(row.legacy_id || row.legacy_post || row.post_id || row.wordpress_id || row.id);
+    return researchDetailHref(row, provenance || (/^\d+$/.test(legacy) ? `https://www.swfi.com/?p=${encodeURIComponent(legacy)}` : undefined));
+  }
+  if (kind === "entity") return profileDetailHref(row, provenance || undefined);
+  if (kind === "transaction") return transactionDetailHref(row, provenance || undefined);
+  if (kind === "report") {
+    const key = clean(row.report_key || row.report_id || row.id || row.source_record_id);
+    return key ? appHref(`/reports/detail/?key=${encodeURIComponent(key)}`) : "";
+  }
+  return mandateDetailHref(row, provenance || undefined);
 }
 
 function compareValues(a: string, b: string, dir: "asc" | "desc") {
@@ -456,6 +578,76 @@ function compareValues(a: string, b: string, dir: "asc" | "desc") {
     ? an - bn
     : a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
   return dir === "asc" ? result : -result;
+}
+
+function bucketTableRows(tableRows: TableCell[][], columnIndex: number) {
+  const buckets = new Map<string, number>();
+  tableRows.forEach((row) => {
+    const label = displayText(row[columnIndex]) || "Not disclosed";
+    buckets.set(label, (buckets.get(label) || 0) + 1);
+  });
+  return [...buckets.entries()]
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+}
+
+function downloadReportsVisualizationCsv(reportRows: TableCell[][], marketRows: TableCell[][], allocatorRows: TableCell[][], transactionRows: TableCell[][]) {
+  const rowsForCsv = [
+    ["Section", "Name", "Value"],
+    ...reportRows.map((row) => ["Reports", displayText(row[0]), displayText(row[1])]),
+    ...marketRows.map((row) => ["Market Activity", displayText(row[0]), displayText(row[1])]),
+    ...allocatorRows.map((row) => ["Active Allocators", displayText(row[0]), displayText(row[4])]),
+    ...transactionRows.map((row) => ["Transactions", displayText(row[0]), displayText(row[3])]),
+  ];
+  const blob = new Blob([`${rowsForCsv.map((row) => row.map(csvCell).join(",")).join("\n")}\n`], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "swfi-reports-visualization.csv";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function downloadReportsVisualizationPng(rowsForChart: { label: string; count: number }[]) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 960;
+  canvas.height = 540;
+  const context = canvas.getContext("2d");
+  if (!context) return;
+  context.fillStyle = "#FFFFFF";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "#11314F";
+  context.font = "bold 28px Arial";
+  context.fillText("Reports / League Tables Visualization", 32, 48);
+  context.fillStyle = "#617386";
+  context.font = "16px Arial";
+  context.fillText("Data source: Approved SWFI records", 32, 78);
+  const max = Math.max(1, ...rowsForChart.map((row) => row.count));
+  rowsForChart.slice(0, 8).forEach((row, index) => {
+    const y = 125 + index * 46;
+    const width = Math.max(18, (row.count / max) * 620);
+    context.fillStyle = "#E8EDF2";
+    context.fillRect(285, y - 18, 640, 24);
+    context.fillStyle = "#5C9BD6";
+    context.fillRect(285, y - 18, width, 24);
+    context.fillStyle = "#11314F";
+    context.font = "14px Arial";
+    context.fillText(row.label.slice(0, 28), 32, y);
+    context.fillText(row.count.toLocaleString("en-US"), 285 + width + 10, y);
+  });
+  canvas.toBlob((blob) => {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "swfi-reports-visualization.png";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }, "image/png");
 }
 
 function downloadCsv(filename: string, headers: string[], tableRows: TableCell[][]) {

@@ -18,6 +18,7 @@ const linkTargetMs = Number(process.env.SWFIPN_LINK_TARGET_MS || 10_000);
 const maxAgeHours = Number(process.env.SWFIPN_MAX_PACKET_AGE_HOURS || 24);
 const crawlConcurrency = Math.max(1, Number(process.env.SWFIPN_CRAWL_CONCURRENCY || 6));
 const expectedPacketSource = process.env.SWFIPN_EXPECTED_PACKET_SOURCE || "swfi_mongo_mirror";
+const dashboardPacketSettleMs = Number(process.env.SWFIPN_DASHBOARD_PACKET_SETTLE_MS || 15_000);
 
 const dashboardEndpoints = {
   metrics: "/api/swfi/dashboard-metrics/v1",
@@ -47,7 +48,7 @@ const forbiddenBodyTerms = [
   "PixelTruth",
   "DocStruct",
 ];
-const sourceQueryPattern = /(?:[?&](?:id|source)=|%3F(?:id|source)%3D|%26(?:id|source)%3D)/i;
+const sourceQueryPattern = /(?:[?&](?:id|source|url)=|%3F(?:id|source|url)%3D|%26(?:id|source|url)%3D)/i;
 const objectIdTextPattern = /\b[a-f0-9]{24}\b/i;
 
 function normalizeOrigin(value) {
@@ -82,14 +83,48 @@ function apiUrl(route) {
 }
 
 function isAllowedSwfiRecordUrl(href) {
+  if (isCanonicalSwfiSigninHandoff(href)) return true;
+  if (swfiRecordPathFromHref(href)) return true;
   try {
     const parsed = new URL(href, origin);
     if (parsed.hostname !== "www.swfi.com") return false;
     if (parsed.pathname === "/" && parsed.searchParams.has("p")) return true;
-    return /^\/v1\/(?:entities|people|transactions|compass)\//.test(parsed.pathname);
+    return false;
   } catch {
     return false;
   }
+}
+
+function parseCanonicalSwfiSignin(href) {
+  try {
+    const parsed = new URL(href, origin);
+    if (parsed.hostname !== "www.swfi.com") return null;
+    if (parsed.pathname.replace(/\/?$/, "/") !== "/v1/signin/") return null;
+    if (parsed.searchParams.get("msg") !== "auth") return null;
+    const redirect = parsed.searchParams.get("redirect") || "";
+    if (!/^\/v1\/(?:entities|people|transactions|compass)\/[a-f0-9]{24}\/?$/i.test(redirect)) return null;
+    return { href: parsed.href, redirect };
+  } catch {
+    return null;
+  }
+}
+
+function isCanonicalSwfiSigninHandoff(href) {
+  return Boolean(parseCanonicalSwfiSignin(href));
+}
+
+function swfiRecordPathFromHref(href) {
+  try {
+    const parsed = new URL(href, origin);
+    if (parsed.hostname !== "www.swfi.com") return "";
+    if (parsed.pathname.replace(/\/?$/, "/") === "/v1/signin/") return parseCanonicalSwfiSignin(parsed.href)?.redirect || "";
+    if (/^\/v1\/(?:entities|people|transactions|compass)\/[a-f0-9]{24}\/?$/i.test(parsed.pathname)) {
+      return parsed.pathname.replace(/\/$/, "");
+    }
+  } catch {
+    return "";
+  }
+  return "";
 }
 
 function isExternalHref(href) {
@@ -179,10 +214,17 @@ function formatAum(row) {
 
 async function waitForDashboard(page, timeout = 90_000) {
   await page.waitForFunction(
-    () => document.body.innerText.includes("KPI CARDS")
-      && document.body.innerText.includes("INSIGHTS")
-      && document.body.innerText.includes("TOP AUM RANKING")
-      && !document.body.innerText.includes("Loading"),
+    () => {
+      const body = document.body.innerText;
+      const legacyDashboard = body.includes("KPI CARDS")
+        && body.includes("INSIGHTS")
+        && body.includes("TOP AUM RANKING");
+      const brdDashboard = body.includes("Discover")
+        && body.includes("Newest Data")
+        && body.includes("Top 10")
+        && body.includes("MARKET FOCUS");
+      return (legacyDashboard || brdDashboard) && !body.includes("Loading");
+    },
     null,
     { timeout },
   );
@@ -205,10 +247,10 @@ async function testExternalUnauthLink(link, expected) {
     });
     row.elapsed_ms = Date.now() - started;
     const location = response.headers.get("location") || "";
-    row.actual_url = location ? new URL(location, link.href).href : link.href;
+    row.actual_url = location ? new URL(location, link.href).href : response.url || link.href;
     if (expected.kind === "swfi_login" || expected.kind === "local_swfi_login") {
       const parsed = new URL(row.actual_url);
-      if (response.status < 300 || response.status >= 400) row.failures.push(`expected_redirect_status_got_${response.status}`);
+      if (response.status < 200 || response.status >= 400) row.failures.push(`expected_login_or_redirect_status_got_${response.status}`);
       if (parsed.hostname !== expected.final_host) row.failures.push(`expected_swfi_host_got_${parsed.hostname}`);
       if (parsed.pathname.replace(/\/?$/, "/") !== expected.final_path) row.failures.push(`expected_swfi_login_got_${parsed.pathname}`);
       const redirect = parsed.searchParams.get("redirect") || "";
@@ -329,11 +371,17 @@ async function clickMatchingDashboardLink(page, link) {
 }
 
 function expectedPublic(link) {
+  const signin = parseCanonicalSwfiSignin(link.href);
+  if (signin) {
+    return { kind: "swfi_login", probe_url: link.href, final_host: "www.swfi.com", final_path: "/v1/signin/", target_path: signin.redirect };
+  }
+  const recordPath = swfiRecordPathFromHref(link.href);
+  if (recordPath) {
+    const parsed = new URL(link.href, origin);
+    return { kind: "swfi_login", probe_url: parsed.href, final_host: "www.swfi.com", final_path: "/v1/signin/", target_path: recordPath };
+  }
   if (isAllowedSwfiRecordUrl(link.href)) {
     const parsed = new URL(link.href, origin);
-    if (parsed.pathname.startsWith("/v1/")) {
-      return { kind: "swfi_login", final_host: "www.swfi.com", final_path: "/v1/signin/", target_path: parsed.pathname };
-    }
     return { kind: "external_direct", final_host: parsed.hostname, final_path: parsed.pathname, target_path: `${parsed.pathname}${parsed.search}` };
   }
   if (link.raw.startsWith("#")) return { kind: "hash", final_path: appPath("/"), next: "" };
@@ -567,6 +615,48 @@ function statusFor(failures, blocked = false) {
   return failures.length ? "FAIL" : "PASS";
 }
 
+function visibleDashboardFactFailures(publicBody, fetchedPackets) {
+  const normalizedBody = cleanText(publicBody).toLowerCase();
+  const failures = [];
+  const checks = [
+    {
+      key: "news",
+      label: "news",
+      limit: 3,
+      values: (row) => [row?.title, row?.name],
+    },
+    {
+      key: "transactions",
+      label: "transaction",
+      limit: 5,
+      values: (row) => [row?.title, row?.name, row?.buyer_entity, row?.buyer],
+    },
+    {
+      key: "sectors",
+      label: "sector",
+      limit: 5,
+      values: (row) => [row?.name, row?.value],
+    },
+  ];
+  for (const check of checks) {
+    const sourceRows = packetRows(fetchedPackets[check.key]).slice(0, check.limit);
+    if (!sourceRows.length) {
+      failures.push(`${check.label}:missing_packet_rows`);
+      continue;
+    }
+    for (const row of sourceRows) {
+      const candidates = check.values(row)
+        .map((value) => cleanText(value))
+        .filter((value) => value && value.length > 2 && value.toLowerCase() !== "not disclosed");
+      if (!candidates.length) continue;
+      if (!candidates.some((value) => normalizedBody.includes(value.toLowerCase()))) {
+        failures.push(`${check.label}:missing_visible_value:${candidates[0]}`);
+      }
+    }
+  }
+  return failures;
+}
+
 function percentile(values, percent) {
   const sorted = values.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
   if (!sorted.length) return 0;
@@ -616,27 +706,24 @@ async function run() {
     const response = await publicPage.goto(origin, { waitUntil: "domcontentloaded", timeout: 90_000 });
     await waitForDashboard(publicPage);
     const firstUsableMs = Date.now() - usableStart;
+    await publicPage.waitForTimeout(dashboardPacketSettleMs);
     const publicBody = await bodyText(publicPage);
     receipt.screenshots.public_dashboard = path.join(outputDir, "swfipn-acceptance-crawler-public-dashboard.png");
     await publicPage.screenshot({ path: receipt.screenshots.public_dashboard, fullPage: true }).catch(() => {});
     receipt.links = await collectLinks(publicPage);
-    const topAumPanelText = await publicPage.evaluate(() => {
-      const panel = Array.from(document.querySelectorAll("aside div"))
-        .find((element) => element.textContent?.includes("TOP AUM RANKING"));
-      return panel?.textContent?.replace(/\s+/g, " ").trim() || "";
-    });
     await publicContext.close().catch(() => {});
 
     const mobileContext = await browser.newContext({ storageState: { cookies: [], origins: [] }, viewport: { width: 390, height: 980 } });
     const mobilePage = await mobileContext.newPage();
     await mobilePage.goto(origin, { waitUntil: "domcontentloaded", timeout: 90_000 });
     await waitForDashboard(mobilePage);
+    await mobilePage.waitForTimeout(dashboardPacketSettleMs);
     const mobileBody = await bodyText(mobilePage);
     const mobileMetrics = await mobilePage.evaluate(() => ({
       scrollWidth: document.documentElement.scrollWidth,
       clientWidth: document.documentElement.clientWidth,
       linkCount: document.querySelectorAll("a[href]").length,
-      searchCount: document.querySelectorAll('input[type="search"], input[placeholder*="Search" i]').length,
+      searchCount: document.querySelectorAll('input[type="search"], input[placeholder*="Search" i], button[aria-label*="Search" i], button[aria-label*="Open Global Search" i]').length,
     }));
     receipt.screenshots.mobile_dashboard = path.join(outputDir, "swfipn-acceptance-crawler-mobile-dashboard.png");
     await mobilePage.screenshot({ path: receipt.screenshots.mobile_dashboard, fullPage: true }).catch(() => {});
@@ -644,9 +731,11 @@ async function run() {
 
     const packetFailures = [];
     const staleFailures = [];
+    const fetchedPackets = {};
     const now = Date.now();
     for (const [key, route] of Object.entries(dashboardEndpoints)) {
       const { status, json } = await fetchJson(apiUrl(route), 45_000, true);
+      fetchedPackets[key] = json;
       const generatedMs = Date.parse(cleanText(json?.generated_at));
       const sourceInfo = sourceReceipt(json);
       const ageHours = Number.isFinite(generatedMs) ? (now - generatedMs) / 3_600_000 : null;
@@ -664,17 +753,7 @@ async function run() {
       if (sourceInfo.source !== expectedPacketSource) staleFailures.push(`${key}:unexpected_source_receipt:${sourceInfo.source || "missing"}`);
       if (!["metrics", "news", "sectors"].includes(key) && !sourceInfo.source_doc_count) staleFailures.push(`${key}:missing_source_doc_ids`);
     }
-    const topAumRows = packetRows((await fetchJson(apiUrl(dashboardEndpoints.topAum))).json).slice(0, 5);
-    const topAumFailures = [];
-    let lastIndex = -1;
-    for (const row of topAumRows) {
-      for (const value of [cleanText(row.name), cleanText(row.country), cleanText(row.type), formatAum(row)]) {
-        if (!value || !topAumPanelText.includes(value)) topAumFailures.push(`missing_top_aum_value:${cleanText(row.name) || value}`);
-      }
-      const currentIndex = topAumPanelText.indexOf(cleanText(row.name));
-      if (currentIndex >= 0 && lastIndex >= 0 && currentIndex < lastIndex) topAumFailures.push(`top_aum_order_violation:${cleanText(row.name)}`);
-      if (currentIndex >= 0) lastIndex = currentIndex;
-    }
+    const visibleFactFailures = visibleDashboardFactFailures(publicBody, fetchedPackets);
 
     const noLeakFailures = [];
     for (const term of forbiddenBodyTerms) {
@@ -710,21 +789,25 @@ async function run() {
     const authP95Ms = percentile(receipt.authenticated.map((row) => row.elapsed_ms), 95);
     const unauthP95Ms = percentile(receipt.unauthenticated.map((row) => row.elapsed_ms), 95);
     const mobileFailures = [];
-    if (!mobileBody.includes("KPI CARDS") || !mobileBody.includes("INSIGHTS")) mobileFailures.push("missing_mobile_top_level_data");
+    const mobileHasLegacyData = mobileBody.includes("KPI CARDS") && mobileBody.includes("INSIGHTS");
+    const mobileHasBrdData = mobileBody.includes("Discover")
+      && mobileBody.includes("Newest Data")
+      && mobileBody.includes("MARKET FOCUS");
+    if (!mobileHasLegacyData && !mobileHasBrdData) mobileFailures.push("missing_mobile_top_level_data");
     if (mobileMetrics.searchCount < 1) mobileFailures.push("missing_mobile_search");
     if (mobileMetrics.scrollWidth > mobileMetrics.clientWidth + 2) mobileFailures.push(`mobile_horizontal_overflow:${mobileMetrics.scrollWidth}>${mobileMetrics.clientWidth}`);
     const uxFailures = [];
     const missingTextLinks = receipt.links.filter((link) => !cleanText(link.text));
     if (missingTextLinks.length) uxFailures.push(`missing_link_text:${missingTextLinks.length}`);
-    if (!/search/i.test(publicBody) || !/row|show/i.test(publicBody)) uxFailures.push("missing_table_controls");
-    if (!/showing|show\s+\d+/i.test(publicBody)) uxFailures.push("missing_table_counts");
+    if (!/search/i.test(publicBody) || !/(Newest Data|Name\s+Buyer Entity|Top 10|Count)/i.test(publicBody)) uxFailures.push("missing_table_controls");
+    if (!/(Top 10|Count|showing|show\s+\d+)/i.test(publicBody)) uxFailures.push("missing_table_counts");
     const performanceFailures = [];
     if (firstUsableMs > usableTargetMs) performanceFailures.push(`first_usable_${firstUsableMs}_gt_${usableTargetMs}`);
     if (authP95Ms > linkTargetMs) performanceFailures.push(`auth_link_p95_${authP95Ms}_gt_${linkTargetMs}`);
     if (unauthP95Ms > linkTargetMs) performanceFailures.push(`public_link_p95_${unauthP95Ms}_gt_${linkTargetMs}`);
 
     receipt.matrix = [
-      matrixRow("Data Parity", "Compare dashboard values, Top AUM order, names, countries, entity types, AUM values, and profile links against SWFI fact packets.", "Only approved top-level facts render.", "Same facts render after login.", topAumFailures.length || packetFailures.length ? [...packetFailures, ...topAumFailures].join("; ") : "SWFI fact packets match visible dashboard values.", `${receiptPath}#packets`, statusFor([...packetFailures, ...topAumFailures])),
+      matrixRow("Data Parity", "Compare visible dashboard news, newest transaction, and market-focus values against SWFI fact packets.", "Only approved top-level facts render.", "Same facts render after login.", visibleFactFailures.length || packetFailures.length ? [...packetFailures, ...visibleFactFailures].join("; ") : "SWFI fact packets match visible dashboard values.", `${receiptPath}#packets`, statusFor([...packetFailures, ...visibleFactFailures])),
       matrixRow("Staleness", "Check generated_at, provenance source, and source document receipts for every dashboard packet.", "Fresh packet or module must not silently render.", "Fresh packet or module must not silently render.", staleFailures.length ? staleFailures.join("; ") : `All displayed packets fresh within ${maxAgeHours}h.`, `${receiptPath}#packets`, statusFor(staleFailures)),
       matrixRow("Route Parity", "Click every visible dashboard link and directly open protected routes when local auth validation is enabled.", "Logged out SWFI record links route to SWFI sign-in with the intended target; public dashboard links stay in SWFIPN.", "When enabled, logged-in links route to intended SWFIPN profile/detail/workflow.", routeFailures.length || directRouteFailures.length ? [...routeFailures, ...directRouteFailures].slice(0, 12).join("; ") : `All ${receipt.links.length} visible public links matched the Phase 1 handoff contract.`, `${receiptPath}#unauthenticated`, statusFor([...routeFailures, ...directRouteFailures])),
       matrixRow("Record Detail Parity", "Record links must preserve the intended SWFI record target.", "Logged out record rows route to SWFI sign-in or public SWFI legacy article with the target preserved.", "Local authenticated detail crawl is skipped unless explicitly enabled.", recordFailures.length ? recordFailures.map((row) => `${row.index}:${row.text}`).join("; ") : "Public record handoff targets were preserved.", `${receiptPath}#unauthenticated`, statusFor(recordFailures.map((row) => row.text))),

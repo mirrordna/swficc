@@ -35,8 +35,8 @@ export default function PeerComparison({ data }: { data: PeerComparisonType }) {
               <div key={inst.slug} className="px-3 py-2.5">
                 <a
                   href={selfContainedHref(inst.profile_url, "/profiles/")}
-                  data-source-url={provenance}
-                  title={provenance ? `Source: ${provenance}` : undefined}
+                  data-source-state={provenance ? "on-file" : undefined}
+                  title={provenance ? "Source on file" : undefined}
                   className="text-black font-semibold text-sm no-underline hover:underline"
                 >
                   {inst.name}

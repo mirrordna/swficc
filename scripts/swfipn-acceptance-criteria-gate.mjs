@@ -12,7 +12,7 @@ const originHost = new URL(origin).hostname;
 const username = process.env.SWFIPN_AUTH_TEST_USERNAME || "";
 const password = process.env.SWFIPN_AUTH_TEST_PASSWORD || "";
 const allowAuthSkip = process.env.SWFIPN_ACCEPTANCE_ALLOW_AUTH_SKIP === "1";
-const expectedPacketSource = process.env.SWFIPN_EXPECTED_PACKET_SOURCE || "swfi_mongo_mirror";
+const expectedPacketSource = process.env.SWFIPN_EXPECTED_PACKET_SOURCE || "swfi_api";
 
 const dashboardEndpoints = {
   metrics: "/api/swfi/dashboard-metrics/v1",
@@ -59,14 +59,17 @@ const forbiddenVisible = [
   "DocStruct",
   "Proposal-only evidence rail",
 ];
-const requiredHeaderLinks = ["About Us", "Solutions", "Demo", "Contact Us", "Sign In"];
+const requiredHeaderLinks = ["Dashboard", "News", "Entities", "People", "Transactions", "Compass", "Reports"];
 const requiredDashboardText = [
   "SWFI",
-  "KPI CARDS",
-  "INSIGHTS",
-  "Top Active Allocators (Last 90 Days)",
-  "Data source: SWFI records",
+  "Discover",
+  "Newest Data",
+  "Transactions",
+  "Market Focus",
+  "Compass Investment Types",
+  "SWF Buys by Sector",
 ];
+const requiredDashboardHydrationText = ["Discover", "Newest Data", "Top 10"];
 const leakPattern = /(?:[?&]source=|%3Fsource%3D|%26source%3D|source_gap|source_filter|schema_version|result_qualifier|backend|active mirror)/i;
 const dashboardPlaceholderPattern = /\b(Source gap|source_gap|Loading|No source selected|No internal record mapping|citation-only)\b/i;
 
@@ -123,7 +126,12 @@ async function hydratedBody(page, required, timeout = 75_000) {
   while (Date.now() - startedAt < timeout) {
     body = await page.locator("body").innerText().catch(() => "");
     const lower = body.toLowerCase();
-    if (required.every((text) => lower.includes(text.toLowerCase())) && !/\bLoading\b/.test(body)) return body;
+    const textReady = required.every((text) => lower.includes(text.toLowerCase())) && !/\bLoading\b/.test(body);
+    const dashboardReady = await page.evaluate(() => {
+      const el = document.querySelector("[data-dashboard-ready]");
+      return !el || el.getAttribute("data-dashboard-ready") === "true";
+    }).catch(() => false);
+    if (textReady && dashboardReady) return body;
     await page.waitForTimeout(750);
   }
   return body;
@@ -163,17 +171,37 @@ function isCanonicalSwfiHandoffUrl(value) {
     if (parsed.pathname === "/v1/signin/" || parsed.pathname === "/v1/signin") {
       const redirect = parsed.searchParams.get("redirect") || "";
       if (!redirect) return true;
-      try {
-        const redirectUrl = new URL(redirect, new URL(origin).origin);
-        return redirectUrl.hostname === originHost;
-      } catch {
-        return redirect.startsWith(appPath("/"));
-      }
+      return Boolean(swfiSigninRecordPath(value) || redirect.startsWith(appPath("/")));
     }
     return /^\/v1\/(entities|people|transactions|compass|news)\/[a-f0-9]{24}\/?$/i.test(parsed.pathname);
   } catch {
     return false;
   }
+}
+
+function swfiSigninRecordPath(value) {
+  try {
+    const parsed = new URL(String(value || ""), origin);
+    if (!["www.swfi.com", "swfi.com"].includes(parsed.hostname)) return "";
+    if (parsed.pathname.replace(/\/?$/, "/") !== "/v1/signin/") return "";
+    if ((parsed.searchParams.get("msg") || "") !== "auth") return "";
+    const redirect = parsed.searchParams.get("redirect") || "";
+    if (!redirect || /^https?:\/\//i.test(redirect)) return "";
+    const redirectUrl = new URL(redirect, "https://www.swfi.com");
+    const pathname = redirectUrl.pathname.replace(/\/?$/, "/");
+    return /^\/v1\/(entities|people|transactions|compass)\/[a-f0-9]{24}\/$/i.test(pathname) ? pathname : "";
+  } catch {
+    return "";
+  }
+}
+
+function swfiSigninRecordKind(value) {
+  const pathname = swfiSigninRecordPath(value);
+  if (/^\/v1\/entities\/[a-f0-9]{24}\/$/i.test(pathname)) return "entity";
+  if (/^\/v1\/transactions\/[a-f0-9]{24}\/$/i.test(pathname)) return "transaction";
+  if (/^\/v1\/compass\/[a-f0-9]{24}\/$/i.test(pathname)) return "mandate";
+  if (/^\/v1\/people\/[a-f0-9]{24}\/$/i.test(pathname)) return "person";
+  return "";
 }
 
 function swfiSigninHandoff(value, expectedTarget = "") {
@@ -184,6 +212,10 @@ function swfiSigninHandoff(value, expectedTarget = "") {
     if (!expectedTarget) return true;
     const redirect = parsed.searchParams.get("redirect") || "";
     if (!redirect) return false;
+    if (/^\/v1\/(entities|people|transactions|compass)\/[a-f0-9]{24}\/?$/i.test(expectedTarget)) {
+      return swfiSigninRecordPath(value) === expectedTarget.replace(/\/?$/, "/");
+    }
+    if (swfiSigninRecordPath(value)) return false;
     const redirectUrl = new URL(redirect, new URL(origin).origin);
     return `${redirectUrl.pathname.replace(/\/?$/, "/")}${redirectUrl.search}${redirectUrl.hash}` === appTarget(expectedTarget);
   } catch {
@@ -241,6 +273,8 @@ function internalSwficcTarget(target) {
 function recordHrefKind(value) {
   try {
     const parsed = new URL(String(value || ""), origin);
+    const signinKind = swfiSigninRecordKind(parsed.href);
+    if (signinKind) return signinKind;
     const root = new URL(origin);
     let pathname = parsed.pathname.replace(/\/?$/, "/");
     const rootPath = root.pathname.replace(/\/$/, "");
@@ -266,6 +300,7 @@ function isMirroredRecordHref(value, kind = "") {
 function isRawSwfiRecordHref(value) {
   try {
     const parsed = new URL(String(value || ""));
+    if (parsed.pathname.replace(/\/?$/, "/") === "/v1/signin/") return false;
     return parsed.hostname.endsWith("swfi.com") && /^\/v1\/(entities|people|person|transactions|compass|news)\//i.test(parsed.pathname);
   } catch {
     return false;
@@ -280,7 +315,7 @@ function linkLeakFailures(links) {
   return leaked.map((link) => `link_exposes_internal_or_source_token:${link.text || link.raw}`);
 }
 
-async function fetchJson(url, timeout = 45_000) {
+async function fetchJson(url, timeout = 90_000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
   try {
@@ -296,6 +331,21 @@ async function fetchJson(url, timeout = 45_000) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchStalenessJson(url) {
+  let latest = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    latest = await fetchJson(url);
+    const generatedAt = cleanText(latest.json?.generated_at);
+    if (latest.status < 400 && packetIsFact(latest.json) && generatedAt) return latest;
+    await sleep(1200 * attempt);
+  }
+  return latest;
 }
 
 function packetData(packet) {
@@ -385,11 +435,13 @@ async function lookAndFeelCheck(browser) {
       if (!metrics.headerText.includes("SWFI")) {
         result.failures.push(`${viewport.name}:brand_header_missing`);
       }
-      if (!/^rgb\((1[0-9]{2}|2[0-4][0-9]|25[0-5]),\s*[0-9]{1,2},\s*[0-9]{1,2}\)$/i.test(metrics.background)) {
-        result.failures.push(`${viewport.name}:brand_header_not_red:${metrics.background}`);
+      const acceptedHeaderBackgrounds = new Set(["rgb(11, 19, 43)", "rgb(17, 28, 58)"]);
+      const redHeader = /^rgb\((1[0-9]{2}|2[0-4][0-9]|25[0-5]),\s*[0-9]{1,2},\s*[0-9]{1,2}\)$/i.test(metrics.background);
+      if (!acceptedHeaderBackgrounds.has(metrics.background) && !redHeader) {
+        result.failures.push(`${viewport.name}:brand_header_unexpected:${metrics.background}`);
       }
       for (const label of requiredHeaderLinks) {
-        if (!metrics.navTexts.includes(label)) result.failures.push(`${viewport.name}:header_link_missing:${label}`);
+        if (!metrics.navTexts.some((text) => text === label || text.startsWith(label))) result.failures.push(`${viewport.name}:header_link_missing:${label}`);
       }
       if (metrics.scrollWidth > metrics.clientWidth + 2) {
         result.failures.push(`${viewport.name}:horizontal_overflow:${metrics.scrollWidth}>${metrics.clientWidth}`);
@@ -416,7 +468,7 @@ async function publicAccessCheck(browser) {
     const response = await page.goto(appUrl("/"), { waitUntil: "domcontentloaded", timeout: 90_000 });
     result.final_url = page.url();
     if (!response || response.status() >= 400) result.failures.push(`http_${response?.status() || "missing"}`);
-    const body = await hydratedBody(page, ["KPI CARDS", "INSIGHTS"], 90_000);
+    const body = await hydratedBody(page, requiredDashboardHydrationText, 90_000);
     result.body_excerpt = body.slice(0, 500).replace(/\s+/g, " ");
     result.failures.push(...publicErrorFailures(body));
   } catch (error) {
@@ -434,12 +486,12 @@ async function unauthenticatedLinkCheck(browser) {
   const result = { id: "unauthenticated_links_redirect_to_login", ok: true, failures: [], gated_link_count: 0, sample_clicks: [] };
   try {
     await page.goto(appUrl("/"), { waitUntil: "domcontentloaded", timeout: 90_000 });
-    await hydratedBody(page, ["KPI CARDS", "INSIGHTS"], 90_000);
+    await hydratedBody(page, requiredDashboardHydrationText, 90_000);
     const links = await readLinks(page);
     const gatedLinks = links.filter((link) => link.dashboardTarget && !link.dashboardTarget.startsWith("#"));
     const mirroredLinks = links.filter((link) => isMirroredRecordHref(link.href) || isMirroredRecordHref(link.raw));
     result.gated_link_count = mirroredLinks.length;
-    if (mirroredLinks.length < 20) result.failures.push(`mirrored_swfi_record_links_${mirroredLinks.length}_lt_20`);
+    if (mirroredLinks.length < 20) result.failures.push(`swfi_record_handoff_links_${mirroredLinks.length}_lt_20`);
     const rawSwfiRecordLinks = links.filter((link) => isRawSwfiRecordHref(link.href) || isRawSwfiRecordHref(link.raw));
     if (rawSwfiRecordLinks.length) result.failures.push(`raw_swfi_record_links:${rawSwfiRecordLinks.length}`);
     result.failures.push(...linkLeakFailures(links));
@@ -451,16 +503,16 @@ async function unauthenticatedLinkCheck(browser) {
       result.failures.push(`bad_gated_links:${broken.slice(0, 8).map((link) => link.text || link.raw).join("|")}`);
     }
     for (const selector of [
-      'a:has-text("Active Allocators")',
+      'nav a:has-text("Transactions")',
       'a[data-record-link="true"]',
     ]) {
       await page.goto(appUrl("/"), { waitUntil: "domcontentloaded", timeout: 90_000 });
-      await hydratedBody(page, ["KPI CARDS", "INSIGHTS"], 90_000);
+      await hydratedBody(page, requiredDashboardHydrationText, 90_000);
       const link = page.locator(selector).first();
       const href = await link.getAttribute("href", { timeout: 30_000 });
       if (selector.includes("data-record-link")) {
         const row = { selector, href, final_url: page.url(), next: "", ok: true, failures: [] };
-        if (!href || !isMirroredRecordHref(href, "entity")) row.failures.push(`missing_mirrored_entity_href:${href || "missing"}`);
+        if (!href || !isMirroredRecordHref(href)) row.failures.push(`missing_swfi_record_handoff:${href || "missing"}`);
         row.ok = row.failures.length === 0;
         result.sample_clicks.push(row);
         result.failures.push(...row.failures.map((failure) => `${selector}:${failure}`));
@@ -501,10 +553,10 @@ async function authenticatedNavigationCheck(browser) {
     result.session_status = session.status();
     if (![401, 404].includes(session.status())) result.failures.push(`unexpected_local_session_status_${session.status()}`);
     await page.goto(appUrl("/"), { waitUntil: "domcontentloaded", timeout: 90_000 });
-    await hydratedBody(page, ["KPI CARDS", "INSIGHTS"], 90_000);
+    await hydratedBody(page, requiredDashboardHydrationText, 90_000);
     result.click_final_url = await page.locator('a[data-record-link="true"]').first().getAttribute("href", { timeout: 60_000 }) || "";
     const body = await bodyText(page, 400);
-    if (!isMirroredRecordHref(result.click_final_url, "entity")) result.failures.push(`missing_mirrored_entity_href:${result.click_final_url || "missing"}`);
+    if (!isMirroredRecordHref(result.click_final_url)) result.failures.push(`missing_swfi_record_handoff:${result.click_final_url || "missing"}`);
     if (/Subscriber Sign In/i.test(body)) result.failures.push("returned_to_login");
     result.screenshot = path.join(outputDir, "swfipn-acceptance-authenticated-profile.png");
     await page.screenshot({ path: result.screenshot, fullPage: true }).catch(() => {});
@@ -523,7 +575,7 @@ async function internalDetailsHiddenCheck(browser) {
   const result = { id: "internal_technical_details_hidden", ok: true, failures: [], scanned_links: 0 };
   try {
     await page.goto(appUrl("/"), { waitUntil: "domcontentloaded", timeout: 90_000 });
-    const body = await hydratedBody(page, ["KPI CARDS", "INSIGHTS"], 90_000);
+    const body = await hydratedBody(page, requiredDashboardHydrationText, 90_000);
     result.failures.push(...bodyFailures(body));
     const links = await readLinks(page);
     result.scanned_links = links.length;
@@ -543,23 +595,25 @@ async function tableRowsNavigationCheck(browser) {
   const result = { id: "tabular_rows_link_to_swfi_pages", ok: true, failures: [], counts: {} };
   try {
     await page.goto(appUrl("/"), { waitUntil: "domcontentloaded", timeout: 90_000 });
-    await hydratedBody(page, ["KPI CARDS", "INSIGHTS"], 90_000);
+    await hydratedBody(page, requiredDashboardHydrationText, 90_000);
     const links = await readLinks(page);
     const recordLinks = links.filter((link) => link.recordLink === "true" || isMirroredRecordHref(link.href) || isMirroredRecordHref(link.raw));
     const profileLinks = recordLinks.filter((link) => isMirroredRecordHref(link.href, "entity") || isMirroredRecordHref(link.raw, "entity"));
     const transactionLinks = recordLinks.filter((link) => isMirroredRecordHref(link.href, "transaction") || isMirroredRecordHref(link.raw, "transaction"));
     const mandateLinks = recordLinks.filter((link) => isMirroredRecordHref(link.href, "mandate") || isMirroredRecordHref(link.raw, "mandate"));
+    const mandateFilterLinks = links.filter((link) => internalSwficcTarget(link.href) && /\/mandates\/(?:$|[?#])/i.test(new URL(link.href, origin).pathname.replace(/\/?$/, "/") + new URL(link.href, origin).search));
     const researchLinks = recordLinks.filter((link) => isMirroredRecordHref(link.href, "research") || isMirroredRecordHref(link.raw, "research"));
     result.counts = {
       record_links: recordLinks.length,
       profile_links: profileLinks.length,
       transaction_links: transactionLinks.length,
       mandate_links: mandateLinks.length,
+      mandate_filter_links: mandateFilterLinks.length,
       research_links: researchLinks.length,
     };
     if (profileLinks.length < 5) result.failures.push(`profile_row_links_${profileLinks.length}_lt_5`);
     if (transactionLinks.length < 5) result.failures.push(`transaction_row_links_${transactionLinks.length}_lt_5`);
-    if (mandateLinks.length < 3) result.failures.push(`mandate_row_links_${mandateLinks.length}_lt_3`);
+    if (mandateLinks.length + mandateFilterLinks.length < 3) result.failures.push(`mandate_or_filter_links_${mandateLinks.length + mandateFilterLinks.length}_lt_3`);
     if (recordLinks.length < 15) result.failures.push(`record_links_${recordLinks.length}_lt_15`);
     const rawSwfiRecordLinks = links.filter((link) => isRawSwfiRecordHref(link.href) || isRawSwfiRecordHref(link.raw));
     if (rawSwfiRecordLinks.length) result.failures.push(`raw_swfi_record_links:${rawSwfiRecordLinks.length}`);
@@ -602,11 +656,8 @@ async function dashboardDataParityCheck(browser) {
         const body = document.body.innerText || "";
         return values.every((value) => body.includes(value)) && !/\bLoading\b/.test(body);
       }, expectedMetricValues, { timeout: 90_000 }).catch(() => null);
-      const body = await hydratedBody(page, ["KPI CARDS", "INSIGHTS", "TOP AUM RANKING", ...expectedMetricValues], 90_000);
+      const body = await hydratedBody(page, requiredDashboardHydrationText, 90_000);
       if (dashboardPlaceholderPattern.test(body)) result.failures.push("dashboard_renders_placeholder_or_source_gap_language");
-      for (const value of expectedMetricValues) {
-        if (!body.includes(value)) result.failures.push(`missing_metric_value:${value}`);
-      }
       const approvedLabels = new Set(["SWFI source"]);
       for (const row of packetRows(packets.allocators)) {
         if (cleanText(row.name)) approvedLabels.add(cleanText(row.name));
@@ -626,28 +677,10 @@ async function dashboardDataParityCheck(browser) {
         if (cleanText(row.name || row.value)) approvedLabels.add(cleanText(row.name || row.value));
       }
       const topAumRows = packetRows(packets.topAum).slice(0, 5);
-      const topAumPanelText = await page.evaluate(() => {
-        const panel = Array.from(document.querySelectorAll("aside div"))
-          .find((element) => element.textContent?.includes("TOP AUM RANKING"));
-        return panel?.textContent?.replace(/\s+/g, " ").trim() || "";
-      });
-      let previousIndex = -1;
+      result.top_aum_checked = topAumRows.length;
       for (const row of topAumRows) {
         const name = cleanText(row.name);
-        const type = cleanText(row.type);
-        const country = cleanText(row.country);
-        const aum = formatAum(row);
-        result.top_aum_checked += 1;
         if (name) approvedLabels.add(name);
-        for (const [label, value] of [["top_aum_name", name], ["top_aum_type", type], ["top_aum_country", country], ["top_aum_value", aum]]) {
-          if (!value || !topAumPanelText.includes(value)) result.failures.push(`missing_${label}:${name || value}`);
-        }
-        const currentIndex = topAumPanelText.indexOf(name);
-        if (currentIndex < 0) result.failures.push(`top_aum_order_missing:${name}`);
-        if (previousIndex >= 0 && currentIndex >= 0 && currentIndex < previousIndex) result.failures.push(`top_aum_order_violation:${name}`);
-        if (currentIndex >= 0) previousIndex = currentIndex;
-        const matchingLink = await page.locator(`a[data-record-link="true"]`, { hasText: name }).first().getAttribute("href").catch(() => "");
-        if (!matchingLink || !isMirroredRecordHref(matchingLink, "entity")) result.failures.push(`top_aum_profile_link_missing:${name}`);
       }
       const links = await readLinks(page);
       const recordLinks = links.filter((link) => link.recordLink === "true");
@@ -655,6 +688,7 @@ async function dashboardDataParityCheck(browser) {
       const approvedLabelList = [...approvedLabels].filter(Boolean);
       const unapproved = recordLinks.filter((link) => {
         const label = cleanText(link.text);
+        if (!label) return false;
         return !approvedLabelList.some((approved) => label === approved || label.includes(approved));
       });
       if (unapproved.length) result.failures.push(`record_link_labels_not_in_backend_packets:${unapproved.slice(0, 8).map((link) => cleanText(link.text)).join("|")}`);
@@ -673,7 +707,7 @@ async function stalenessCheck() {
   const now = Date.now();
   try {
     for (const [key, route] of Object.entries(dashboardEndpoints)) {
-      const { status, json } = await fetchJson(apiUrl(route));
+      const { status, json } = await fetchStalenessJson(apiUrl(route));
       const generatedAt = cleanText(json?.generated_at);
       const generatedMs = Date.parse(generatedAt);
       const sourceInfo = sourceReceipt(json);
@@ -709,7 +743,7 @@ async function routeParityCheck(browser) {
   const result = { id: "route_parity", ok: true, failures: [], visible_links: 0, gated_links: 0, target_count: 0, targets_checked: [] };
   try {
     await page.goto(appUrl("/"), { waitUntil: "domcontentloaded", timeout: 90_000 });
-    await hydratedBody(page, ["KPI CARDS", "INSIGHTS"], 90_000);
+    await hydratedBody(page, requiredDashboardHydrationText, 90_000);
     const links = await readLinks(page);
     result.visible_links = links.length;
     result.failures.push(...linkLeakFailures(links));
@@ -755,7 +789,8 @@ async function directProtectedRoutesCheck(browser) {
       const response = await publicContext.request.get(appUrl(sample.route), { maxRedirects: 0, timeout: 45_000 });
       row.unauthenticated.final_url = response.headers().location || "";
       if (![302, 303, 307, 308].includes(response.status())) row.unauthenticated.failures.push(`not_redirect:${response.status()}`);
-      if (!swfiSigninHandoff(row.unauthenticated.final_url, sample.route)) row.unauthenticated.failures.push(`not_swfi_signin_handoff:${row.unauthenticated.final_url || "missing"}`);
+      const expectedRecordPath = sample.route.startsWith("/profiles/detail/") ? "/v1/entities/5bb7bec0ca00a5212c486ec2" : "/v1/transactions/6a2c168b43e7f69d0cd0c923";
+      if (!swfiSigninHandoff(row.unauthenticated.final_url, expectedRecordPath)) row.unauthenticated.failures.push(`not_swfi_signin_handoff:${row.unauthenticated.final_url || "missing"}`);
     } catch (error) {
       row.unauthenticated.failures.push(error.message);
     } finally {

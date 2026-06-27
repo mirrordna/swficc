@@ -12,6 +12,8 @@ const endpoints = {
   allocators90: "/api/allocator-activity/v1?days=90&limit=1&count_only=1",
   rfps: "/api/live-opportunities/v1?limit=25&page=1",
   transactions30: "/api/recent-transactions/v1?days=30&limit=25&page=1",
+  entities: "/api/source-data/search/v1?collection=entities&limit=25&page=1",
+  people: "/api/source-data/search/v1?collection=people&limit=25&page=1",
   top20: "/v1/swfi/top20?limit=5",
   news: "/api/source-intelligence/news/v1?limit=25",
   sectorFlows: "/api/sector-flows/v1?days=365",
@@ -44,9 +46,22 @@ async function fetchPacket(key, route) {
   return packet;
 }
 
-const entries = await Promise.all(
-  Object.entries(endpoints).map(async ([key, route]) => [key, await fetchPacket(key, route)]),
+const settledEntries = await Promise.all(
+  Object.entries(endpoints).map(async ([key, route]) => {
+    try {
+      return { key, packet: await fetchPacket(key, route) };
+    } catch (error) {
+      return { key, error: String(error?.message || error) };
+    }
+  }),
 );
+const entries = settledEntries
+  .filter((entry) => entry.packet)
+  .map((entry) => [entry.key, entry.packet]);
+const skipped = settledEntries
+  .filter((entry) => !entry.packet)
+  .map((entry) => ({ key: entry.key, reason: entry.error }));
+if (!entries.length) throw new Error("No fact packets available for home snapshot");
 const snapshot = Object.fromEntries(entries);
 const body = `import type { Packet } from "@/lib/sourcePackets";
 
@@ -61,4 +76,5 @@ console.log(JSON.stringify({
   output: outputPath,
   origin,
   packets: Object.fromEntries(entries.map(([key, packet]) => [key, packet.generated_at || ""])),
+  skipped,
 }, null, 2));

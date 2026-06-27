@@ -24,8 +24,8 @@ export default function CoInvestment({ data }: { data: CoInvestmentTracking }) {
           <a
             key={k.label}
             href={selfContainedHref(k.href, "/transactions/")}
-            data-source-url={provenance}
-            title={provenance ? `Source: ${provenance}` : undefined}
+            data-source-state={provenance ? "on-file" : undefined}
+            title={provenance ? "Source on file" : undefined}
             className="flex min-w-[120px] flex-col gap-1 border border-gray-300 px-3 py-2 no-underline text-inherit"
           >
             <span className="text-gray-500 text-xs uppercase">{k.label}</span>
@@ -38,8 +38,8 @@ export default function CoInvestment({ data }: { data: CoInvestmentTracking }) {
       {data.network && (
         <a
           href={selfContainedHref(data.network.href, "/search/")}
-          data-source-url={sourceProvenanceHref(data.network.href)}
-          title={sourceProvenanceHref(data.network.href) ? `Source: ${sourceProvenanceHref(data.network.href)}` : undefined}
+          data-source-state={sourceProvenanceHref(data.network.href) ? "on-file" : undefined}
+          title={sourceProvenanceHref(data.network.href) ? "Source on file" : undefined}
           className="block border border-gray-300 p-3 no-underline text-inherit mb-3"
         >
           <strong className="block text-gray-900 mb-1">{data.network.title}</strong>
@@ -63,8 +63,8 @@ export default function CoInvestment({ data }: { data: CoInvestmentTracking }) {
               <a
                 key={i}
                 href={selfContainedHref(row.href, "/transactions/")}
-                data-source-url={provenance}
-                title={provenance ? `Source: ${provenance}` : undefined}
+                data-source-state={provenance ? "on-file" : undefined}
+                title={provenance ? "Source on file" : undefined}
                 className="grid no-underline text-inherit hover:bg-gray-50"
                 style={{ gridTemplateColumns: "1fr 1fr 0.8fr 1fr 0.8fr" }}
               >

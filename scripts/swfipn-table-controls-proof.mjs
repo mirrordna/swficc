@@ -29,16 +29,16 @@ const password = loadSecret("SWFIPN_AUTH_TEST_PASSWORD", "SWFIPN_AUTH_PASSWORD_K
 
 const ROUTES = [
   { route: "/", minControls: 4, requiredBodyText: "Top Active Allocators (Last 90 Days)" },
-  { route: "/profiles/", minControls: 1, requiredShowingPrefix: "Showing 5 of", requiredTotalAtLeast: 590_000, requiredBodyText: "Entity Name", testSort: true, filterTerm: "Sovereign Wealth Fund", testRowLimit: true, testPagination: true, expectServerFilter: "/api/source-data/search/v1", serverBackedControls: true },
-  { route: "/comparisons/", minControls: 1, requiredShowingPrefix: "Showing 5 of", requiredTotalAtLeast: 590_000, requiredBodyText: "Peer Comparisons", testSort: true, filterTerm: "Sovereign Wealth Fund", testRowLimit: true, testPagination: true, expectServerFilter: "/api/source-data/search/v1", serverBackedControls: true },
-  { route: "/people/", minControls: 1, requiredShowingPrefix: "Showing 5 of", requiredTotalAtLeast: 114_000, testSort: true, filterTerm: "Vijay", testRowLimit: true, testPagination: true, expectServerFilter: "/api/source-data/search/v1", serverBackedControls: true },
-  { route: "/deals/", minControls: 1, requiredShowingPrefix: "Showing 5 of", requiredTotalAtLeast: 180_000, requiredBodyText: "Amount (USD)", testSort: true, filterTerm: "Andreessen", testRowLimit: true, testPagination: true, expectServerFilter: "/api/transactions/v1", serverBackedControls: true },
-  { route: "/transactions/", minControls: 1, requiredShowingPrefix: "Showing 5 of", requiredTotalAtLeast: 180_000, requiredBodyText: "Amount (USD)", testSort: true, filterTerm: "Andreessen", testRowLimit: true, testPagination: true, expectServerFilter: "/api/transactions/v1", serverBackedControls: true },
-  { route: "/mandates/", minControls: 1, requiredShowingPrefix: "Showing 5 of", requiredTotalAtLeast: 30, testSort: true, filterTerm: "CalPERS", testRowLimit: true, testPagination: true, serverBackedControls: true },
+  { route: "/profiles/", minControls: 1, requiredShowingPrefix: "Showing 25 of", requiredTotalAtLeast: 590_000, requiredBodyText: "Entity Name", testSort: true, filterTerm: "Sovereign Wealth Fund", testRowLimit: true, testPagination: true, expectServerFilter: "/api/source-data/search/v1", serverBackedControls: true },
+  { route: "/comparisons/", minControls: 1, requiredShowingPrefix: "Showing 25 of", requiredTotalAtLeast: 590_000, requiredBodyText: "Peer Comparisons", testSort: true, filterTerm: "Sovereign Wealth Fund", testRowLimit: true, testPagination: true, expectServerFilter: "/api/source-data/search/v1", serverBackedControls: true },
+  { route: "/people/", minControls: 1, requiredShowingPrefix: "Showing 25 of", requiredTotalAtLeast: 114_000, testSort: true, filterTerm: "Vijay", testRowLimit: true, testPagination: true, expectServerFilter: "/api/source-data/search/v1", serverBackedControls: true },
+  { route: "/deals/", minControls: 1, requiredShowingPrefix: "Showing 25 of", requiredTotalAtLeast: 180_000, requiredBodyText: "Amount (USD)", testSort: true, filterTerm: "Andreessen", testRowLimit: true, testPagination: true, expectServerFilter: "/api/transactions/v1", serverBackedControls: true },
+  { route: "/transactions/", minControls: 1, requiredShowingPrefix: "Showing 25 of", requiredTotalAtLeast: 180_000, requiredBodyText: "Amount (USD)", testSort: true, filterTerm: "Andreessen", testRowLimit: true, testPagination: true, expectServerFilter: "/api/transactions/v1", serverBackedControls: true },
+  { route: "/mandates/", minControls: 1, requiredShowingPrefix: "Showing 25 of", requiredTotalAtLeast: 30, testSort: true, filterTerm: "CalPERS", testRowLimit: true, testPagination: true, serverBackedControls: true },
   { route: "/search/?q=Prem", minControls: 1, testSort: true, filterTerm: "Prem", testRowLimit: true },
-  { route: "/search/?q=Real%20Estate", minControls: 1, requiredShowingPrefix: "Showing 5 of", requiredBodyText: "Real Estate", testSort: true, filterTerm: "Real Estate", testRowLimit: true },
+  { route: "/search/?q=Real%20Estate", minControls: 1, requiredShowingPrefix: "Showing 25 of", requiredBodyText: "Real Estate", testSort: true, filterTerm: "Real Estate", testRowLimit: true },
   { route: "/reports/", minControls: 5, requiredShowingPrefix: "Showing 5 of", requiredTotalAtLeast: 10, testSort: true, filterTerm: "Norway", testRowLimit: true, testPagination: true },
-  { route: "/research/", minControls: 1, requiredShowingPrefix: "Showing 5 of", requiredBodyText: "Research / News", testSort: true, filterTerm: "SWFI", testRowLimit: true, testPagination: true },
+  { route: "/research/", minControls: 1, requiredShowingPrefix: "Showing 25 of", requiredBodyText: "Research / News", testSort: true, filterTerm: "SWFI", testRowLimit: true, testPagination: true },
 ];
 
 function loadPlaywright() {

@@ -1,4 +1,6 @@
 const APP_BASE = "/swficc";
+const SWFI_RECORD_SECTIONS = new Set(["entities", "people", "transactions", "compass"]);
+const SWFI_HOSTS = new Set(["swfi.com", "www.swfi.com", "cms.swfi.com"]);
 
 const ROUTE_BY_SECTION: Record<string, string> = {
   profiles: "/profiles/",
@@ -115,16 +117,48 @@ export function sourceProvenanceHref(href: string | undefined): string | undefin
 }
 
 export function isSwfiPlatformRecordHref(href: string | undefined): boolean {
-  if (!href) return false;
+  return Boolean(swfiRecordPathFromHref(href)) || Boolean(legacyPostIdFromHref(href));
+}
+
+export function swfiRecordPathFromHref(href: string | undefined): string {
+  if (!href) return "";
+  try {
+    const parsed = new URL(href, "https://www.swfi.com");
+    if (!isAllowedSwfiHost(parsed.hostname)) return "";
+    if (parsed.pathname.replace(/\/?$/, "/") === "/v1/signin/") {
+      if (parsed.hostname !== "www.swfi.com" || parsed.searchParams.get("msg") !== "auth") return "";
+      return swfiRecordPathFromHref(parsed.searchParams.get("redirect") || "");
+    }
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    const v1Index = parts.indexOf("v1");
+    const section = v1Index >= 0 ? parts[v1Index + 1] : parts[0];
+    const id = v1Index >= 0 ? parts[v1Index + 2] : parts[1];
+    if (!SWFI_RECORD_SECTIONS.has(section || "")) return "";
+    if (!/^[a-f0-9]{24}$/i.test(id || "")) return "";
+    return `/v1/${section}/${id}`;
+  } catch {
+    const match = String(href || "").match(/^\/v1\/(entities|people|transactions|compass)\/([a-f0-9]{24})$/i);
+    return match ? `/v1/${match[1]}/${match[2]}` : "";
+  }
+}
+
+export function swfiAuthHandoffHref(href: string | undefined): string {
+  const recordPath = swfiRecordPathFromHref(href);
+  if (!recordPath) return href || "";
+  const params = new URLSearchParams({ msg: "auth", redirect: recordPath });
+  return `https://www.swfi.com/v1/signin/?${params.toString()}`;
+}
+
+function legacyPostIdFromHref(href: string | undefined): string {
+  if (!href) return "";
   try {
     const parsed = new URL(href);
-    if (!parsed.hostname.endsWith("swfi.com")) return false;
-    if (parsed.pathname.startsWith("/v1/")) return true;
-    if (parsed.searchParams.get("p")) return true;
+    if (!isAllowedSwfiHost(parsed.hostname)) return "";
+    return parsed.searchParams.get("p") || "";
   } catch {
-    return false;
+    const match = String(href || "").match(/[?&]p=(\d+)/);
+    return match?.[1] || "";
   }
-  return false;
 }
 
 export function normalizeSwfiPlatformHref(href: string): string {
@@ -153,7 +187,7 @@ export function sourceDetailHref(sourceUrl: string | undefined, returnRoute = "/
 }
 
 function routeFromHost(hostname: string, parts: string[]): string | undefined {
-  if (hostname.endsWith("swfi.com")) {
+  if (isAllowedSwfiHost(hostname)) {
     const joined = parts.join("/");
     if (/profile|fund|ranking|entity|institution/i.test(joined)) return "/profiles/";
     if (/person|people|executive|contact/i.test(joined)) return "/people/";
@@ -169,7 +203,7 @@ function routeFromHost(hostname: string, parts: string[]): string | undefined {
 }
 
 function swfiMirrorRoute(parsed: URL): string | undefined {
-  if (!parsed.hostname.endsWith("swfi.com")) return undefined;
+  if (!isAllowedSwfiHost(parsed.hostname)) return undefined;
   const publicPageRoutes: Record<string, string> = {
     "/about": "/about/",
     "/about-us": "/about/",
@@ -195,6 +229,9 @@ function swfiMirrorRoute(parsed: URL): string | undefined {
   const v1Index = parts.indexOf("v1");
   const section = v1Index >= 0 ? parts[v1Index + 1] : parts[0];
   const id = v1Index >= 0 ? parts[v1Index + 2] : parts[1];
+  if (section === "entities" && id === "aggregates") {
+    return "/profiles/aggregates/";
+  }
   if (section === "entities" && id) {
     return `/profiles/detail/?${new URLSearchParams({ id }).toString()}`;
   }
@@ -214,4 +251,9 @@ function swfiMirrorRoute(parsed: URL): string | undefined {
     return "/research/";
   }
   return undefined;
+}
+
+export function isAllowedSwfiHost(hostname: string | undefined): boolean {
+  const host = String(hostname || "").toLowerCase();
+  return SWFI_HOSTS.has(host);
 }

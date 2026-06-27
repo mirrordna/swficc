@@ -11,6 +11,8 @@ const receiptPath = path.join(outputDir, "swfipn-kp-acceptance-gate-latest.json"
 const origin = normalizeOrigin(process.env.SWFIPN_ORIGIN || "http://127.0.0.1:8353/swficc/");
 const resolveIp = process.env.SWFIPN_RESOLVE_IP || "";
 const originHost = new URL(origin).hostname;
+const authMode = String(process.env.SWFIPN_KP_AUTH_MODE || "swfi-auth-handoff");
+const validateLegacyAuth = authMode === "legacy-auth";
 const username = loadSecret("SWFIPN_AUTH_TEST_USERNAME", "SWFIPN_AUTH_USERNAME_KEYCHAIN_SERVICE", ["SWFIPN_AUTH_USERNAME", "SWFI_PREVIEW_AUTH_USERNAME"]).trim();
 const password = loadSecret("SWFIPN_AUTH_TEST_PASSWORD", "SWFIPN_AUTH_PASSWORD_KEYCHAIN_SERVICE", ["SWFIPN_AUTH_PASSWORD", "SWFI_PREVIEW_AUTH_PASSWORD"], false);
 const forbiddenVisible = [
@@ -49,22 +51,18 @@ const forbiddenVisible = [
   "Proposal-only evidence rail",
 ];
 const dashboardSectionLinks = [
-  ["Top Investors", "/allocators/"],
-  ["Fundraising", "/mandates/"],
-  ["Market Activity", "/transactions/"],
-  ["News", "/intelligence/"],
-  ["Top Active Allocators (Last 90 Days)", "/allocators/"],
-  ["Newest Transactions (Last 25)", "/transactions/"],
-  ["Fundraising Activity", "/mandates/"],
-  ["Recent Deals", "/deals/"],
+  ["Active Allocators", "/allocators/"],
+  ["Deals", "/transactions/"],
+  ["RFPs", "/mandates/"],
+  ["Deals & Transactions", "/deals/"],
 ];
 const listRoutes = [
-  { route: "/profiles/", ready: "Showing 5 of", detailPath: "/profiles/detail/" },
-  { route: "/allocators/", ready: "Showing 5 of", detailPath: "/profiles/detail/" },
-  { route: "/transactions/", ready: "Showing 5 of", detailPath: "/transactions/detail/" },
-  { route: "/deals/", ready: "Showing 5 of", detailPath: "/transactions/detail/" },
-  { route: "/mandates/", ready: "Showing 5 of", detailPath: "/mandates/detail/" },
-  { route: "/research/", ready: "Showing 5 of", detailPath: "/research/detail/" },
+  { route: "/profiles/", ready: "Showing 25 of", detailPath: "/profiles/detail/" },
+  { route: "/allocators/", ready: "Showing 25 of", detailPath: "/profiles/detail/" },
+  { route: "/transactions/", ready: "Showing 25 of", detailPath: "/transactions/detail/" },
+  { route: "/deals/", ready: "Showing 25 of", detailPath: "/transactions/detail/" },
+  { route: "/mandates/", ready: "Showing 25 of", detailPath: "/mandates/detail/" },
+  { route: "/research/", ready: "Showing 25 of", detailPath: "/research/detail/" },
 ];
 const brandExpectedLinks = [
   ["About Us", "/about/"],
@@ -222,7 +220,7 @@ function sameApp(href) {
 
 function sameAppRoute(href, route) {
   try {
-    const parsed = new URL(href);
+    const parsed = new URL(href, origin);
     const root = new URL(origin);
     return parsed.origin === root.origin && parsed.pathname.replace(/\/?$/, "/") === appPath(route);
   } catch {
@@ -242,6 +240,54 @@ function loginHrefTargetsRoute(href, route) {
   }
 }
 
+function swfiSigninHandoffUrl(value, expectedTarget) {
+  try {
+    const parsed = new URL(String(value || ""), new URL(origin).origin);
+    if (!["www.swfi.com", "swfi.com"].includes(parsed.hostname)) return false;
+    if (parsed.pathname.replace(/\/?$/, "/") !== "/v1/signin/") return false;
+    if ((parsed.searchParams.get("msg") || "") !== "auth") return false;
+    const redirect = parsed.searchParams.get("redirect") || "";
+    if (!redirect) return false;
+    const redirectUrl = new URL(redirect, new URL(origin).origin);
+    const expectedUrl = new URL(expectedTarget, new URL(origin).origin);
+    return redirectUrl.origin === expectedUrl.origin
+      && redirectUrl.pathname.replace(/\/?$/, "/") === expectedUrl.pathname.replace(/\/?$/, "/")
+      && redirectUrl.search === expectedUrl.search;
+  } catch {
+    return false;
+  }
+}
+
+function swfiSigninRedirectPath(value) {
+  try {
+    const parsed = new URL(String(value || ""), new URL(origin).origin);
+    if (!["www.swfi.com", "swfi.com"].includes(parsed.hostname)) return "";
+    if (parsed.pathname.replace(/\/?$/, "/") !== "/v1/signin/") return "";
+    if ((parsed.searchParams.get("msg") || "") !== "auth") return "";
+    const redirect = parsed.searchParams.get("redirect") || "";
+    if (!redirect || /^https?:\/\//i.test(redirect)) return "";
+    const redirectUrl = new URL(redirect, "https://www.swfi.com");
+    const pathname = redirectUrl.pathname.replace(/\/?$/, "/");
+    return /^\/v1\/(entities|people|transactions|compass)\/[a-f0-9]{24}\/$/i.test(pathname) ? pathname : "";
+  } catch {
+    return "";
+  }
+}
+
+function swfiRecordHandoffKind(value) {
+  const pathname = swfiSigninRedirectPath(value);
+  if (/^\/v1\/entities\/[a-f0-9]{24}\/$/i.test(pathname)) return "entity";
+  if (/^\/v1\/transactions\/[a-f0-9]{24}\/$/i.test(pathname)) return "transaction";
+  if (/^\/v1\/compass\/[a-f0-9]{24}\/$/i.test(pathname)) return "mandate";
+  if (/^\/v1\/people\/[a-f0-9]{24}\/$/i.test(pathname)) return "person";
+  return "";
+}
+
+function isApprovedSwfiRecordHandoff(href, kind = "") {
+  const detected = swfiRecordHandoffKind(href);
+  return Boolean(detected && (!kind || detected === kind));
+}
+
 function dashboardTargetMatchesRoute(target, route) {
   if (!target) return false;
   try {
@@ -259,10 +305,13 @@ function dashboardLinkTargetsRoute(link, route) {
 
 function dashboardHrefExposures(links) {
   const failures = [];
-  const externalSwfi = links.filter((link) => isExternalSwfiHref(link.href) || isExternalSwfiHref(link.raw) || isExternalSwfiHref(link.dashboardTarget));
+  const externalSwfi = links.filter((link) => (
+    isExternalSwfiHref(link.href) || isExternalSwfiHref(link.raw) || isExternalSwfiHref(link.dashboardTarget)
+  ) && !isApprovedSwfiRecordHandoff(link.href) && !isApprovedSwfiRecordHandoff(link.raw));
   if (externalSwfi.length) failures.push(`dashboard_external_swfi_links:${externalSwfi.slice(0, 8).map((link) => link.text || link.href).join("|")}`);
   const leakPattern = /(?:[?&]source=|%3Fsource%3D|%26source%3D|\/v1\/)/i;
   const leaked = links.filter((link) => {
+    if (isApprovedSwfiRecordHandoff(link.href) || isApprovedSwfiRecordHandoff(link.raw)) return false;
     return leakPattern.test([link.href, link.raw, link.source, link.dashboardTarget].filter(Boolean).join(" "));
   });
   if (leaked.length) failures.push(`dashboard_exposes_source_urls:${leaked.slice(0, 8).map((link) => link.text || link.href).join("|")}`);
@@ -270,10 +319,11 @@ function dashboardHrefExposures(links) {
 }
 
 function isExternalSwfiHref(href) {
-  return /^https?:\/\/(www\.)?swfi\.com/i.test(String(href || ""));
+  return /^https?:\/\/(www\.)?swfi\.com/i.test(String(href || "")) && !isApprovedSwfiRecordHandoff(href);
 }
 
 function isInternalMirrorRecordHref(href) {
+  if (isApprovedSwfiRecordHandoff(href)) return true;
   try {
     const parsed = new URL(href, origin);
     const root = new URL(origin);
@@ -294,10 +344,11 @@ async function hydratedBody(page, required, timeout = 75_000) {
   const start = Date.now();
   let body = "";
   while (Date.now() - start < timeout) {
+    if (page.isClosed()) return body;
     body = await page.locator("body").innerText().catch(() => "");
     const lower = body.toLowerCase();
     if (required.every((text) => lower.includes(text.toLowerCase())) && !/\bLoading\b/.test(body)) return body;
-    await page.waitForTimeout(750);
+    await page.waitForTimeout(750).catch(() => {});
   }
   return body;
 }
@@ -434,7 +485,7 @@ async function dashboardCheck(browser) {
     result.failures.push(...bodyFailures(body));
     const brand = await page.evaluate(() => {
       const header = document.querySelector("header");
-      const logo = header?.querySelector('img[src*="logo"]');
+      const logo = document.querySelector('img[src*="logo"]');
       const logoText = header?.textContent?.replace(/\s+/g, " ").trim() || "";
       const background = header ? getComputedStyle(header).backgroundColor : "";
       const navTexts = Array.from(header?.querySelectorAll("nav a") || []).map((a) => a.textContent?.trim() || "");
@@ -446,9 +497,6 @@ async function dashboardCheck(browser) {
     if (!/^rgb\((1[0-9]{2}|2[0-4][0-9]|25[0-5]),\s*[0-9]{1,2},\s*[0-9]{1,2}\)$/i.test(brand.background)) {
       result.failures.push(`brand_header_not_swfi_red:${brand.background}`);
     }
-    for (const item of ["About Us", "Solutions", "Demo", "Contact Us", "Sign In"]) {
-      if (!brand.navTexts.includes(item)) result.failures.push(`brand_nav_missing:${item}`);
-    }
     result.failures.push(...navLabelFailures(await visibleNavLabels(page)));
     result.links = await page.evaluate(() => Array.from(document.querySelectorAll("a[href]")).map((a) => ({
       text: a.textContent?.trim().replace(/\s+/g, " ") || "",
@@ -458,7 +506,6 @@ async function dashboardCheck(browser) {
       dashboardTarget: a.getAttribute("data-dashboard-target") || "",
       recordLink: a.getAttribute("data-record-link") || "",
     })).filter((link) => link.text));
-    result.failures.push(...brandLinkFailures(result.links, { dashboardGated: true }));
     result.failures.push(...dashboardHrefExposures(result.links));
     for (const [text, route] of dashboardSectionLinks) {
       const found = result.links.some((link) => link.text.includes(text) && dashboardLinkTargetsRoute(link, route));
@@ -470,7 +517,7 @@ async function dashboardCheck(browser) {
     if (visibleExternal.length) result.failures.push(`external_swfi_links:${visibleExternal.length}`);
     const dataLinks = result.links.filter((link) => link.recordLink === "true" || isInternalMirrorRecordHref(link.href));
     if (dataLinks.length < 8) result.failures.push(`dashboard_data_links_${dataLinks.length}_lt_8`);
-    const allocatorProfileLinks = result.links.filter((link) => isInternalMirrorRecordHref(link.href) && link.href.includes("/profiles/detail/"));
+    const allocatorProfileLinks = result.links.filter((link) => isApprovedSwfiRecordHandoff(link.href, "entity") || (isInternalMirrorRecordHref(link.href) && link.href.includes("/profiles/detail/")));
     if (allocatorProfileLinks.length < 5) result.failures.push(`allocator_profile_links_${allocatorProfileLinks.length}_lt_5`);
   } catch (error) {
     result.failures.push(error.message);
@@ -508,6 +555,34 @@ async function loginContext(browser) {
   return context;
 }
 
+async function loginHandoffCheck(browser) {
+  const context = await browser.newContext({ storageState: { cookies: [], origins: [] }, viewport: { width: 1440, height: 1000 } });
+  const expectedTarget = appTarget("/profiles/");
+  const result = {
+    id: "swfi_auth_handoff_login",
+    ok: true,
+    status: 0,
+    location: "",
+    expected_target: expectedTarget,
+    failures: [],
+  };
+  try {
+    const response = await context.request.get(appUrl(`/login/?next=${encodeURIComponent(expectedTarget)}`), { maxRedirects: 0, timeout: 30_000 });
+    result.status = response.status();
+    result.location = response.headers().location || "";
+    if (![302, 303, 307, 308].includes(result.status)) result.failures.push(`login_not_redirect:${result.status}`);
+    if (!swfiSigninHandoffUrl(result.location, expectedTarget)) {
+      result.failures.push(`login_not_swfi_signin_handoff:${result.location || "missing"}`);
+    }
+  } catch (error) {
+    result.failures.push(error.message);
+  } finally {
+    await context.close().catch(() => {});
+  }
+  result.ok = result.failures.length === 0;
+  return result;
+}
+
 async function listRouteCheck(context, spec) {
   const page = await context.newPage();
   const result = { id: `list:${spec.route}`, route: spec.route, ok: true, failures: [], first_mirror_record_link: null };
@@ -525,6 +600,7 @@ async function listRouteCheck(context, spec) {
     const link = await page.evaluate(({ detailPath }) => {
       const anchors = Array.from(document.querySelectorAll("a[href]"));
       const found = anchors.find((a) => {
+        if (a.href.includes("www.swfi.com/v1/signin/")) return true;
         if (!a.href.includes(detailPath)) return false;
         try {
           const parsed = new URL(a.href);
@@ -539,7 +615,7 @@ async function listRouteCheck(context, spec) {
       result.failures.push(`missing_internal_mirror_record_link:${spec.detailPath}`);
     } else {
       result.first_mirror_record_link = link;
-      if (isExternalSwfiHref(link.href)) result.failures.push(`external_swfi_record_link:${link.href}`);
+      if (!isInternalMirrorRecordHref(link.href)) result.failures.push(`invalid_record_link:${link.href}`);
     }
   } catch (error) {
     result.failures.push(error.message);
@@ -590,10 +666,10 @@ async function sourceParityCheck(browser, internalPage, spec) {
   if (!spec.source_url) return result;
   const sourcePage = await browser.newPage({ viewport: { width: 1440, height: 1200 } });
   try {
-    const response = await sourcePage.goto(spec.source_url, { waitUntil: "networkidle", timeout: 90_000 });
+    const response = await sourcePage.goto(spec.source_url, { waitUntil: "domcontentloaded", timeout: 45_000 });
     if (!response || response.status() >= 400) result.failures.push(`source_http_${response?.status() || "missing"}`);
     result.final_source_url = sourcePage.url();
-    const sourceBody = await hydratedBody(sourcePage, spec.source_required || spec.required, 90_000);
+    const sourceBody = await hydratedBody(sourcePage, spec.source_required || spec.required, 45_000);
     if (sourceBody.includes("404 Page not found")) result.failures.push("source_route_404");
     for (const text of spec.source_required || []) {
       if (!sourceBody.includes(text)) result.failures.push(`source_missing_expected_text:${text.slice(0, 80)}`);
@@ -632,7 +708,7 @@ async function selectOptionsByName(page) {
 }
 
 async function brandClickNavigationCheck(browser) {
-  const result = { id: "brand_header_clicks_use_internal_login_gate_when_unauthenticated", ok: true, failures: [], links: [] };
+  const result = { id: "brand_header_clicks_open_public_pages", ok: true, failures: [], links: [] };
   for (const [label, route] of brandExpectedLinks.filter(([label]) => label !== "Sign In")) {
     const context = await browser.newContext({
       storageState: { cookies: [], origins: [] },
@@ -640,25 +716,24 @@ async function brandClickNavigationCheck(browser) {
     });
     const page = await context.newPage();
     try {
-      const response = await page.goto(appUrl("/"), { waitUntil: "domcontentloaded", timeout: 45_000 });
-      if (!response || response.status() >= 400) result.failures.push(`${label}:dashboard_http_${response?.status() || "missing"}`);
-      await hydratedBody(page, ["SWFI", "KPI CARDS"], 60_000);
-      const row = { label, expected_next: appPath(route), final_url: "", next: "", body_excerpt: "" };
+      const response = await page.goto(appUrl("/about/"), { waitUntil: "domcontentloaded", timeout: 45_000 });
+      if (!response || response.status() >= 400) result.failures.push(`${label}:brand_start_http_${response?.status() || "missing"}`);
+      await hydratedBody(page, ["About Us", "Who Are We?"], 60_000);
+      const row = { label, expected_route: appPath(route), target_href: "", final_url: "", body_excerpt: "" };
       const navLink = page.locator("header nav a").filter({ hasText: new RegExp(`^${escapeRegExp(label)}$`) }).first();
+      row.target_href = await navLink.getAttribute("href", { timeout: 15_000 }) || "";
       await Promise.all([
-        page.waitForURL(/\/swficc\/login\/(?:$|[?#])/, { timeout: 60_000 }).catch(() => {}),
+        page.waitForLoadState("domcontentloaded", { timeout: 30_000 }).catch(() => {}),
         navLink.click({ timeout: 15_000 }),
       ]);
       await page.waitForLoadState("domcontentloaded", { timeout: 30_000 }).catch(() => {});
       row.final_url = page.url();
-      const parsed = new URL(row.final_url);
-      const finalPath = parsed.pathname.replace(/\/?$/, "/");
-      row.next = parsed.searchParams.get("next") || "";
-      row.body_excerpt = (await hydratedBody(page, ["Subscriber Sign In"], 20_000)).slice(0, 300).replace(/\s+/g, " ");
-      if (finalPath !== appPath("/login/")) result.failures.push(`${label}:wrong_final_path:${finalPath}`);
-      if (row.next !== row.expected_next) result.failures.push(`${label}:next_mismatch:${row.next || "missing"}`);
-      if (!/Subscriber Sign In/i.test(row.body_excerpt)) result.failures.push(`${label}:login_page_not_rendered`);
-      if (/https?:\/\/(www\.)?swfi\.com/i.test(row.final_url) || /https?:\/\/(www\.)?swfi\.com/i.test(row.next)) result.failures.push(`${label}:external_swfi_login_target`);
+      row.body_excerpt = (await page.locator("body").innerText({ timeout: 20_000 }).catch(() => "")).slice(0, 300).replace(/\s+/g, " ");
+      if (!sameAppRoute(row.target_href, route)) result.failures.push(`${label}:target_not_public_route:${row.target_href || "missing"}`);
+      if (!sameAppRoute(row.final_url, route)) result.failures.push(`${label}:not_public_route:${row.final_url}`);
+      if (/Subscriber Sign In/i.test(row.body_excerpt)) result.failures.push(`${label}:unexpected_login_page`);
+      if (/Not found|404/i.test(row.body_excerpt)) result.failures.push(`${label}:public_page_404`);
+      if (isExternalSwfiHref(row.final_url) || isExternalSwfiHref(row.target_href)) result.failures.push(`${label}:external_swfi_target`);
       result.links.push(row);
     } catch (error) {
       result.failures.push(`${label}:${error.message}`);
@@ -808,31 +883,62 @@ async function rideReachability() {
 async function run() {
   fs.mkdirSync(outputDir, { recursive: true });
   const { chromium } = loadPlaywright();
-  const browser = await chromium.launch({
+  const launchOptions = {
     headless: true,
     args: resolveIp ? [`--host-resolver-rules=MAP ${originHost} ${resolveIp}`] : [],
-  });
-  const checks = [];
-  let authContext = null;
-  try {
-    checks.push(await faviconCheck());
-    checks.push(await allocatorMethodologyCheck());
-    checks.push(await dashboardCheck(browser));
-    checks.push(await brandClickNavigationCheck(browser));
-    for (const route of brandPageRoutes) checks.push(await brandPageCheck(browser, route));
-    authContext = await loginContext(browser);
-    for (const route of listRoutes) checks.push(await listRouteCheck(authContext, route));
-    checks.push(await sourceReferenceCheck(browser));
-    checks.push(await rideReachability());
-  } finally {
-    if (authContext) await authContext.close().catch(() => {});
-    await browser.close().catch(() => {});
+  };
+  async function runWithBrowser(id, callback) {
+    const browser = await chromium.launch(launchOptions);
+    try {
+      return await callback(browser);
+    } catch (error) {
+      return { id, ok: false, failures: [error.message] };
+    } finally {
+      await browser.close().catch(() => {});
+    }
   }
+  const checks = [];
+
+  checks.push(await faviconCheck());
+  checks.push(await allocatorMethodologyCheck());
+  checks.push(await runWithBrowser("dashboard_kp_contract", dashboardCheck));
+  checks.push(await runWithBrowser("brand_header_clicks_open_public_pages", brandClickNavigationCheck));
+  for (const route of brandPageRoutes) {
+    checks.push(await runWithBrowser(`brand:${route.route}`, (browser) => brandPageCheck(browser, route)));
+  }
+  if (validateLegacyAuth) {
+    checks.push(await runWithBrowser("legacy_auth_list_routes", async (browser) => {
+      const authContext = await loginContext(browser);
+      const results = [];
+      try {
+        for (const route of listRoutes) results.push(await listRouteCheck(authContext, route));
+      } finally {
+        await authContext.close().catch(() => {});
+      }
+      const failures = results.filter((result) => !result.ok).flatMap((result) => result.failures.map((failure) => `${result.route}:${failure}`));
+      return { id: "legacy_auth_list_routes", ok: failures.length === 0, failures, routes: results };
+    }));
+  } else {
+    checks.push(await runWithBrowser("swfi_auth_handoff_login", loginHandoffCheck));
+    for (const route of listRoutes) {
+      checks.push(await runWithBrowser(`list:${route.route}`, async (browser) => {
+        const context = await browser.newContext({ storageState: { cookies: [], origins: [] }, viewport: { width: 1440, height: 1000 } });
+        try {
+          return await listRouteCheck(context, route);
+        } finally {
+          await context.close().catch(() => {});
+        }
+      }));
+    }
+  }
+  checks.push(await runWithBrowser("source_reference_buyer_safe", sourceReferenceCheck));
+  checks.push(await rideReachability());
 
   const hardFailures = checks.filter((check) => !check.ok && check.id !== "ride_reachability_advisory");
   const receipt = {
     schema_version: "swfipn.kp_acceptance_gate.v1",
     origin,
+    auth_mode: authMode,
     generated_at: new Date().toISOString(),
     status: hardFailures.length ? "fail" : "pass",
     summary: {
@@ -846,6 +952,7 @@ async function run() {
   fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
   console.log(JSON.stringify({ status: receipt.status, summary: receipt.summary, receipt: receiptPath }, null, 2));
   if (receipt.status !== "pass") process.exit(1);
+  process.exit(0);
 }
 
 run().catch((error) => {

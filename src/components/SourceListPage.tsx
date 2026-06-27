@@ -15,9 +15,11 @@ import {
   SOURCE_GAP,
   text,
 } from "@/lib/sourcePackets";
-import { appHref, isSwfiPlatformRecordHref, selfContainedHref, sourceProvenanceHref, swfiMirrorHref } from "@/lib/selfContainedLinks";
-import { legacyPostId, mandateDetailHref, personDetailHref, profileDetailHref, researchDetailHref, sourceRecordId, transactionDetailHref } from "@/lib/detailRoutes";
+import { appHref, isSwfiPlatformRecordHref, selfContainedHref, sourceProvenanceHref, swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
+import { legacyPostId, mandateDetailHref, personDetailHref, profileDetailHref, researchDetailHref, sourceRecordIdFor, transactionDetailHref } from "@/lib/detailRoutes";
 import SwfiBrandHeader from "@/components/SwfiBrandHeader";
+import AlertsRuleManager from "@/components/AlertsRuleManager";
+import SavedSearchManager from "@/components/SavedSearchManager";
 
 type Kind = "profiles" | "people" | "transactions" | "deals" | "allocators" | "comparisons" | "mandates" | "alerts" | "research" | "intelligence" | "search";
 type Row = Record<string, unknown>;
@@ -206,6 +208,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
   const [sortDir, setSortDir] = useState<"asc" | "desc">(() => defaultSortDir(kind));
   const [allocatorSort, setAllocatorSort] = useState("deal_count");
   const [selectedDealEntityTypes, setSelectedDealEntityTypes] = useState<string[]>([]);
+  const [sectionView, setSectionView] = useState<"data" | "visualization">("data");
   const [rowLimit, setRowLimit] = useState(25);
   const [pageIndex, setPageIndex] = useState(0);
   const [comparisonPackets, setComparisonPackets] = useState<Record<string, Packet>>({});
@@ -363,6 +366,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
     [comparisonRecords, pageStart, rowLimit],
   );
   const countDetails = tableCountDetails(kind, packet, packets, totalRows, sourceRows.length);
+  const visualizationRows = useMemo(() => isFact(packet) ? rows(packet) : [], [packet]);
   const dealEntityTypeOptions = useMemo(() => {
     if (kind !== "deals") return [];
     const optionPacket = packets.dealEntityTypes || packet;
@@ -467,6 +471,45 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
 
         {kind === "deals" ? (
           <DealEnginePanel />
+        ) : null}
+
+        {kind === "alerts" ? (
+          <AlertsRuleManager />
+        ) : null}
+
+        {kind === "search" ? (
+          <SavedSearchManager />
+        ) : null}
+
+        {supportsSectionVisualization(kind) ? (
+          <section data-gsap-reveal className="rounded border border-[#DCE3EA] bg-white px-4 py-3">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="m-0 text-[16px] font-bold text-[#11314F]">{sectionVisualizationTitle(kind)}</h2>
+                <p className="m-0 mt-1 text-[12px] text-[#7A8A9B]">Live SWFI rows with synchronized data and visualization views.</p>
+              </div>
+              <div className="flex rounded border border-[#C7D2DD] bg-[#F7F9FA] p-1 text-sm">
+                {[
+                  ["data", "Data"],
+                  ["visualization", "Visualization"],
+                ].map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setSectionView(value as "data" | "visualization")}
+                    className={`rounded px-3 py-1.5 font-semibold ${sectionView === value ? "bg-white text-[#11314F] shadow-sm" : "text-[#617386]"}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {sectionView === "visualization" ? (
+              kind === "mandates"
+                ? <CompassVisualization rows={visualizationRows} totalRows={totalRows} />
+                : <SectionVisualization kind={kind} rows={visualizationRows} totalRows={totalRows} />
+            ) : null}
+          </section>
         ) : null}
 
         <section data-gsap-reveal className="rounded border border-[#DCE3EA] bg-white px-4 py-3 text-sm text-[#41566B]">
@@ -699,7 +742,7 @@ function hardNavigateSameRouteFilter(event: MouseEvent<HTMLAnchorElement>, targe
 function productHref(href: string | undefined, fallback = "/"): string {
   if (!href) return appHref(fallback);
   if (isSwfiPlatformRecordHref(href)) {
-    return swfiMirrorHref(href);
+    return swfiAuthHandoffHref(href);
   }
   if (href.startsWith("http://") || href.startsWith("https://")) return href;
   return selfContainedHref(href, fallback);
@@ -887,7 +930,7 @@ function transactionCell(row: Row, label = text(row.title || row.name)): Cell {
   const provenance = sourceHref(row);
   return {
     label,
-    href: provenance || transactionDetailHref(row, provenance),
+    href: transactionDetailHref(row, provenance),
     sourceHref: provenance,
     citationText: provenance ? `SWFI transaction source: ${provenance}` : undefined,
   };
@@ -897,20 +940,22 @@ function dealProfileCell(row: Row): Cell {
   const label = text(row.investor || row.name, "");
   if (!label) return NOT_DISCLOSED;
   const slug = text(row.slug || row.profile_slug, "");
-  return slug ? { label, href: profileDetailHref({ name: label, slug }), citationText: "SWFI profile lookup" } : label;
+  const source = sourceHref(row);
+  if (source) return { label, href: profileDetailHref({ name: label, slug }, source), sourceHref: source, citationText: "SWFI profile source on file" };
+  return { label, href: `/profiles/?filter=${encodeURIComponent(label)}`, citationText: "SWFI profile lookup" };
 }
 
 function dealProfileLink(row: Row, key: string): CellLink {
   const label = text(row[key], NOT_DISCLOSED);
   if (!label || label === NOT_DISCLOSED) return { label: NOT_DISCLOSED, href: undefined };
-  return { label, href: profileDetailHref({ name: label }) };
+  return { label, href: `/profiles/?filter=${encodeURIComponent(label)}` };
 }
 
 function dealTransactionCell(row: Row): Cell {
   const label = text(row.latest_transaction, "");
   if (!label) return NOT_DISCLOSED;
   const source = text(row.latest_transaction_source_url || row.transaction_source_url || row.source_url || row.swfi_url, "");
-  const href = transactionDetailHref({ title: label }, source || undefined);
+  const href = source ? transactionDetailHref({ title: label }, source) : `/transactions/?filter=${encodeURIComponent(label)}`;
   return { label, href, sourceHref: source || undefined };
 }
 
@@ -918,7 +963,7 @@ function personCell(row: Row): Cell {
   const provenance = sourceHref(row);
   return {
     label: text(row.name || row.title),
-    href: provenance || personDetailHref(row, provenance),
+    href: personDetailHref(row, provenance),
     sourceHref: provenance,
     citationText: provenance ? `SWFI people source: ${provenance}` : undefined,
   };
@@ -929,7 +974,7 @@ function transactionFactCell(row: Row, label: string): Cell {
   const provenance = sourceHref(row);
   return {
     label: clean,
-    href: provenance || transactionDetailHref(row, provenance),
+    href: transactionDetailHref(row, provenance),
     sourceHref: provenance,
   };
 }
@@ -994,7 +1039,7 @@ function mandateCell(row: Row): Cell {
   const provenance = sourceHref(row);
   return {
     label: text(row.title || row.name),
-    href: provenance || mandateDetailHref(row, provenance),
+    href: mandateDetailHref(row, provenance),
     sourceHref: provenance,
     citationText: provenance ? `SWFI Compass source: ${provenance}` : undefined,
   };
@@ -1071,7 +1116,7 @@ function totalCount(kind: Kind, packet: Packet | undefined, packets: Record<stri
     return Math.max(total, fallback);
   }
   if (!isFact(packet)) return fallback;
-  return packetNumber(packet, ["count", "row_count", "total", "source_total"]) ?? fallback;
+  return packetNumber(packet, ["source_total", "total", "count", "row_count"]) ?? fallback;
 }
 
 function isServerPagedKind(kind: Kind) {
@@ -1104,6 +1149,373 @@ function packetNumber(packet: Packet | undefined, keys: string[]) {
     }
   }
   return null;
+}
+
+function supportsSectionVisualization(kind: Kind): boolean {
+  return ["profiles", "comparisons", "people", "transactions", "deals", "mandates"].includes(kind);
+}
+
+function sectionVisualizationTitle(kind: Kind): string {
+  if (kind === "profiles") return "Institution Data Visualization";
+  if (kind === "comparisons") return "Peer Comparison Visualization";
+  if (kind === "people") return "People Data Visualization";
+  if (kind === "transactions" || kind === "deals") return "Transaction Data Visualization";
+  if (kind === "mandates") return "Compass RFP Analytics";
+  return "Data Visualization";
+}
+
+function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kind; rows: Row[]; totalRows: number }) {
+  const categoryRows = bucketRows(sourceRows, (row) => sectionCategoryLabel(kind, row));
+  const geographyRows = bucketRows(sourceRows, (row) => businessText(row.country || row.region || row.buyer_region || row.seller_region));
+  const trendRows = bucketRows(sourceRows, (row) => monthBucket(row.closed_at || row.announced_at || row.published_at || row.updated_at || row.created_at || row.last_updated)).reverse();
+  const topRows = [...sourceRows].slice(0, 8);
+  const summary = [
+    ["Total Records", totalRows.toLocaleString("en-US")],
+    ["Loaded Rows", sourceRows.length.toLocaleString("en-US")],
+    ["Top Category", categoryRows[0]?.label || NOT_DISCLOSED],
+  ] as const;
+
+  return (
+    <div className="grid gap-4" data-brd-section-visualization={kind}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="grid gap-1 text-[12px] text-[#7A8A9B]">
+          <span>Data source: SWFI records</span>
+          <span>Showing {sourceRows.length.toLocaleString("en-US")} loaded rows from {totalRows.toLocaleString("en-US")} total records.</span>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={() => downloadSectionCsv(kind, sourceRows)} className="rounded border border-[#C7D2DD] bg-white px-3 py-1.5 text-sm font-semibold text-[#16538C]">Export CSV</button>
+          <button type="button" onClick={() => downloadSectionPng(kind, sourceRows)} className="rounded border border-[#C7D2DD] bg-white px-3 py-1.5 text-sm font-semibold text-[#16538C]">Export PNG</button>
+        </div>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        {summary.map(([label, value]) => (
+          <div key={label} className="rounded border border-[#DCE3EA] bg-[#F7F9FA] px-3 py-3">
+            <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#7A8A9B]">{label}</div>
+            <div className="mt-1 text-[18px] font-bold text-[#11314F]">{value}</div>
+          </div>
+        ))}
+      </div>
+      <div className="grid gap-4 lg:grid-cols-3">
+        <SectionBarChart kind={kind} title="Records by Category" rows={categoryRows} />
+        <SectionBarChart kind={kind} title="Records by Geography" rows={geographyRows} />
+        <SectionLineChart title="Records by Month" rows={trendRows} />
+      </div>
+      <SectionTopRecords kind={kind} rows={topRows} />
+    </div>
+  );
+}
+
+function sectionCategoryLabel(kind: Kind, row: Row): string {
+  if (kind === "profiles" || kind === "comparisons") return businessText(row.type || row.entity_type);
+  if (kind === "people") return businessText(row.institution || row.title || row.country);
+  if (kind === "transactions" || kind === "deals") return businessText(row.industry || row.category || row.sector || row.investment_type);
+  return businessText(row.type || row.strategy || row.investment_type || row.asset_class_or_strategy);
+}
+
+function SectionBarChart({ kind, title, rows: chartRows }: { kind: Kind; title: string; rows: { label: string; count: number }[] }) {
+  const max = Math.max(1, ...chartRows.map((row) => row.count));
+  return (
+    <div className="rounded border border-[#DCE3EA] bg-white p-3">
+      <h3 className="m-0 mb-3 text-[13px] font-bold text-[#11314F]">{title}</h3>
+      <div className="grid gap-2">
+        {chartRows.length ? chartRows.slice(0, 8).map((row) => (
+          <a key={`${title}-${row.label}`} href={appHref(`${routeByKind[kind]}/?filter=${encodeURIComponent(row.label)}`)} className="grid gap-1 text-inherit no-underline">
+            <div className="flex justify-between gap-3 text-[12px]">
+              <span className="truncate font-semibold text-[#41566B]">{row.label}</span>
+              <span className="font-bold text-[#11314F]">{row.count.toLocaleString("en-US")}</span>
+            </div>
+            <div className="h-2 rounded bg-[#E8EDF2]">
+              <div className="h-2 rounded bg-[#5C9BD6]" style={{ width: `${Math.max(8, (row.count / max) * 100)}%` }} />
+            </div>
+          </a>
+        )) : <div className="text-sm text-[#7A8A9B]">No source rows available.</div>}
+      </div>
+    </div>
+  );
+}
+
+function SectionLineChart({ title, rows: chartRows }: { title: string; rows: { label: string; count: number }[] }) {
+  const visibleRows = chartRows.filter((row) => row.label !== NOT_DISCLOSED).slice(-12);
+  const max = Math.max(1, ...visibleRows.map((row) => row.count));
+  const points = visibleRows.length
+    ? visibleRows.map((row, index) => {
+      const x = visibleRows.length === 1 ? 50 : (index / (visibleRows.length - 1)) * 100;
+      const y = 90 - (row.count / max) * 72;
+      return `${x},${y}`;
+    }).join(" ")
+    : "";
+  return (
+    <div className="rounded border border-[#DCE3EA] bg-white p-3">
+      <h3 className="m-0 mb-3 text-[13px] font-bold text-[#11314F]">{title}</h3>
+      {visibleRows.length ? (
+        <div>
+          <svg viewBox="0 0 100 100" className="h-32 w-full" role="img" aria-label={title}>
+            <polyline points={points} fill="none" stroke="#5C9BD6" strokeWidth="3" vectorEffect="non-scaling-stroke" />
+            {points.split(" ").map((point, index) => {
+              const [x, y] = point.split(",");
+              return <circle key={`${point}-${index}`} cx={x} cy={y} r="2.5" fill="#11314F" />;
+            })}
+          </svg>
+          <div className="mt-2 flex justify-between gap-2 text-[11px] text-[#7A8A9B]">
+            <span>{visibleRows[0]?.label}</span>
+            <span>{visibleRows.at(-1)?.label}</span>
+          </div>
+        </div>
+      ) : <div className="text-sm text-[#7A8A9B]">No dated source rows available.</div>}
+    </div>
+  );
+}
+
+function SectionTopRecords({ kind, rows: topRows }: { kind: Kind; rows: Row[] }) {
+  return (
+    <div className="rounded border border-[#DCE3EA] bg-white p-3">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="m-0 text-[13px] font-bold text-[#11314F]">Top Loaded Records</h3>
+        <a href={appHref(routeByKind[kind])} className="text-sm text-[#16538C] underline">Open Data View</a>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        {topRows.length ? topRows.map((row, index) => {
+          const source = sourceHref(row);
+          const href = sectionRecordHref(kind, row, source);
+          return (
+            <a key={`${sectionRecordLabel(kind, row)}-${index}`} href={productHref(href, routeByKind[kind])} data-source-state={source ? "on-file" : undefined} className="rounded border border-[#E1E8EF] px-3 py-2 text-[#405062] no-underline">
+              <span className="block truncate text-[12px] font-bold text-[#11314F]">{sectionRecordLabel(kind, row)}</span>
+              <span className="mt-1 block truncate text-[11px] text-[#7A8A9B]">{sectionCategoryLabel(kind, row)}</span>
+            </a>
+          );
+        }) : <div className="text-sm text-[#7A8A9B]">No source rows available.</div>}
+      </div>
+    </div>
+  );
+}
+
+function sectionRecordLabel(kind: Kind, row: Row): string {
+  if (kind === "people") return text(row.name || row.title, NOT_DISCLOSED);
+  if (kind === "transactions" || kind === "deals") return text(row.title || row.name, NOT_DISCLOSED);
+  return text(row.name || row.institution || row.title, NOT_DISCLOSED);
+}
+
+function sectionRecordHref(kind: Kind, row: Row, source?: string): string {
+  if (kind === "people") return personDetailHref(row, source);
+  if (kind === "transactions" || kind === "deals") return transactionDetailHref(row, source);
+  if (kind === "mandates") return mandateDetailHref(row, source);
+  return profileDetailHref(row, source);
+}
+
+function downloadSectionCsv(kind: Kind, sourceRows: Row[]) {
+  const fields = sectionCsvFields(kind);
+  const lines = [
+    fields.map((field) => csvEscape(field.label)).join(","),
+    ...sourceRows.map((row) => fields.map((field) => csvEscape(text(row[field.key], ""))).join(",")),
+  ];
+  triggerDownload(`${kind}-swfi-records.csv`, "text/csv;charset=utf-8", lines.join("\n"));
+}
+
+function sectionCsvFields(kind: Kind): Array<{ key: string; label: string }> {
+  if (kind === "people") return [
+    { key: "name", label: "Name" },
+    { key: "title", label: "Title" },
+    { key: "institution", label: "Institution" },
+    { key: "country", label: "Country" },
+    { key: "source_url", label: "Source URL" },
+  ];
+  if (kind === "transactions" || kind === "deals") return [
+    { key: "title", label: "Name" },
+    { key: "buyer_entity", label: "Buyer Entity" },
+    { key: "amount_display", label: "Amount" },
+    { key: "closed_at", label: "Closed At" },
+    { key: "source_url", label: "Source URL" },
+  ];
+  return [
+    { key: "name", label: "Name" },
+    { key: "type", label: "Type" },
+    { key: "country", label: "Country" },
+    { key: "region", label: "Region" },
+    { key: "source_url", label: "Source URL" },
+  ];
+}
+
+function csvEscape(value: string): string {
+  return `"${value.replaceAll("\"", "\"\"")}"`;
+}
+
+function downloadSectionPng(kind: Kind, sourceRows: Row[]) {
+  if (typeof document === "undefined") return;
+  const rowsForChart = bucketRows(sourceRows, (row) => sectionCategoryLabel(kind, row)).slice(0, 8);
+  const canvas = document.createElement("canvas");
+  canvas.width = 960;
+  canvas.height = 540;
+  const context = canvas.getContext("2d");
+  if (!context) return;
+  context.fillStyle = "#FFFFFF";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "#11314F";
+  context.font = "bold 28px Arial";
+  context.fillText(sectionVisualizationTitle(kind), 32, 48);
+  context.fillStyle = "#617386";
+  context.font = "16px Arial";
+  context.fillText("Data source: SWFI records", 32, 78);
+  const max = Math.max(1, ...rowsForChart.map((row) => row.count));
+  rowsForChart.forEach((row, index) => {
+    const y = 125 + index * 46;
+    const width = Math.max(18, (row.count / max) * 620);
+    context.fillStyle = "#E8EDF2";
+    context.fillRect(285, y - 18, 640, 24);
+    context.fillStyle = "#5C9BD6";
+    context.fillRect(285, y - 18, width, 24);
+    context.fillStyle = "#11314F";
+    context.font = "14px Arial";
+    context.fillText(row.label.slice(0, 28), 32, y);
+    context.fillText(row.count.toLocaleString("en-US"), 285 + width + 10, y);
+  });
+  canvas.toBlob((blob) => {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    triggerDownloadUrl(`${kind}-swfi-visualization.png`, url);
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }, "image/png");
+}
+
+function triggerDownload(filename: string, mimeType: string, content: string) {
+  if (typeof document === "undefined") return;
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  triggerDownloadUrl(filename, url);
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function triggerDownloadUrl(filename: string, url: string) {
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+function CompassVisualization({ rows: sourceRows, totalRows }: { rows: Row[]; totalRows: number }) {
+  const investmentTypeRows = bucketRows(sourceRows, (row) => businessText(row.investment_type || row.strategy || row.asset_class_or_strategy || row.type));
+  const regionRows = bucketRows(sourceRows, (row) => businessText(row.region || row.country));
+  const monthRows = bucketRows(sourceRows, (row) => monthBucket(row.posted_at || row.created_at || row.published_at || row.deadline || row.due_at)).reverse();
+  const disclosedAmounts = sourceRows.map((row) => numericSortValue(disclosedMoney(row.amount_display || row.capital_display || row.amount || row.capital))).filter((value): value is number => typeof value === "number");
+  const totalCapital = disclosedAmounts.reduce((sum, value) => sum + value, 0);
+  const averageTicket = disclosedAmounts.length ? totalCapital / disclosedAmounts.length : 0;
+  const summary = [
+    ["Total Open RFPs", totalRows.toLocaleString("en-US")],
+    ["Total Capital Sought", totalCapital ? compactMoney(totalCapital) : NOT_DISCLOSED],
+    ["Average Ticket Size", averageTicket ? compactMoney(averageTicket) : NOT_DISCLOSED],
+  ] as const;
+  return (
+    <div className="grid gap-4" data-brd-compass-visualization="true">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="grid gap-1 text-[12px] text-[#7A8A9B]">
+          <span>Data source: SWFI records</span>
+          <span>Showing {sourceRows.length.toLocaleString("en-US")} loaded Compass rows from {totalRows.toLocaleString("en-US")} total records.</span>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={() => downloadSectionCsv("mandates", sourceRows)} className="rounded border border-[#C7D2DD] bg-white px-3 py-1.5 text-sm font-semibold text-[#16538C]">Export CSV</button>
+          <button type="button" onClick={() => downloadSectionPng("mandates", sourceRows)} className="rounded border border-[#C7D2DD] bg-white px-3 py-1.5 text-sm font-semibold text-[#16538C]">Export PNG</button>
+        </div>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        {summary.map(([label, value]) => (
+          <div key={label} className="rounded border border-[#DCE3EA] bg-[#F7F9FA] px-3 py-3">
+            <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#7A8A9B]">{label}</div>
+            <div className="mt-1 text-[19px] font-bold text-[#11314F]">{value}</div>
+          </div>
+        ))}
+      </div>
+      <div className="grid gap-4 lg:grid-cols-3">
+        <CompassBarChart title="RFPs by Investment Type" rows={investmentTypeRows} />
+        <CompassBarChart title="RFPs by Region" rows={regionRows} />
+        <CompassLineChart title="RFPs Posted Per Month" rows={monthRows} />
+      </div>
+    </div>
+  );
+}
+
+function CompassBarChart({ title, rows: chartRows }: { title: string; rows: { label: string; count: number }[] }) {
+  const max = Math.max(1, ...chartRows.map((row) => row.count));
+  return (
+    <div className="rounded border border-[#DCE3EA] bg-white p-3">
+      <h3 className="m-0 mb-3 text-[13px] font-bold text-[#11314F]">{title}</h3>
+      <div className="grid gap-2">
+        {chartRows.length ? chartRows.slice(0, 8).map((row) => (
+          <a key={row.label} href={appHref(`/mandates/?filter=${encodeURIComponent(row.label)}`)} className="grid gap-1 text-inherit no-underline">
+            <div className="flex justify-between gap-3 text-[12px]">
+              <span className="truncate font-semibold text-[#41566B]">{row.label}</span>
+              <span className="font-bold text-[#11314F]">{row.count.toLocaleString("en-US")}</span>
+            </div>
+            <div className="h-2 rounded bg-[#E8EDF2]">
+              <div className="h-2 rounded bg-[#5C9BD6]" style={{ width: `${Math.max(8, (row.count / max) * 100)}%` }} />
+            </div>
+          </a>
+        )) : <div className="text-sm text-[#7A8A9B]">No Compass rows available.</div>}
+      </div>
+    </div>
+  );
+}
+
+function CompassLineChart({ title, rows: chartRows }: { title: string; rows: { label: string; count: number }[] }) {
+  const max = Math.max(1, ...chartRows.map((row) => row.count));
+  const points = chartRows.length
+    ? chartRows.slice(-12).map((row, index, visibleRows) => {
+      const x = visibleRows.length === 1 ? 50 : (index / (visibleRows.length - 1)) * 100;
+      const y = 90 - (row.count / max) * 72;
+      return `${x},${y}`;
+    }).join(" ")
+    : "";
+  return (
+    <div className="rounded border border-[#DCE3EA] bg-white p-3">
+      <h3 className="m-0 mb-3 text-[13px] font-bold text-[#11314F]">{title}</h3>
+      {chartRows.length ? (
+        <div>
+          <svg viewBox="0 0 100 100" className="h-32 w-full" role="img" aria-label={title}>
+            <polyline points={points} fill="none" stroke="#5C9BD6" strokeWidth="3" vectorEffect="non-scaling-stroke" />
+            {points.split(" ").map((point, index) => {
+              const [x, y] = point.split(",");
+              return <circle key={`${point}-${index}`} cx={x} cy={y} r="2.5" fill="#11314F" />;
+            })}
+          </svg>
+          <div className="mt-2 flex justify-between gap-2 text-[11px] text-[#7A8A9B]">
+            <span>{chartRows[0]?.label}</span>
+            <span>{chartRows.at(-1)?.label}</span>
+          </div>
+        </div>
+      ) : <div className="text-sm text-[#7A8A9B]">No monthly Compass rows available.</div>}
+    </div>
+  );
+}
+
+function bucketRows(sourceRows: Row[], labelFor: (row: Row) => string) {
+  const buckets = new Map<string, number>();
+  sourceRows.forEach((row) => {
+    const label = labelFor(row);
+    const clean = label && label !== SOURCE_GAP ? label : NOT_DISCLOSED;
+    buckets.set(clean, (buckets.get(clean) || 0) + 1);
+  });
+  return [...buckets.entries()]
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+}
+
+function compactMoney(value: number) {
+  const units: [number, string][] = [
+    [1_000_000_000_000, "T"],
+    [1_000_000_000, "B"],
+    [1_000_000, "M"],
+    [1_000, "K"],
+  ];
+  const unit = units.find(([size]) => Math.abs(value) >= size);
+  if (!unit) return `$${value.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+  const scaled = value / unit[0];
+  return `$${scaled.toLocaleString("en-US", { maximumFractionDigits: scaled >= 100 ? 0 : 1 })}${unit[1]}`;
+}
+
+function monthBucket(value: unknown) {
+  const parsed = Date.parse(text(value, ""));
+  if (!Number.isFinite(parsed)) return NOT_DISCLOSED;
+  return new Intl.DateTimeFormat("en-US", { month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(parsed));
 }
 
 function DealEnginePanel() {
@@ -1330,7 +1742,7 @@ function comparisonHydratedRecord(record: Row, packets: Record<string, Packet>):
 }
 
 function comparisonRecordId(row: Row): string {
-  return text(row.entity_id || row.id || row.source_record_id, "") || sourceRecordId(sourceHref(row));
+  return text(row.entity_id, "") || sourceRecordIdFor(sourceHref(row), "entities") || text(row.id || row.source_record_id, "");
 }
 
 function comparisonName(row: Row): string {

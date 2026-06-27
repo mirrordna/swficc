@@ -15,6 +15,7 @@ const deployReceiptPath = path.join(outputDir, "swfipn-strict-acceptance-deploy-
 const assetReceiptPath = path.join(outputDir, "swfipn-asset-version-latest.json");
 const remoteHost = process.env.SWFIPN_RUNTIME_REMOTE_HOST || "hetzner";
 const remoteCheck = process.env.SWFIPN_RUNTIME_REMOTE_CHECK !== "0";
+const remoteWebContainer = process.env.SWFIPN_RUNTIME_WEB_CONTAINER || "swfipn_acceptance-swfipn-web-1";
 const maxReleaseAgeHours = Number(process.env.SWFIPN_MAX_RELEASE_AGE_HOURS || 72);
 const routeSpecs = [
   { key: "home", route: "/", releaseFile: "out/index.html", required: ["KPI CARDS", "Top Active Allocators", "Newest Transactions"] },
@@ -169,6 +170,23 @@ function remoteSha(file) {
   return { ok: true, file, sha256: result.stdout.trim().split(/\s+/)[0] || "" };
 }
 
+function remoteContainerSha(file) {
+  const result = spawnSync("ssh", [remoteHost, "docker", "exec", remoteWebContainer, "sha256sum", file], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    timeout: 20_000,
+  });
+  if (result.status !== 0) {
+    return {
+      ok: false,
+      file,
+      container: remoteWebContainer,
+      error: result.error?.message || result.stderr.trim() || `exit_${result.status}`,
+    };
+  }
+  return { ok: true, file, container: remoteWebContainer, sha256: result.stdout.trim().split(/\s+/)[0] || "" };
+}
+
 function localSha(file) {
   try {
     return { ok: true, file, sha256: sha256(fs.readFileSync(file, "utf8")) };
@@ -258,14 +276,14 @@ async function inspectRoute(browser, spec, deploy, publicMarker) {
     }
 
     if (remoteCheck && deploy.receipt?.release) {
-      const releaseFile = `${deploy.receipt.release}/${spec.releaseFile}`;
-      const release = remoteSha(releaseFile);
+      const releaseFile = `/app/${spec.releaseFile}`;
+      const release = remoteContainerSha(releaseFile);
       if (!release.ok) {
-        result.failures.push(`remote_release_sha_unavailable:${release.error}`);
+        result.failures.push(`remote_container_sha_unavailable:${release.error}`);
       } else {
         result.release_sha256 = release.sha256;
         result.public_matches_release = result.public_sha256 === result.release_sha256;
-        if (!result.public_matches_release) result.failures.push("public_html_mismatch_release");
+        if (!result.public_matches_release) result.failures.push("public_html_mismatch_container_release");
       }
     }
 

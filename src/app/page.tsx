@@ -1,6 +1,6 @@
 "use client";
 
-import type { AnchorHTMLAttributes, ReactNode } from "react";
+import type { AnchorHTMLAttributes, CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import type { Packet } from "@/lib/sourcePackets";
 import {
@@ -18,8 +18,8 @@ import {
 } from "@/lib/sourcePackets";
 import { useGsapReveal } from "@/hooks/useGsapReveal";
 import { HOME_PACKET_SNAPSHOT } from "@/lib/homeSourceSnapshot";
-import { appHref, assetHref, isSwfiPlatformRecordHref, sourceProvenanceHref, swfiMirrorHref } from "@/lib/selfContainedLinks";
-import { mandateDetailHref, profileDetailHref, researchDetailHref, transactionDetailHref } from "@/lib/detailRoutes";
+import { appHref, assetHref, isSwfiPlatformRecordHref, sourceProvenanceHref, swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
+import { mandateDetailHref, personDetailHref, profileDetailHref, researchDetailHref, transactionDetailHref } from "@/lib/detailRoutes";
 
 const ENDPOINTS = {
   metrics: "/api/swfi/dashboard-metrics/v1",
@@ -27,13 +27,16 @@ const ENDPOINTS = {
   allocators90: "/api/allocator-activity/v1?days=90&limit=1&count_only=1",
   rfps: "/api/live-opportunities/v1?limit=25&page=1",
   transactions30: "/api/recent-transactions/v1?days=30&limit=25&page=1",
+  entities: "/api/source-data/search/v1?collection=entities&limit=25&page=1",
+  people: "/api/source-data/search/v1?collection=people&limit=25&page=1",
   top20: "/v1/swfi/top20?limit=5",
   news: "/api/source-intelligence/news/v1?limit=25",
   sectorFlows: "/api/sector-flows/v1?days=365",
 };
 
 const LOADING = "Loading";
-const DASHBOARD_LOAD_ORDER: PacketKey[] = ["metrics", "sectorFlows", "allocators90", "rfps", "allocators30", "transactions30", "top20", "news"];
+const DASHBOARD_EMPTY = "No SWFI rows available";
+const DASHBOARD_LOAD_ORDER: PacketKey[] = ["metrics", "sectorFlows", "allocators90", "rfps", "allocators30", "transactions30", "entities", "people", "top20", "news"];
 const insightNav = [
   ["Top Investors", "/allocators"],
   ["Fundraising", "/mandates"],
@@ -48,6 +51,18 @@ type DashboardTableControls = {
   rowLimit: number;
   sortColumn: number;
   sortDir: "asc" | "desc";
+};
+
+type BrdSearchItem = {
+  label: string;
+  detail: string;
+  href: string;
+  sourceHref?: string;
+};
+
+type BrdSearchGroup = {
+  label: string;
+  items: BrdSearchItem[];
 };
 
 const navMain = [
@@ -74,7 +89,14 @@ const navIntel = [
 export default function DashboardPage() {
   const rootRef = useGsapReveal<HTMLDivElement>();
   const [packets, setPackets] = useState<Packets>(() => freshHomeSnapshot());
-  const [expandedSection, setExpandedSection] = useState<string | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeSearchIndex, setActiveSearchIndex] = useState(0);
+  const [newsTab, setNewsTab] = useState<"for-you" | "popular" | "topics">("for-you");
+  const [newestTab, setNewestTab] = useState<"transactions" | "rfps" | "opportunities" | "people">("transactions");
+  const [topTab, setTopTab] = useState<"compass" | "sector">("compass");
+  const [expandedPanel, setExpandedPanel] = useState("capital-flows");
+  const [visualControls, setVisualControls] = useState<DashboardTableControls>({ rowLimit: 5, sortColumn: 0, sortDir: "asc" });
 
   useEffect(() => {
     let active = true;
@@ -90,244 +112,940 @@ export default function DashboardPage() {
     };
   }, []);
 
-  const topInvestors = factRows(packets.allocators30).slice(0, 25);
-  const marketRows = factRows(packets.transactions30).slice(0, 25);
-  const fundraisingRows = factRows(packets.rfps).slice(0, 25);
+  useEffect(() => {
+    function onKeyDown(event: globalThis.KeyboardEvent) {
+      const key = event.key.toLowerCase();
+      if ((event.metaKey || event.ctrlKey) && key === "k") {
+        event.preventDefault();
+        setSearchOpen(true);
+      }
+      if (key === "escape") setSearchOpen(false);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  const entityRows = factRows(packets.entities).slice(0, 25);
+  const peopleRows = factRows(packets.people).slice(0, 25);
+  const transactionRows = factRows(packets.transactions30).slice(0, 25);
+  const rfpRows = factRows(packets.rfps).slice(0, 25);
   const newsRows = factRows(packets.news).slice(0, 25);
   const sectorRows = sectorFacetRows(packets.sectorFlows).slice(0, 10);
+  const topAumRows = factRows(packets.top20).slice(0, 25);
+  const dashboardReady = useMemo(() => {
+    return ["metrics", "sectorFlows", "allocators30", "rfps", "transactions30", "entities", "top20", "news"]
+      .every((key) => isFact(packets[key as PacketKey]));
+  }, [packets]);
   const dataAsOfLabel = useMemo(() => dataAsOfLabelFor(packets.metrics), [packets.metrics]);
-  const topAumRows = factRows(packets.top20).slice(0, 5);
-  const metricCards = dashboardMetricCards(packets, topAumRows, sectorRows);
-  const [dashboardRowLimit, setDashboardRowLimit] = useState(5);
-  const [dashboardSortColumn, setDashboardSortColumn] = useState(0);
-  const [dashboardSortDir, setDashboardSortDir] = useState<"asc" | "desc">("asc");
-  const dashboardTableControls = useMemo<DashboardTableControls>(() => ({
-    rowLimit: dashboardRowLimit,
-    sortColumn: dashboardSortColumn,
-    sortDir: dashboardSortDir,
-  }), [dashboardRowLimit, dashboardSortColumn, dashboardSortDir]);
-  const dashboardSourceRowCount = topAumRows.length
-    + sectorRows.length
-    + topInvestors.length
-    + fundraisingRows.length
-    + marketRows.length
-    + newsRows.length;
+  const quickLinks = useMemo(() => brdQuickLinks(entityRows, transactionRows, rfpRows), [entityRows, transactionRows, rfpRows]);
+  const unifiedRows = useMemo(() => unifiedIntelligenceRows({
+    topInvestors: entityRows,
+    marketRows: transactionRows,
+    fundraisingRows: rfpRows,
+    newsRows,
+    sectorRows,
+  }), [entityRows, transactionRows, rfpRows, newsRows, sectorRows]);
+  const searchGroups = useMemo(() => brdSearchGroups({
+    query: searchQuery,
+    entityRows,
+    peopleRows,
+    transactionRows,
+    rfpRows,
+    newsRows,
+  }), [searchQuery, entityRows, peopleRows, transactionRows, rfpRows, newsRows]);
+  const searchItems = useMemo(() => searchGroups.flatMap((group) => group.items), [searchGroups]);
 
-  function toggleSection(id: string) {
-    setExpandedSection((current) => current === id ? null : id);
+  useEffect(() => {
+    setActiveSearchIndex(0);
+  }, [searchQuery, searchOpen]);
+
+  function togglePanel(id: string) {
+    setExpandedPanel((current) => current === id ? "" : id);
   }
 
-  function sortDashboardBy(column: number) {
-    setDashboardSortDir((current) => dashboardSortColumn === column && current === "asc" ? "desc" : "asc");
-    setDashboardSortColumn(column);
+  function sortVisualPanel(column: number) {
+    setVisualControls((current) => ({
+      ...current,
+      sortColumn: column,
+      sortDir: current.sortColumn === column && current.sortDir === "asc" ? "desc" : "asc",
+    }));
   }
 
   return (
-    <div ref={rootRef} className="min-h-screen bg-[#E9EEF3] font-sans text-[#172431]">
-      <div className="grid min-h-screen lg:h-screen lg:grid-cols-[238px_minmax(0,1fr)] lg:overflow-hidden">
-        <ConceptSidebar topRows={topAumRows} />
-        <div className="order-1 min-w-0 overflow-hidden lg:order-none lg:flex lg:flex-col">
-          <ConceptTopBar dataAsOfLabel={dataAsOfLabel} packets={packets} />
-          <main className="min-w-0 overflow-visible px-3 py-3 sm:px-4 lg:overflow-y-auto">
-            <div className="sr-only">
-              KPI CARDS INSIGHTS Top AUM & Sector Activity Active Allocator Activity Largest Recent Deals RFP Deadline Timeline Sector Flow Newest Transactions (Last 25) Fundraising Activity SECTOR FLOW TABLE QUICK ACTIONS
+    <div ref={rootRef} data-dashboard-ready={dashboardReady ? "true" : "false"} className="min-h-screen bg-[#F5F3EF] font-sans text-[#101827]">
+      <BrdTopNavigation onSearchOpen={() => setSearchOpen(true)} />
+      <BrdDiscoverBar quickLinks={quickLinks} onSearchOpen={() => setSearchOpen(true)} dataAsOfLabel={dataAsOfLabel} />
+      <VisualExecutiveOverview
+        packets={packets}
+        topAumRows={topAumRows}
+        entityRows={entityRows}
+        transactionRows={transactionRows}
+        rfpRows={rfpRows}
+        newsRows={newsRows}
+        sectorRows={sectorRows}
+        unifiedRows={unifiedRows}
+        expandedPanel={expandedPanel}
+        onTogglePanel={togglePanel}
+        controls={visualControls}
+        onRowLimitChange={(rowLimit) => setVisualControls((current) => ({ ...current, rowLimit }))}
+        onSort={sortVisualPanel}
+      />
+      <main className="mx-auto grid max-w-[1440px] gap-x-14 gap-y-8 px-4 py-8 sm:px-8 xl:grid-cols-[minmax(0,1fr)_304px]">
+        <BrdNewsFeed rows={newsRows} tab={newsTab} onTabChange={setNewsTab} />
+        <BrdRightRail sectorRows={sectorRows} />
+        <BrdNewestData
+          tab={newestTab}
+          onTabChange={setNewestTab}
+          transactionRows={transactionRows}
+          rfpRows={rfpRows}
+          peopleRows={peopleRows}
+        />
+        <BrdTopTen tab={topTab} onTabChange={setTopTab} rfpRows={rfpRows} sectorRows={sectorRows} />
+      </main>
+      {searchOpen ? (
+        <BrdSearchModal
+          query={searchQuery}
+          groups={searchGroups}
+          activeIndex={activeSearchIndex}
+          onQueryChange={setSearchQuery}
+          onActiveIndexChange={setActiveSearchIndex}
+          onClose={() => setSearchOpen(false)}
+          flatItems={searchItems}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function BrdTopNavigation({ onSearchOpen }: { onSearchOpen: () => void }) {
+  const nav = [
+    ["Dashboard", "/"],
+    ["News", "/intelligence"],
+    ["Entities", "/profiles"],
+    ["People", "/people"],
+    ["Transactions", "/transactions"],
+    ["Deals", "/transactions"],
+    ["Compass", "/mandates"],
+    ["RFPs", "/mandates"],
+    ["Active Allocators", "/allocators"],
+    ["Deals & Transactions", "/deals"],
+    ["Reports", "/reports"],
+  ] as const;
+  return (
+    <header data-gsap-reveal className="bg-[#B90D12] text-white">
+      <div className="mx-auto flex min-h-[64px] max-w-[1440px] flex-wrap items-stretch">
+        <DashboardLink href="/" className="flex w-[152px] items-center bg-[#8E090D] px-6 no-underline">
+          <img src={assetHref("/swfi-assets/logo.svg")} alt="SWFI Sovereign Wealth Fund Institute" className="h-10 w-[104px] object-contain" />
+        </DashboardLink>
+        <nav className="flex min-w-0 flex-1 overflow-x-auto text-[13px] font-bold uppercase tracking-[0.04em] text-white/78">
+          {nav.map(([label, href], index) => (
+            <DashboardLink
+              key={label}
+              href={href}
+              className={`flex min-h-[64px] shrink-0 items-center gap-1 px-6 no-underline ${index === 0 ? "bg-[#A10B10] text-white" : "text-white/82 hover:bg-[#8E090D] hover:text-white"}`}
+            >
+              <span>{label}</span>
+              {["Entities", "People", "Transactions", "Deals", "Compass", "RFPs"].includes(label) ? <span className="text-[13px] text-white/55">⌄</span> : null}
+            </DashboardLink>
+          ))}
+        </nav>
+        <div className="flex min-h-[64px] items-center gap-4 px-5">
+          <button type="button" onClick={onSearchOpen} aria-label="Open Global Search" className="grid h-11 w-11 place-items-center rounded-full bg-transparent text-white hover:bg-white/8">
+            <svg viewBox="0 0 24 24" className="h-6 w-6" aria-hidden="true">
+              <path d="M10.8 18.2a7.4 7.4 0 1 1 0-14.8 7.4 7.4 0 0 1 0 14.8Zm5.4-1.8 4.2 4.2" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="2.4" />
+            </svg>
+          </button>
+          <DashboardLink href="/login/" className="hidden items-center gap-2 text-[13px] font-semibold text-white/80 no-underline hover:text-white sm:flex">
+            <span className="grid h-7 w-7 place-items-center rounded-full bg-white/90 text-[#8E090D]">
+              <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true">
+                <path d="M12 12.4a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 8c1.4-3.5 4-5.2 7-5.2s5.6 1.7 7 5.2" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="2" />
+              </svg>
+            </span>
+            <span>Your Account</span>
+            <span className="text-white/50">⌄</span>
+          </DashboardLink>
+        </div>
+        <DashboardLink href="/search/?q=Events" className="flex min-h-[64px] items-center bg-[#071F48] px-8 text-[13px] font-bold text-white no-underline hover:bg-[#0A2B56]">
+          Events
+        </DashboardLink>
+      </div>
+    </header>
+  );
+}
+
+function BrdDiscoverBar({ quickLinks, dataAsOfLabel, onSearchOpen }: {
+  quickLinks: BrdSearchItem[];
+  dataAsOfLabel: string;
+  onSearchOpen: () => void;
+}) {
+  return (
+    <section data-gsap-reveal className="border-b border-[#E5E1DA] bg-[#ECEAE5]">
+      <div className="mx-auto grid max-w-[1440px] gap-4 px-4 py-5 sm:px-8 lg:grid-cols-[82px_minmax(260px,650px)_minmax(0,1fr)] lg:items-center">
+        <h1 className="font-serif text-[28px] leading-none text-[#22293C]">Discover</h1>
+        <button
+          type="button"
+          onClick={onSearchOpen}
+          className="flex min-h-[44px] min-w-0 items-center justify-between gap-3 bg-white px-4 text-left text-[13px] text-[#758092] shadow-sm"
+          aria-label="Open Global Search"
+        >
+          <span className="truncate">Search For Entities, People, Transactions, News, opportunities...</span>
+          <kbd className="shrink-0 border border-[#DEE2E7] bg-[#F4F5F7] px-1.5 py-0.5 font-mono text-[11px] font-bold text-[#2D3446]">Ctrl/⌘ + K</kbd>
+        </button>
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-[#7A8190]">
+          <span aria-hidden="true" className="grid h-5 w-5 place-items-center rounded-full bg-[#99A1AC] text-[11px] font-bold text-white">◷</span>
+          {quickLinks.map((item) => (
+            <DataLink key={`${item.label}-${item.href}`} href={item.href} sourceHref={item.sourceHref} className="max-w-[190px] truncate text-[#747B88] underline">
+              {item.label}
+            </DataLink>
+          ))}
+          <span className="text-[#99A1AC]">{dataAsOfLabel}</span>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function VisualExecutiveOverview({
+  packets,
+  topAumRows,
+  entityRows,
+  transactionRows,
+  rfpRows,
+  newsRows,
+  sectorRows,
+  unifiedRows,
+  expandedPanel,
+  controls,
+  onTogglePanel,
+  onRowLimitChange,
+  onSort,
+}: {
+  packets: Packets;
+  topAumRows: Record<string, unknown>[];
+  entityRows: Record<string, unknown>[];
+  transactionRows: Record<string, unknown>[];
+  rfpRows: Record<string, unknown>[];
+  newsRows: Record<string, unknown>[];
+  sectorRows: Record<string, unknown>[];
+  unifiedRows: UnifiedInsight[];
+  expandedPanel: string;
+  controls: DashboardTableControls;
+  onTogglePanel: (id: string) => void;
+  onRowLimitChange: (value: number) => void;
+  onSort: (column: number) => void;
+}) {
+  const kpis = dashboardMetricCards(packets, topAumRows, sectorRows);
+  const topRows = topAumRows.length ? topAumRows : entityRows;
+
+  return (
+    <section data-gsap-reveal className="border-b border-[#E0DDD6] bg-[#EEF1F4] px-4 py-5 sm:px-8">
+      <div className="mx-auto grid max-w-[1440px] gap-3">
+        <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
+          {kpis.map((kpi) => (
+            <ConceptKpiCard key={kpi.label} {...kpi} />
+          ))}
+        </div>
+        <div className="grid gap-3 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_340px]">
+          <ExpandablePanel
+            id="capital-map"
+            title="Global Capital Map"
+            href="/profiles"
+            expanded={expandedPanel === "capital-map"}
+            onToggle={onTogglePanel}
+            detail={<ExpandedEntityRows rows={topRows} controls={controls} />}
+            className="xl:row-span-2"
+          >
+            <GlobalCapitalMap topRows={topRows} sectorRows={sectorRows} />
+          </ExpandablePanel>
+          <ExpandablePanel
+            id="capital-flows"
+            title="Capital Flows & Allocation Trends"
+            href="/deals"
+            expanded={expandedPanel === "capital-flows"}
+            onToggle={onTogglePanel}
+            detail={<ExpandedSectorRows rows={sectorRows} controls={controls} />}
+          >
+            <CapitalFlowPanel rows={sectorRows} />
+          </ExpandablePanel>
+          <ExpandablePanel
+            id="ai-insights"
+            title="AI Insights"
+            href="/intelligence"
+            expanded={expandedPanel === "ai-insights"}
+            onToggle={onTogglePanel}
+            detail={<ExpandedUnifiedInsightRows rows={unifiedRows} controls={controls} />}
+          >
+            <AiInsightsPanel topInvestors={entityRows} marketRows={transactionRows} fundraisingRows={rfpRows} newsRows={newsRows} />
+          </ExpandablePanel>
+          <ExpandablePanel
+            id="pipeline"
+            title="Pipeline Overview"
+            href="/profiles"
+            expanded={expandedPanel === "pipeline"}
+            onToggle={onTogglePanel}
+            detail={<ExpandedInvestorRows rows={entityRows} controls={controls} />}
+          >
+            <PipelineFunnelPanel packets={packets} topRows={topRows} marketRows={transactionRows} fundraisingRows={rfpRows} />
+          </ExpandablePanel>
+          <ExpandablePanel
+            id="relationships"
+            title="Top Institutional Relationships"
+            href="/allocators"
+            expanded={expandedPanel === "relationships"}
+            onToggle={onTogglePanel}
+            detail={<ExpandedInvestorRows rows={entityRows} controls={controls} />}
+          >
+            <RelationshipPanel rows={entityRows} />
+          </ExpandablePanel>
+          <ExpandablePanel
+            id="research-hub"
+            title="Research & Analytics Hub"
+            href="/intelligence"
+            expanded={expandedPanel === "research-hub"}
+            onToggle={onTogglePanel}
+            detail={<ExpandedNewsRows rows={newsRows} controls={controls} />}
+          >
+            <ResearchHubPanel rows={newsRows} />
+          </ExpandablePanel>
+          <ExpandablePanel
+            id="market-intelligence"
+            title="Market Intelligence"
+            href="/deals"
+            expanded={expandedPanel === "market-intelligence"}
+            onToggle={onTogglePanel}
+            detail={<ExpandedSectorRows rows={sectorRows} controls={controls} />}
+          >
+            <MarketIntelligencePanel rows={sectorRows} />
+          </ExpandablePanel>
+          <ExpandablePanel
+            id="engagements"
+            title="Upcoming Events & Engagements"
+            href="/mandates"
+            expanded={expandedPanel === "engagements"}
+            onToggle={onTogglePanel}
+            detail={<ExpandedMandateRows rows={rfpRows} controls={controls} />}
+            className="xl:col-span-2"
+          >
+            <EngagementCards rows={rfpRows} />
+          </ExpandablePanel>
+          <ExpandablePanel
+            id="activity-feed"
+            title="Activity Feed"
+            href="/intelligence"
+            expanded={expandedPanel === "activity-feed"}
+            onToggle={onTogglePanel}
+            detail={<ExpandedDealRows rows={transactionRows} controls={controls} />}
+          >
+            <ActivityFeedPanel marketRows={transactionRows} newsRows={newsRows} fundraisingRows={rfpRows} />
+          </ExpandablePanel>
+          <ExpandablePanel
+            id="deal-intelligence"
+            title="Deal Intelligence"
+            href="/deals"
+            expanded={expandedPanel === "deal-intelligence"}
+            onToggle={onTogglePanel}
+            detail={<ExpandedDealRows rows={transactionRows} controls={controls} />}
+          >
+            <DealIntelligencePanel rows={transactionRows} sectorRows={sectorRows} />
+          </ExpandablePanel>
+        </div>
+        <DashboardControlStrip
+          totalRows={Math.max(topRows.length, entityRows.length, transactionRows.length, rfpRows.length, newsRows.length, sectorRows.length)}
+          rowLimit={controls.rowLimit}
+          sortColumn={controls.sortColumn}
+          sortDir={controls.sortDir}
+          onRowLimitChange={onRowLimitChange}
+          onSort={onSort}
+        />
+        <div className="overflow-hidden bg-[#071F48] text-white">
+          <NewsTicker rows={newsRows} />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function BrdNewsFeed({ rows: sourceRows, tab, onTabChange }: {
+  rows: Record<string, unknown>[];
+  tab: "for-you" | "popular" | "topics";
+  onTabChange: (tab: "for-you" | "popular" | "topics") => void;
+}) {
+  const rowsToUse = brdNewsRowsForTab(sourceRows, tab);
+  const featured = rowsToUse[0];
+  const secondary = rowsToUse.slice(1, 4);
+  const sideList = rowsToUse.slice(4, 8);
+  return (
+    <section data-gsap-reveal className="min-w-0">
+      <BrdTabs
+        tabs={[
+          ["for-you", "For you"],
+          ["popular", "Popular"],
+          ["topics", "Topics⌄"],
+        ]}
+        active={tab}
+        onChange={(value) => onTabChange(value as "for-you" | "popular" | "topics")}
+      />
+      {featured ? (
+        <div className="mt-8 grid gap-10 lg:grid-cols-[minmax(260px,340px)_minmax(320px,1fr)_minmax(220px,310px)]">
+          <DataLink href={researchRecordHref(featured)} sourceHref={sourceHref(featured)} className="block text-inherit no-underline">
+            <h2 className="font-serif text-[34px] leading-[1.18] text-[#253047] sm:text-[40px]">{brdText(featured.title || featured.name)}</h2>
+            <p className="mt-4 line-clamp-3 text-[14px] leading-5 text-[#24304B]">{brdExcerpt(featured)}</p>
+            <div className="mt-4 flex items-center gap-4 text-[12px] text-[#5A6372]">
+              <span>{brdReadTime(featured)}</span>
+              {brdPopularBadge(featured, sourceRows) ? <span className="bg-[#D8D9D5] px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.12em] text-[#41464F]">Popular</span> : null}
             </div>
-            <section data-gsap-reveal className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-6">
-              {metricCards.map((card) => (
-                <ConceptKpiCard key={card.label} {...card} />
-              ))}
-            </section>
-            <DashboardControlStrip
-              totalRows={dashboardSourceRowCount}
-              rowLimit={dashboardRowLimit}
-              sortColumn={dashboardSortColumn}
-              sortDir={dashboardSortDir}
-              onRowLimitChange={setDashboardRowLimit}
-              onSort={sortDashboardBy}
-            />
+          </DataLink>
+          <DataLink href={researchRecordHref(featured)} sourceHref={sourceHref(featured)} className="block min-h-[200px] overflow-hidden bg-[#D8DDE6] text-inherit no-underline">
+            <span className="sr-only">{brdText(featured.title || featured.name)}</span>
+            <img src={assetHref(`/swfi-assets/images/${brdImageForIndex(0)}`)} alt="" className="h-full min-h-[250px] w-full object-cover" />
+          </DataLink>
+          <div className="grid content-start gap-5">
+            {sideList.map((row, index) => (
+              <DataLink key={`${brdText(row.title || row.name)}-${index}`} href={researchRecordHref(row)} sourceHref={sourceHref(row)} className="block text-inherit no-underline">
+                <h3 className="font-serif text-[21px] leading-[1.22] text-[#31384B]">{brdText(row.title || row.name)}</h3>
+                <div className="mt-2 text-[12px] text-[#5D6676]">{brdReadTime(row)}</div>
+              </DataLink>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="mt-8 border border-[#DDD8D0] bg-white p-8 text-[14px] text-[#4A5363]">{DASHBOARD_EMPTY}</div>
+      )}
+      <div className="mt-10 grid gap-6 md:grid-cols-3">
+        {secondary.map((row, index) => (
+          <DataLink key={`${brdText(row.title || row.name)}-${index}`} href={researchRecordHref(row)} sourceHref={sourceHref(row)} className="grid grid-cols-[100px_minmax(0,1fr)] gap-4 text-inherit no-underline">
+            <img src={assetHref(`/swfi-assets/images/${brdImageForIndex(index + 1)}`)} alt="" className="h-[100px] w-[100px] object-cover" />
+            <span className="min-w-0">
+              <span className="block font-serif text-[18px] leading-[1.22] text-[#31384B]">{brdText(row.title || row.name)}</span>
+              <span className="mt-2 block text-[12px] text-[#5D6676]">{brdReadTime(row)}</span>
+            </span>
+          </DataLink>
+        ))}
+      </div>
+    </section>
+  );
+}
 
-            <section data-gsap-reveal className="grid auto-rows-max gap-3 2xl:grid-cols-[minmax(0,1.08fr)_minmax(360px,0.9fr)_330px]">
-              <ExpandablePanel
-                id="global-map"
-                title="Top AUM & Sector Activity"
-                href="/profiles"
-                expanded={expandedSection === "global-map"}
-                onToggle={toggleSection}
-                className="min-h-[310px]"
-                detail={<ExpandedEntityRows rows={topAumRows} controls={dashboardTableControls} />}
-              >
-                <GlobalCapitalMap topRows={topAumRows} sectorRows={sectorRows} />
-              </ExpandablePanel>
+function BrdRightRail({ sectorRows }: { sectorRows: Record<string, unknown>[] }) {
+  const tags = brdMarketFocusTags(sectorRows);
+  return (
+    <aside data-gsap-reveal className="grid content-start gap-8">
+      <section>
+        <h2 className="mb-5 text-[13px] font-extrabold uppercase tracking-[0.04em] text-[#202A42]">Upcoming Events</h2>
+        <DashboardLink href="/search/?q=Events" className="grid gap-1 bg-[#F0EFEC] px-4 py-4 text-inherit no-underline hover:bg-[#E8E6E1]">
+          <span className="text-[13px] font-bold text-[#24304B]">GWC Events Calendar</span>
+          <span className="text-[12px] text-[#656D7B]">View events coverage</span>
+        </DashboardLink>
+      </section>
+      <section>
+        <h2 className="mb-5 text-[13px] font-extrabold uppercase tracking-[0.04em] text-[#202A42]">Market Focus</h2>
+        <div className="flex flex-wrap gap-3">
+          {tags.map((tag) => (
+            <DashboardLink key={tag} href={`/search/?q=${encodeURIComponent(tag)}`} className="rounded-full bg-[#E3E2DF] px-5 py-2 text-[12px] font-bold text-[#435175] no-underline hover:bg-[#D7D6D2]">
+              {tag}
+            </DashboardLink>
+          ))}
+        </div>
+      </section>
+    </aside>
+  );
+}
 
-              <ExpandablePanel
-                id="capital-flows"
-                title="Capital Flows & Allocation Trends"
-                href="/deals"
-                expanded={expandedSection === "capital-flows"}
-                onToggle={toggleSection}
-                className="min-h-[310px]"
-                detail={<ExpandedSectorRows rows={sectorRows} controls={dashboardTableControls} />}
-              >
-                <CapitalFlowPanel rows={sectorRows} />
-              </ExpandablePanel>
+function BrdNewestData({ tab, onTabChange, transactionRows, rfpRows, peopleRows }: {
+  tab: "transactions" | "rfps" | "opportunities" | "people";
+  onTabChange: (tab: "transactions" | "rfps" | "opportunities" | "people") => void;
+  transactionRows: Record<string, unknown>[];
+  rfpRows: Record<string, unknown>[];
+  peopleRows: Record<string, unknown>[];
+}) {
+  const rowsToUse = brdNewestRows(tab, transactionRows, rfpRows, peopleRows);
+  return (
+    <section data-gsap-reveal className="min-w-0">
+      <h2 className="font-serif text-[28px] leading-none text-[#22293C]">Newest Data</h2>
+      <BrdTabs
+        className="mt-5"
+        tabs={[
+          ["transactions", "Transactions"],
+          ["rfps", "RFPs"],
+          ["opportunities", "Opportunities"],
+          ["people", "People"],
+        ]}
+        active={tab}
+        onChange={(value) => onTabChange(value as "transactions" | "rfps" | "opportunities" | "people")}
+      />
+      <BrdTable headers={rowsToUse.headers} rows={rowsToUse.rows} empty={DASHBOARD_EMPTY} />
+    </section>
+  );
+}
 
-              <div className="grid gap-3">
-                <ExpandablePanel
-                  id="ai-insights"
-                title="AI Insights"
-                  href="/intelligence"
-                  expanded={expandedSection === "ai-insights"}
-                  onToggle={toggleSection}
-                  detail={<ExpandedNewsRows rows={newsRows} controls={dashboardTableControls} />}
-                >
-                  <AiInsightsPanel topInvestors={topInvestors} marketRows={marketRows} fundraisingRows={fundraisingRows} newsRows={newsRows} />
-                </ExpandablePanel>
-                <ExpandablePanel
-                  id="market-intelligence"
-                title="Market Intelligence"
-                  href="/deals"
-                  expanded={expandedSection === "market-intelligence"}
-                  onToggle={toggleSection}
-                  detail={<ExpandedSectorRows rows={sectorRows} controls={dashboardTableControls} />}
-                >
-                  <MarketIntelligencePanel rows={sectorRows} />
-                </ExpandablePanel>
+function BrdTopTen({ tab, onTabChange, rfpRows, sectorRows }: {
+  tab: "compass" | "sector";
+  onTabChange: (tab: "compass" | "sector") => void;
+  rfpRows: Record<string, unknown>[];
+  sectorRows: Record<string, unknown>[];
+}) {
+  const rowsToUse = tab === "compass" ? brdCompassTopRows(rfpRows) : brdSectorTopRows(sectorRows);
+  return (
+    <section data-gsap-reveal className="min-w-0">
+      <h2 className="font-serif text-[28px] leading-none text-[#22293C]">Top 10</h2>
+      <BrdTabs
+        className="mt-5"
+        tabs={[
+          ["compass", "Compass Investment Types"],
+          ["sector", "SWF Buys by Sector"],
+        ]}
+        active={tab}
+        onChange={(value) => onTabChange(value as "compass" | "sector")}
+      />
+      <BrdTable headers={["Inv Type", "Amount (USD)", "Count"]} rows={rowsToUse} empty={DASHBOARD_EMPTY} />
+    </section>
+  );
+}
+
+function BrdSearchModal({
+  query,
+  groups,
+  activeIndex,
+  flatItems,
+  onQueryChange,
+  onActiveIndexChange,
+  onClose,
+}: {
+  query: string;
+  groups: BrdSearchGroup[];
+  activeIndex: number;
+  flatItems: BrdSearchItem[];
+  onQueryChange: (query: string) => void;
+  onActiveIndexChange: (index: number) => void;
+  onClose: () => void;
+}) {
+  const [filter, setFilter] = useState("All");
+  const visibleGroups = filter === "All" ? groups : groups.filter((group) => group.label === filter);
+  const visibleItems = visibleGroups.flatMap((group) => group.items);
+  const activeItem = visibleItems[Math.min(activeIndex, Math.max(0, visibleItems.length - 1))];
+
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      onClose();
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      onActiveIndexChange(Math.min(Math.max(0, visibleItems.length - 1), activeIndex + 1));
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      onActiveIndexChange(Math.max(0, activeIndex - 1));
+      return;
+    }
+    if (event.key === "Enter" && activeItem) {
+      event.preventDefault();
+      window.location.href = dashboardResolvedHref(activeItem.href);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-start bg-[#050915]/65 px-4 py-10 backdrop-blur-sm sm:py-20" role="dialog" aria-modal="true" aria-label="Global Search">
+      <div className="mx-auto w-full max-w-[860px] overflow-hidden bg-white shadow-[0_30px_70px_rgba(0,0,0,0.35)]" onKeyDown={handleKeyDown}>
+        <div className="flex items-center gap-3 border-b border-[#E2E6ED] px-5 py-4">
+          <svg viewBox="0 0 24 24" className="h-5 w-5 text-[#1E2940]" aria-hidden="true">
+            <path d="M10.8 18.2a7.4 7.4 0 1 1 0-14.8 7.4 7.4 0 0 1 0 14.8Zm5.4-1.8 4.2 4.2" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="2.2" />
+          </svg>
+          <input
+            autoFocus
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder="Search entities, people, transactions, RFPs, news..."
+            className="min-h-11 min-w-0 flex-1 text-[17px] outline-none placeholder:text-[#8E95A3]"
+            aria-label="Search query"
+          />
+          {query ? (
+            <button type="button" onClick={() => onQueryChange("")} className="border border-[#D8DDE5] px-3 py-2 text-[12px] font-bold text-[#394356]">
+              Clear
+            </button>
+          ) : null}
+          <button type="button" onClick={onClose} className="grid h-9 w-9 place-items-center text-[22px] text-[#394356]" aria-label="Close search">×</button>
+        </div>
+        <div className="flex gap-2 overflow-x-auto border-b border-[#E2E6ED] px-5 py-3">
+          {["All", "Entities", "RFPs & Opportunities", "Transactions", "News & Articles", "People"].map((label) => (
+            <button
+              key={label}
+              type="button"
+              onClick={() => {
+                setFilter(label);
+                onActiveIndexChange(0);
+              }}
+              className={`shrink-0 rounded-full px-3 py-1.5 text-[12px] font-bold ${filter === label ? "bg-[#0B132B] text-white" : "bg-[#ECEFF4] text-[#46546A]"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="max-h-[56vh] overflow-y-auto px-5 py-4">
+          {visibleGroups.map((group) => (
+            <section key={group.label} className="mb-5 last:mb-0">
+              <h3 className="mb-2 text-[12px] font-extrabold uppercase tracking-[0.08em] text-[#7E8795]">{group.label}</h3>
+              <div className="grid gap-1">
+                {group.items.map((item) => {
+                  const itemIndex = visibleItems.indexOf(item);
+                  return (
+                    <DataLink
+                      key={`${group.label}-${item.label}-${item.href}`}
+                      href={item.href}
+                      sourceHref={item.sourceHref}
+                      className={`grid gap-1 px-3 py-2 text-inherit no-underline ${itemIndex === activeIndex ? "bg-[#EEF2F7]" : "hover:bg-[#F6F8FA]"}`}
+                    >
+                      <span className="truncate text-[14px] font-bold text-[#152039]">{item.label}</span>
+                      <span className="truncate text-[12px] text-[#687385]">{item.detail}</span>
+                    </DataLink>
+                  );
+                })}
               </div>
-
-              <ExpandablePanel
-                id="pipeline"
-                title="Pipeline Overview"
-                href="/mandates"
-                expanded={expandedSection === "pipeline"}
-                onToggle={toggleSection}
-                detail={<ExpandedMandateRows rows={fundraisingRows} controls={dashboardTableControls} />}
-              >
-                <PipelineFunnelPanel packets={packets} topRows={topAumRows} marketRows={marketRows} fundraisingRows={fundraisingRows} />
-              </ExpandablePanel>
-
-              <ExpandablePanel
-                id="relationships"
-                title="Top Active Allocators (Last 90 Days)"
-                href="/allocators"
-                expanded={expandedSection === "relationships"}
-                onToggle={toggleSection}
-                detail={<ExpandedInvestorRows rows={topInvestors} controls={dashboardTableControls} />}
-              >
-                <RelationshipPanel rows={topInvestors} />
-              </ExpandablePanel>
-
-              <ExpandablePanel
-                id="research"
-                title="Research & Analytics Hub"
-                href="/intelligence"
-                expanded={expandedSection === "research"}
-                onToggle={toggleSection}
-                detail={<ExpandedNewsRows rows={newsRows} controls={dashboardTableControls} />}
-              >
-                <ResearchHubPanel rows={newsRows} />
-              </ExpandablePanel>
-
-              <ExpandablePanel
-                id="events"
-                title="Live RFPs / Mandates"
-                href="/mandates"
-                expanded={expandedSection === "events"}
-                onToggle={toggleSection}
-                detail={<ExpandedMandateRows rows={fundraisingRows} controls={dashboardTableControls} />}
-              >
-                <EngagementCards rows={fundraisingRows} />
-              </ExpandablePanel>
-
-              <ExpandablePanel
-                id="activity"
-                title="Activity Feed"
-                href="/transactions"
-                expanded={expandedSection === "activity"}
-                onToggle={toggleSection}
-                detail={<ExpandedDealRows rows={marketRows} controls={dashboardTableControls} />}
-              >
-                <ActivityFeedPanel marketRows={marketRows} newsRows={newsRows} fundraisingRows={fundraisingRows} />
-              </ExpandablePanel>
-
-              <ExpandablePanel
-                id="deal-intelligence"
-                title="Deal Intelligence"
-                href="/deals"
-                expanded={expandedSection === "deal-intelligence"}
-                onToggle={toggleSection}
-                detail={<ExpandedDealRows rows={marketRows} controls={dashboardTableControls} />}
-              >
-                <DealIntelligencePanel rows={marketRows} sectorRows={sectorRows} />
-              </ExpandablePanel>
             </section>
-
-            <section data-gsap-reveal className="mt-3 overflow-hidden rounded-[6px] bg-[#071F48] text-white shadow-[0_16px_30px_rgba(7,31,72,0.18)]">
-              <NewsTicker rows={newsRows} />
-            </section>
-          </main>
+          ))}
+          {!flatItems.length ? <div className="py-8 text-center text-[14px] text-[#687385]">No visible dashboard matches.</div> : null}
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#E2E6ED] px-5 py-3 text-[12px] text-[#687385]">
+          <span>Use ↑↓ to move, Enter to open, Escape to close.</span>
+          <DashboardLink href={`/search/?q=${encodeURIComponent(query.trim())}`} className="font-bold text-[#0B4A83] underline">
+            View all results
+          </DashboardLink>
         </div>
       </div>
     </div>
   );
 }
 
+function BrdTabs({ tabs, active, onChange, className = "" }: {
+  tabs: readonly (readonly [string, string])[];
+  active: string;
+  onChange: (value: string) => void;
+  className?: string;
+}) {
+  return (
+    <div className={`flex flex-wrap gap-8 border-b border-transparent text-[15px] font-bold text-[#9AA0AC] ${className}`}>
+      {tabs.map(([value, label]) => (
+        <button
+          key={value}
+          type="button"
+          onClick={() => onChange(value)}
+          className={`border-b border-transparent bg-transparent pb-2 ${active === value ? "border-[#1B243B] text-[#182138]" : "text-[#9AA0AC] hover:text-[#4F596D]"}`}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function BrdTable({ headers, rows: tableRows, empty }: { headers: string[]; rows: Cell[][]; empty: string }) {
+  return (
+    <div className="mt-5 overflow-x-auto">
+      <table className="min-w-full border-collapse text-left text-[13px]">
+        <thead>
+          <tr className="bg-[#E9ECF1] text-[12px] font-extrabold text-[#263148]">
+            {headers.map((header) => (
+              <th key={header} className="border-b border-[#D8DEE8] px-3 py-2">{header}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {tableRows.length ? tableRows.slice(0, 10).map((row, index) => (
+            <tr key={index} className="border-b border-[#ECEFF4] bg-white/80">
+              {row.map((cell, cellIndex) => (
+                <td key={cellIndex} className={`px-3 py-2 align-top ${cellIndex === 0 ? "font-bold text-[#14213D]" : "text-[#2F3A4F]"}`}>
+                  {displayCell(cell)}
+                </td>
+              ))}
+            </tr>
+          )) : (
+            <tr>
+              <td className="bg-white px-3 py-4 text-[#606A7C]" colSpan={headers.length}>{empty}</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function brdQuickLinks(entityRows: Record<string, unknown>[], transactionRows: Record<string, unknown>[], rfpRows: Record<string, unknown>[]): BrdSearchItem[] {
+  return [
+    ...entityRows.slice(0, 4).map((row) => ({
+      label: brdText(row.name),
+      detail: brdText(row.type || row.entity_type, "Entity"),
+      href: profileDetailHref(row, sourceHref(row)),
+      sourceHref: sourceHref(row),
+    })),
+    ...transactionRows.slice(0, 1).map((row) => ({
+      label: brdText(row.buyer_entity || row.institution || row.name),
+      detail: "Transaction",
+      href: transactionDetailHref(row, sourceHref(row)),
+      sourceHref: sourceHref(row),
+    })),
+    ...rfpRows.slice(0, 1).map((row) => ({
+      label: brdText(row.institution || row.name),
+      detail: "Compass",
+      href: mandateDetailHref(row, sourceHref(row)),
+      sourceHref: sourceHref(row),
+    })),
+  ].filter((item) => item.label !== "Not disclosed").slice(0, 6);
+}
+
+function brdSearchGroups({ query, entityRows, peopleRows, transactionRows, rfpRows, newsRows }: {
+  query: string;
+  entityRows: Record<string, unknown>[];
+  peopleRows: Record<string, unknown>[];
+  transactionRows: Record<string, unknown>[];
+  rfpRows: Record<string, unknown>[];
+  newsRows: Record<string, unknown>[];
+}): BrdSearchGroup[] {
+  const filter = (row: Record<string, unknown>) => {
+    const clean = query.trim().toLowerCase();
+    if (!clean) return true;
+    return Object.values(row).some((value) => typeof value === "string" && value.toLowerCase().includes(clean));
+  };
+  const group = (label: string, items: BrdSearchItem[]): BrdSearchGroup => ({ label, items: items.slice(0, 5) });
+  return [
+    group("Entities", entityRows.filter(filter).map((row) => ({
+      label: brdText(row.name),
+      detail: [brdText(row.type || row.entity_type, "Entity"), brdText(row.country, "")].filter(Boolean).join(" · "),
+      href: profileDetailHref(row, sourceHref(row)),
+      sourceHref: sourceHref(row),
+    }))),
+    group("RFPs & Opportunities", rfpRows.filter(filter).map((row) => ({
+      label: brdText(row.title || row.name),
+      detail: [brdText(row.institution, ""), brdText(row.strategy || row.asset_class_or_strategy, "")].filter(Boolean).join(" · "),
+      href: mandateDetailHref(row, sourceHref(row)),
+      sourceHref: sourceHref(row),
+    }))),
+    group("Transactions", transactionRows.filter(filter).map((row) => ({
+      label: brdText(row.title || row.name),
+      detail: [brdText(row.buyer_entity || row.institution, ""), cleanMoney(row.amount_display || row.capital_display || row.amount)].filter(Boolean).join(" · "),
+      href: transactionDetailHref(row, sourceHref(row)),
+      sourceHref: sourceHref(row),
+    }))),
+    group("News & Articles", newsRows.filter(filter).map((row) => ({
+      label: brdText(row.title || row.name),
+      detail: [brdReadTime(row), brdText(row.source, "")].filter(Boolean).join(" · "),
+      href: researchRecordHref(row),
+      sourceHref: sourceHref(row),
+    }))),
+    group("People", peopleRows.filter(filter).map((row) => ({
+      label: brdText(row.name),
+      detail: [brdText(row.title, ""), brdText(row.institution, "")].filter(Boolean).join(" · "),
+      href: personDetailHref(row, sourceHref(row)),
+      sourceHref: sourceHref(row),
+    }))),
+  ].filter((searchGroup) => searchGroup.items.length);
+}
+
+function brdNewestRows(
+  tab: "transactions" | "rfps" | "opportunities" | "people",
+  transactionRows: Record<string, unknown>[],
+  rfpRows: Record<string, unknown>[],
+  peopleRows: Record<string, unknown>[],
+): { headers: string[]; rows: Cell[][] } {
+  if (tab === "transactions") {
+    return {
+      headers: ["Name", "Buyer Entity", "Amount (USD)"],
+      rows: transactionRows.map((row) => [
+        dealCell(row),
+        buyerCell(row),
+        cleanMoney(row.amount_display || row.capital_display || row.amount),
+      ]),
+    };
+  }
+  if (tab === "people") {
+    return {
+      headers: ["Name", "Title", "Institution"],
+      rows: peopleRows.map((row) => [
+        personCell(row),
+        brdText(row.title),
+        brdText(row.institution),
+      ]),
+    };
+  }
+  const visibleRfps = tab === "opportunities"
+    ? rfpRows.filter((row) => /opportun/i.test(brdText(row.type || row.title || row.name, "")))
+    : rfpRows.filter((row) => !/opportun/i.test(brdText(row.type, "")));
+  const rowsToUse = visibleRfps.length ? visibleRfps : rfpRows;
+  return {
+    headers: ["Name", "Institution", "Deadline"],
+    rows: rowsToUse.map((row) => [
+      mandateCell(row),
+      brdText(row.institution),
+      timelineDate(row),
+    ]),
+  };
+}
+
+function brdCompassTopRows(rfpRows: Record<string, unknown>[]): Cell[][] {
+  const buckets = new Map<string, { amount: number; count: number }>();
+  for (const row of rfpRows) {
+    const label = brdText(row.investment_type || row.strategy || row.asset_class_or_strategy || row.type, "Not disclosed");
+    const current = buckets.get(label) || { amount: 0, count: 0 };
+    current.count += 1;
+    current.amount += numericSortValue(cleanMoney(row.amount_display || row.capital_display || row.amount)) || 0;
+    buckets.set(label, current);
+  }
+  return [...buckets.entries()]
+    .sort((a, b) => b[1].count - a[1].count || b[1].amount - a[1].amount)
+    .slice(0, 10)
+    .map(([label, bucket]) => [
+      { label, href: `/mandates/?filter=${encodeURIComponent(label)}` },
+      bucket.amount ? compactMoney(bucket.amount) : "Not disclosed",
+      bucket.count.toLocaleString("en-US"),
+    ]);
+}
+
+function brdSectorTopRows(sectorRows: Record<string, unknown>[]): Cell[][] {
+  return sectorRows.slice(0, 10).map((row) => [
+    sectorCell(row),
+    cleanMoney(row.capital_display || row.capital_deployed || row.capital),
+    brdText(row.count, "0"),
+  ]);
+}
+
+function brdNewsRowsForTab(rowsToUse: Record<string, unknown>[], tab: "for-you" | "popular" | "topics") {
+  if (tab === "popular") {
+    return [...rowsToUse].sort((a, b) => brdNewsScore(b) - brdNewsScore(a));
+  }
+  if (tab === "topics") {
+    return [...rowsToUse].sort((a, b) => brdText(a.title || a.name).localeCompare(brdText(b.title || b.name)));
+  }
+  return rowsToUse;
+}
+
+function brdNewsScore(row: Record<string, unknown>) {
+  return numericSortValue(brdText(row.page_views || row.views || row.legacy_post, "")) || brdText(row.content || row.excerpt, "").length || 1;
+}
+
+function brdPopularBadge(row: Record<string, unknown>, rowsToUse: Record<string, unknown>[]) {
+  if (!("page_views" in row || "views" in row)) return false;
+  const scores = rowsToUse.map(brdNewsScore).sort((a, b) => b - a);
+  const cutoff = scores[Math.max(0, Math.floor(scores.length * 0.1) - 1)] || scores[0] || Number.POSITIVE_INFINITY;
+  return brdNewsScore(row) >= cutoff;
+}
+
+function brdMarketFocusTags(sectorRows: Record<string, unknown>[]) {
+  const sourceTags = sectorRows.map((row) => brdText(row.name || row.value, "")).filter(Boolean).slice(0, 8);
+  return sourceTags.length ? sourceTags : ["Active Equities", "Sovereign Wealth Funds", "Real Estate"];
+}
+
+function brdImageForIndex(index: number) {
+  const images = ["business_development.webp", "investor.webp", "fundraising.webp", "deal_trends.webp", "industry.webp"];
+  return images[index % images.length];
+}
+
+function brdExcerpt(row: Record<string, unknown>) {
+  const value = brdText(row.excerpt || row.summary || row.content, "");
+  if (!value) return "SWFI intelligence record";
+  return value.replace(/\s+/g, " ").slice(0, 190);
+}
+
+function brdReadTime(row: Record<string, unknown>) {
+  const words = brdText(row.content || row.excerpt || row.summary || row.title || row.name, "").split(/\s+/).filter(Boolean).length;
+  return `${Math.max(2, Math.min(8, Math.ceil(words / 180)))} min read`;
+}
+
+function brdText(value: unknown, fallback = "Not disclosed") {
+  const result = text(value, fallback);
+  return result === SOURCE_GAP || result === LOADING ? fallback : result;
+}
+
+function cleanMoney(value: unknown) {
+  const result = money(value);
+  return result === SOURCE_GAP || result === LOADING ? "Not disclosed" : result;
+}
+
+function cleanDisplayValue(value: string, fallback = "Not disclosed") {
+  return value === SOURCE_GAP || value === LOADING || /not disclosed by swfi\.com/i.test(value) ? fallback : value;
+}
+
+function buyerCell(row: Record<string, unknown>): Cell {
+  const label = brdText(row.buyer_entity || row.institution, "Not disclosed");
+  const source = brdText(row.buyer_entity_url || row.institution_url, "");
+  return source ? { label, href: profileDetailHref({ name: label, source_url: source }, source), sourceHref: source } : label;
+}
+
+function personCell(row: Record<string, unknown>): Cell {
+  const source = sourceHref(row);
+  return {
+    label: brdText(row.name),
+    href: personDetailHref(row, source),
+    sourceHref: source,
+    citationText: "SWFI people source on file",
+  };
+}
+
+function dashboardResolvedHref(href: string) {
+  if (href.startsWith("#")) return href;
+  if (href.startsWith("http://") || href.startsWith("https://")) {
+    return isSwfiPlatformRecordHref(href) ? swfiAuthHandoffHref(href) : href;
+  }
+  return appHref(href);
+}
+
 function ConceptSidebar({ topRows }: { topRows: Record<string, unknown>[] }) {
   return (
-    <aside data-gsap-reveal className="min-w-0 border-r border-[#D9E1E8] bg-white lg:overflow-y-auto">
-      <div className="flex h-[66px] items-center gap-3 border-b border-[#E6ECF1] px-4">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[6px] bg-[#B90D12]">
-          <img src={assetHref("/swfi-assets/logo.svg")} alt="SWFI" className="h-5 w-8 object-contain" />
+    <aside data-gsap-reveal className="order-2 min-w-0 border-r border-[#132A49] bg-[#071F48] text-white lg:order-none lg:overflow-y-auto">
+      <div className="flex min-h-[64px] items-center gap-3 border-b border-white/10 px-4">
+        <div className="grid h-10 w-[112px] place-items-center bg-[#B90D12] px-2">
+          <img src={assetHref("/swfi-assets/logo.svg")} alt="SWFI" className="h-8 w-[98px] shrink-0 object-contain" />
         </div>
         <div className="min-w-0">
-          <div className="text-[18px] font-extrabold leading-none text-[#B90D12]">SWFI</div>
-          <div className="mt-1 text-[9px] font-bold uppercase tracking-[0.18em] text-[#6F7C89]">Command Center</div>
+          <div className="text-[10px] font-extrabold uppercase leading-tight tracking-[0.14em] text-white">Terminal</div>
+          <div className="mt-1 text-[10px] font-semibold leading-tight text-white/55">Source workspaces</div>
         </div>
       </div>
       <nav className="px-3 py-3">
-        <div className="mb-2 px-2 text-[9px] font-bold uppercase tracking-[0.16em] text-[#8A97A4]">Command Center</div>
+        <div className="mb-2 px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-white/45">Institutional Intelligence</div>
         {navMain.map(([label, href], index) => (
           <DashboardLink
             key={label}
             href={href}
-            className={`mb-1 flex min-h-9 items-center gap-2 rounded-[5px] px-3 text-[12.5px] font-semibold no-underline ${index === 0 ? "bg-[#0A3A7A] text-white" : "text-[#435263] hover:bg-[#F1F5F8]"}`}
+            className={`mb-1 flex min-h-9 items-center gap-2 border-l-4 px-3 text-[12px] font-semibold no-underline ${index === 0 ? "border-[#D51E29] bg-white/12 text-white" : "border-transparent text-white/70 hover:border-[#D51E29]/70 hover:bg-white/8 hover:text-white"}`}
           >
             <MiniIcon index={index} />
             <span>{label === "Deals" ? "Deals & Transactions" : label}</span>
           </DashboardLink>
         ))}
-        <div className="mb-2 mt-4 px-2 text-[9px] font-bold uppercase tracking-[0.16em] text-[#8A97A4]">Intelligence</div>
+        <div className="mb-2 mt-4 px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-white/45">Analytics</div>
         {navIntel.map(([label, href], index) => (
-          <DashboardLink key={label} href={href} className="mb-1 flex min-h-8 items-center gap-2 rounded-[5px] px-3 text-[12px] font-semibold text-[#526171] no-underline hover:bg-[#F1F5F8]">
+          <DashboardLink key={label} href={href} className="mb-1 flex min-h-8 items-center gap-2 border-l-4 border-transparent px-3 text-[11.5px] font-semibold text-white/55 no-underline hover:border-[#D51E29]/70 hover:bg-white/8 hover:text-white">
             <MiniIcon index={index + 9} />
             <span>{label}</span>
           </DashboardLink>
         ))}
-        <div className="mt-4 rounded-[6px] border border-[#E2E9EF] bg-[#F8FAFC] p-3">
-          <div className="mb-2 text-[9px] font-bold uppercase tracking-[0.16em] text-[#8A97A4]">Market Focus</div>
+        <div className="mt-4 border border-white/10 bg-[#0A2B56] p-3">
+          <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-white/45">Market Focus</div>
           {["SWF", "Pensions", "Real Estate"].map((label) => (
-            <DashboardLink key={label} href={`/profiles/?filter=${encodeURIComponent(label)}`} className="flex items-center justify-between border-t border-[#E6ECF1] py-2 text-[11px] font-semibold text-[#405062] no-underline first:border-t-0">
+            <DashboardLink key={label} href={`/profiles/?filter=${encodeURIComponent(label)}`} className="flex items-center justify-between border-t border-white/10 py-2 text-[11px] font-semibold text-white/70 no-underline first:border-t-0 hover:text-white">
               <span>{label}</span>
-              <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#8A97A4]">Open</span>
+              <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-white/45">Open</span>
             </DashboardLink>
           ))}
         </div>
       </nav>
-      <div className="mx-3 mb-4 rounded-[6px] border border-[#E2E9EF] bg-[#F8FAFC] p-3">
-        <div className="mb-2 text-[9px] font-bold uppercase tracking-[0.16em] text-[#8A97A4]">TOP AUM RANKING</div>
+      <div className="mx-3 mb-4 border border-white/10 bg-[#0A2B56] p-3">
+        <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-white/45">TOP AUM RANKING</div>
         <div className="grid gap-2">
           {topRows.slice(0, 5).map((row) => (
-            <div key={text(row.name)} className="border-t border-[#E6ECF1] pt-2 first:border-t-0 first:pt-0">
-              <DataLink href={profileDetailHref(row, sourceHref(row))} sourceHref={sourceHref(row)} className="block truncate text-[11px] font-bold text-[#0A3A7A] underline">
-                {text(row.name)}
+            <div key={brdText(row.name)} className="border-t border-white/10 pt-2 first:border-t-0 first:pt-0">
+              <DataLink href={profileDetailHref(row, sourceHref(row))} sourceHref={sourceHref(row)} className="block truncate text-[11px] font-bold text-white underline">
+              {brdText(row.name)}
               </DataLink>
-              <div className="mt-0.5 text-[10px] text-[#657484]">{entityTypeCell(row)}</div>
-              <div className="text-[10px] text-[#657484]">{text(row.country)}</div>
-              <div className="text-[10px] font-semibold text-[#405062]">{aumDisplay(row)}</div>
+              <div className="mt-0.5 text-[10px] text-white/55">{entityTypeCell(row)}</div>
+              <div className="text-[10px] text-white/55">{brdText(row.country)}</div>
+              <div className="text-[10px] font-semibold text-white">{aumDisplay(row)}</div>
             </div>
           ))}
         </div>
       </div>
-      <div className="mx-3 mb-4 rounded-[6px] border border-[#E2E9EF] p-3 text-[10.5px] font-semibold text-[#657484]">
+      <div className="mx-3 mb-4 border border-white/10 p-3 text-[10.5px] font-semibold text-white/55">
         Public discovery dashboard. Protected records continue through SWFI sign-in.
       </div>
     </aside>
@@ -341,15 +1059,14 @@ function ConceptTopBar({ dataAsOfLabel, packets }: { dataAsOfLabel: string; pack
     ["Transactions", metricNumber(packets.metrics, "transactions")],
   ].filter(([, value]) => typeof value === "number" && Number.isFinite(value as number)) as [string, number][];
   return (
-    <header data-gsap-reveal className="border-b border-[#8E090D] bg-[#B90D12] text-white shadow-[0_8px_22px_rgba(68,12,15,0.22)]">
-      <div className="flex min-h-[66px] flex-wrap items-center gap-3 px-3 py-2 sm:px-5">
-        <div className="min-w-[210px] flex-1">
+    <header data-gsap-reveal className="border-b border-[#8E090D] bg-[#B90D12] text-white">
+      <div className="flex min-h-[64px] flex-wrap items-center gap-3 px-3 py-2 sm:px-5">
+        <div className="min-w-[190px] flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[19px] font-extrabold leading-tight">SWFI</span>
-            <span className="text-[19px] font-bold leading-tight">Intelligence Dashboard</span>
+            <span className="text-[18px] font-extrabold leading-tight text-white">SWFI Intelligence Terminal</span>
           </div>
-          <div className="text-[11px] text-white/80">Public discovery view powered by approved SWFI records.</div>
-          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-semibold text-white/85">
+          <div className="text-[11px] text-white/80">Discovery dashboard powered by approved SWFI records.</div>
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10.5px] font-semibold text-white/85">
             {exactCounts.map(([label, value]) => <span key={label}>{label} {value.toLocaleString("en-US")}</span>)}
           </div>
         </div>
@@ -360,19 +1077,34 @@ function ConceptTopBar({ dataAsOfLabel, packets }: { dataAsOfLabel: string; pack
           <DashboardLink href="/contact/" className="text-white/90 no-underline hover:text-white">Contact Us</DashboardLink>
           <DashboardLink href="/login/" className="text-white/90 no-underline hover:text-white">Sign In</DashboardLink>
         </nav>
-        <form action={appHref("/search/")} className="order-3 flex h-9 w-full items-center rounded-[5px] bg-white px-3 text-[#253444] shadow-inner sm:order-none sm:w-[390px]">
-          <input id="dashboard-search" name="q" type="search" aria-label="Search SWFI records" placeholder="Search for countries, insights, reports..." className="min-w-0 flex-1 bg-transparent text-[12px] outline-none placeholder:text-[#8A97A4]" />
-          <button aria-label="Search" className="ml-2 rounded-[4px] bg-[#EEF2F6] px-2 py-1 text-[10px] font-bold text-[#405062]" type="submit">⌘ K</button>
+        <form action={appHref("/search/")} className="order-3 flex h-9 w-full items-center border border-white/30 bg-white px-2.5 text-[#444D5F] sm:order-none sm:w-[430px]">
+          <span className="mr-2 text-[10px] font-black uppercase tracking-[0.12em] text-[#7A8794]">Search</span>
+          <input id="dashboard-search" name="q" type="search" aria-label="Search SWFI records" placeholder="Companies, investors, funds, people, reports" className="min-w-0 flex-1 bg-transparent text-[12.5px] outline-none placeholder:text-[#70798B]" />
+          <button aria-label="Search" className="ml-2 border border-[#C9D3DE] bg-white px-2 py-1 text-[10px] font-bold text-[#004483]" type="submit">Go</button>
         </form>
         <div className="flex items-center gap-2">
-          <div className="hidden border-l border-white/25 pl-3 text-right text-[10px] text-white/85 md:block">
-            <div className="font-bold">{new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit", year: "numeric" }).format(new Date())}</div>
+          <div className="hidden border-l border-white/25 pl-3 text-right text-[10px] text-white/80 md:block">
+            <div className="font-bold text-white">{new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit", year: "numeric" }).format(new Date())}</div>
             <div>{dataAsOfLabel}</div>
           </div>
-          <DashboardLink href="/intelligence" className="rounded-full bg-[#0A3A7A] px-3 py-2 text-[11px] font-bold text-white no-underline">
-            Intelligence
+          <DashboardLink href="/intelligence" className="bg-[#071F48] px-3 py-2 text-[11px] font-bold text-white no-underline">
+            Tools
           </DashboardLink>
         </div>
+      </div>
+      <div className="flex overflow-x-auto border-t border-[#E4E9EF] bg-white px-3 text-[11px] font-bold sm:px-5">
+        {[
+          ["Dashboard", "/"],
+          ["Screeners", "/search"],
+          ["Profiles", "/profiles"],
+          ["Deals", "/transactions"],
+          ["RFPs", "/mandates"],
+          ["Research", "/intelligence"],
+        ].map(([label, href], index) => (
+          <DashboardLink key={label} href={href} className={`shrink-0 border-b-2 px-3 py-2 no-underline ${index === 0 ? "border-[#D51E29] text-[#071F48]" : "border-transparent text-[#5C6977] hover:border-[#AAB6C3] hover:text-[#071F48]"}`}>
+            {label}
+          </DashboardLink>
+        ))}
       </div>
     </header>
   );
@@ -387,10 +1119,10 @@ function ConceptKpiCard({ label, value, note, href, series, color }: {
   color: string;
 }) {
   return (
-    <DashboardLink href={href} data-qa-min="150" className="min-w-0 rounded-[6px] border border-[#DCE4EA] bg-white px-3 py-3 text-inherit no-underline shadow-[0_10px_22px_rgba(20,44,70,0.06)] hover:border-[#B90D12]/40">
+    <DashboardLink href={href} data-qa-min="150" className="min-w-0 border border-[#C9D3DE] bg-white px-3 py-2.5 text-inherit no-underline shadow-[0_1px_2px_rgba(20,44,70,0.05)] hover:border-[#D51E29]/50">
       <div className="text-[9px] font-extrabold uppercase tracking-[0.12em] text-[#7B8996]">{label}</div>
       <div className="mt-1 flex items-end justify-between gap-2">
-        <div className="break-words text-[21px] font-extrabold leading-none text-[#13283D]">{value}</div>
+        <div className="break-words text-[20px] font-extrabold leading-none text-[#13283D]">{value}</div>
         <MiniSparkline series={series} color={color} large />
       </div>
       <div className="mt-2 flex items-center justify-between gap-2 text-[10.5px]">
@@ -420,7 +1152,7 @@ function DashboardControlStrip({
   const visibleRows = Math.min(rowLimit, totalRows);
   const sortButtons = ["Result", "Metric", "Source", "Detail"];
   return (
-    <section data-gsap-reveal className="mb-3 flex flex-wrap items-center gap-2 rounded-[6px] border border-[#DCE4EA] bg-white px-3 py-2 text-[11.5px] text-[#405062] shadow-[0_8px_18px_rgba(20,44,70,0.05)]">
+    <section data-gsap-reveal className="mb-3 flex flex-wrap items-center gap-2 border border-[#C9D3DE] bg-white px-3 py-2 text-[11.5px] text-[#405062] shadow-[0_1px_2px_rgba(20,44,70,0.05)]">
       <div className="mr-auto font-bold">
         Showing {visibleRows.toLocaleString("en-US")} of {totalRows.toLocaleString("en-US")}
       </div>
@@ -429,7 +1161,7 @@ function DashboardControlStrip({
         <select
           value={rowLimit}
           onChange={(event) => onRowLimitChange(Number(event.target.value))}
-          className="min-h-8 rounded-[4px] border border-[#C7D2DD] bg-white px-2 text-[#203448]"
+          className="min-h-8 border border-[#B8C4D0] bg-white px-2 text-[#203448]"
         >
           {[5, 10, 25].map((value) => <option key={value} value={value}>{value}</option>)}
         </select>
@@ -440,7 +1172,7 @@ function DashboardControlStrip({
             key={label}
             type="button"
             onClick={() => onSort(index)}
-            className="min-h-8 rounded-[4px] border border-[#C7D2DD] bg-white px-2.5 font-bold text-[#0A3A7A] hover:border-[#B90D12]/50"
+            className="min-h-8 border border-[#B8C4D0] bg-white px-2.5 font-bold text-[#0A3A7A] hover:border-[#B90D12]/50"
           >
             {label}{sortColumn === index ? ` ${sortDir}` : ""}
           </button>
@@ -461,17 +1193,17 @@ function ExpandablePanel({ id, title, href, expanded, onToggle, children, detail
   className?: string;
 }) {
   return (
-    <section className={`min-w-0 overflow-hidden rounded-[7px] border border-[#DCE4EA] bg-white shadow-[0_10px_22px_rgba(20,44,70,0.06)] ${expanded ? "ring-2 ring-[#B90D12]/15" : ""} ${className}`}>
-      <div className="flex items-center justify-between gap-2 border-b border-[#EEF2F5] px-3 py-2.5">
-        <button type="button" onClick={() => onToggle(id)} className="flex min-w-0 flex-1 items-center gap-2 bg-transparent p-0 text-left">
-          <span className="grid h-5 w-5 place-items-center rounded-[4px] bg-[#EEF3F7] text-[11px] font-black text-[#B90D12]">{expanded ? "−" : "+"}</span>
+    <section id={id} data-panel-id={id} className={`min-w-0 overflow-hidden border border-[#C9D3DE] bg-white shadow-[0_1px_2px_rgba(20,44,70,0.05)] ${expanded ? "ring-2 ring-[#D51E29]/15" : ""} ${className}`}>
+      <div className="flex items-center justify-between gap-2 border-b border-[#E3EAF1] bg-[#F8FAFC] px-3 py-2">
+        <button type="button" data-panel-toggle={id} aria-expanded={expanded} aria-controls={`${id}-detail`} aria-label={`${expanded ? "Collapse" : "Expand"} ${title}`} onClick={() => onToggle(id)} className="flex min-w-0 flex-1 items-center gap-2 bg-transparent p-0 text-left">
+          <span className="grid h-5 w-5 place-items-center border border-[#C9D3DE] bg-white text-[11px] font-black text-[#D51E29]">{expanded ? "−" : "+"}</span>
           <span className="truncate text-[12px] font-extrabold text-[#1E3145]">{title}</span>
         </button>
-        <DashboardLink href={href} className="rounded-[4px] border border-[#D4DDE5] px-2 py-1 text-[10px] font-bold text-[#0A3A7A] no-underline">View all</DashboardLink>
+        <DashboardLink href={href} className="border border-[#C9D3DE] bg-white px-2 py-1 text-[10px] font-bold text-[#0A3A7A] no-underline">View all</DashboardLink>
       </div>
       <div className="p-3">{children}</div>
       {expanded && detail ? (
-        <div className="border-t border-[#EEF2F5] bg-[#F8FAFC] p-3">{detail}</div>
+        <div id={`${id}-detail`} className="border-t border-[#EEF2F5] bg-[#F8FAFC] p-3">{detail}</div>
       ) : null}
     </section>
   );
@@ -518,9 +1250,9 @@ function GlobalCapitalMap({ topRows, sectorRows }: { topRows: Record<string, unk
       </div>
       <div className="grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
         {topCapital.map((row) => (
-          <DataLink key={text(row.name)} href={profileDetailHref(row, sourceHref(row))} sourceHref={sourceHref(row)} className="rounded-[5px] border border-[#E1E8EF] px-2 py-2 text-[#405062] no-underline">
-            <span className="block truncate font-bold text-[#0A3A7A]">{text(row.name)}</span>
-            <span className="mt-1 block text-[#7B8996]">{text(row.country)} · {aumDisplay(row)}</span>
+          <DataLink key={brdText(row.name)} href={profileDetailHref(row, sourceHref(row))} sourceHref={sourceHref(row)} className="rounded-[5px] border border-[#E1E8EF] px-2 py-2 text-[#405062] no-underline">
+            <span className="block truncate font-bold text-[#0A3A7A]">{brdText(row.name)}</span>
+            <span className="mt-1 block text-[#7B8996]">{brdText(row.country)} · {aumDisplay(row)}</span>
           </DataLink>
         ))}
       </div>
@@ -534,9 +1266,9 @@ function CapitalFlowPanel({ rows: sourceRows }: { rows: Record<string, unknown>[
     <div className="grid gap-3 lg:grid-cols-[118px_minmax(0,1fr)]">
       <div className="grid content-start gap-2">
         {chartRows.slice(0, 4).map((row, index) => (
-          <div key={text(row.name || row.value)} className="rounded-[5px] border border-[#E3EAF0] bg-[#F8FAFC] px-2 py-2">
-            <div className="truncate text-[10px] font-bold text-[#516273]">{text(row.name || row.value)}</div>
-            <div className="mt-1 text-[11px] font-extrabold text-[#13283D]">{money(row.capital_display || row.capital_deployed || row.capital)}</div>
+          <div key={brdText(row.name || row.value)} className="rounded-[5px] border border-[#E3EAF0] bg-[#F8FAFC] px-2 py-2">
+            <div className="truncate text-[10px] font-bold text-[#516273]">{brdText(row.name || row.value)}</div>
+            <div className="mt-1 text-[11px] font-extrabold text-[#13283D]">{cleanMoney(row.capital_display || row.capital_deployed || row.capital)}</div>
             <div className={`mt-1 text-[10px] font-bold ${index % 2 ? "text-[#B90D12]" : "text-[#1A9A68]"}`}>SWFI sector facet</div>
           </div>
         ))}
@@ -553,10 +1285,10 @@ function AiInsightsPanel({ topInvestors, marketRows, fundraisingRows, newsRows }
   newsRows: Record<string, unknown>[];
 }) {
   const insights = [
-    { label: "Institutional allocator activity", row: topInvestors[0], href: "/allocators", detail: topInvestors[0] ? `${text(topInvestors[0].name)} · ${dealCountLabel(activityCountValue(topInvestors[0]))}` : LOADING },
-    { label: "Largest recent deal", row: marketRows[0], href: "/deals", detail: marketRows[0] ? `${text(marketRows[0].title || marketRows[0].name)} · ${money(marketRows[0].amount_display || marketRows[0].capital_display || marketRows[0].amount)}` : LOADING },
-    { label: "Open mandate deadline", row: fundraisingRows[0], href: "/mandates", detail: fundraisingRows[0] ? `${text(fundraisingRows[0].title || fundraisingRows[0].name)} · ${timelineDate(fundraisingRows[0])}` : LOADING },
-    { label: "Latest intelligence", row: newsRows[0], href: newsRows[0] ? researchRecordHref(newsRows[0]) : "/intelligence", detail: newsRows[0] ? text(newsRows[0].title || newsRows[0].name) : LOADING },
+    { label: "Institutional allocator activity", row: topInvestors[0], href: "/allocators", detail: topInvestors[0] ? `${brdText(topInvestors[0].name)} · ${dealCountLabel(activityCountValue(topInvestors[0]))}` : DASHBOARD_EMPTY },
+    { label: "Largest recent deal", row: marketRows[0], href: "/deals", detail: marketRows[0] ? `${brdText(marketRows[0].title || marketRows[0].name)} · ${cleanMoney(marketRows[0].amount_display || marketRows[0].capital_display || marketRows[0].amount)}` : DASHBOARD_EMPTY },
+    { label: "Open mandate deadline", row: fundraisingRows[0], href: "/mandates", detail: fundraisingRows[0] ? `${brdText(fundraisingRows[0].title || fundraisingRows[0].name)} · ${timelineDate(fundraisingRows[0])}` : DASHBOARD_EMPTY },
+    { label: "Latest intelligence", row: newsRows[0], href: newsRows[0] ? researchRecordHref(newsRows[0]) : "/intelligence", detail: newsRows[0] ? brdText(newsRows[0].title || newsRows[0].name) : DASHBOARD_EMPTY },
   ];
   return (
     <div className="grid gap-2">
@@ -585,9 +1317,9 @@ function MarketIntelligencePanel({ rows: sourceRows }: { rows: Record<string, un
   return (
     <div className="grid gap-1.5">
       {chartRows.map((row, index) => (
-        <DashboardLink key={`${text(row.name || row.value)}-${index}`} href={`/deals/?filter=${encodeURIComponent(text(row.name || row.value, ""))}`} className="grid grid-cols-[minmax(0,1fr)_70px] gap-2 rounded-[4px] px-2 py-1.5 text-[11.5px] text-[#405062] no-underline hover:bg-[#F5F8FB]">
-          <span className="truncate font-bold">{text(row.name || row.value)}</span>
-          <span className="text-right font-extrabold text-[#1A9A68]">{text(row.count)}</span>
+        <DashboardLink key={`${brdText(row.name || row.value)}-${index}`} href={`/deals/?filter=${encodeURIComponent(brdText(row.name || row.value, ""))}`} className="grid grid-cols-[minmax(0,1fr)_70px] gap-2 rounded-[4px] px-2 py-1.5 text-[11.5px] text-[#405062] no-underline hover:bg-[#F5F8FB]">
+          <span className="truncate font-bold">{brdText(row.name || row.value)}</span>
+          <span className="text-right font-extrabold text-[#1A9A68]">{brdText(row.count)}</span>
         </DashboardLink>
       ))}
     </div>
@@ -643,10 +1375,10 @@ function RelationshipPanel({ rows: sourceRows }: { rows: Record<string, unknown>
   return (
     <div className="grid gap-2">
       {visible.map((row, index) => (
-        <DataLink key={`${text(row.name)}-${index}`} href={profileDetailHref(row, sourceHref(row))} sourceHref={sourceHref(row)} className="grid grid-cols-[26px_minmax(0,1fr)_76px] items-center gap-2 rounded-[5px] px-2 py-1.5 text-[#405062] no-underline hover:bg-[#F5F8FB]">
+        <DataLink key={`${brdText(row.name)}-${index}`} href={profileDetailHref(row, sourceHref(row))} sourceHref={sourceHref(row)} className="grid grid-cols-[26px_minmax(0,1fr)_76px] items-center gap-2 rounded-[5px] px-2 py-1.5 text-[#405062] no-underline hover:bg-[#F5F8FB]">
           <span className="font-extrabold text-[#8A97A4]">{index + 1}</span>
           <span className="min-w-0">
-            <span className="block truncate text-[12px] font-bold text-[#0A3A7A]">{text(row.name)}</span>
+            <span className="block truncate text-[12px] font-bold text-[#0A3A7A]">{brdText(row.name)}</span>
             <span className="block truncate text-[10.5px] text-[#7B8996]">{allocatorMeta(row)}</span>
           </span>
           <span className="text-right text-[11px] font-extrabold text-[#1A9A68]">{dealCountLabel(activityCountValue(row))}</span>
@@ -661,11 +1393,11 @@ function ResearchHubPanel({ rows: sourceRows }: { rows: Record<string, unknown>[
   return (
     <div className="grid gap-2 sm:grid-cols-2">
       {sourceRows.slice(0, 4).map((row, index) => (
-        <DataLink key={`${text(row.title || row.name)}-${index}`} href={researchRecordHref(row)} sourceHref={sourceHref(row)} className="overflow-hidden rounded-[6px] border border-[#E4EAF0] bg-[#F8FAFC] text-inherit no-underline">
+        <DataLink key={`${brdText(row.title || row.name)}-${index}`} href={researchRecordHref(row)} sourceHref={sourceHref(row)} className="overflow-hidden rounded-[6px] border border-[#E4EAF0] bg-[#F8FAFC] text-inherit no-underline">
           <img src={assetHref(`/swfi-assets/images/${images[index % images.length]}`)} alt="" className="h-16 w-full object-cover" />
           <span className="block p-2">
-            <span className="block truncate text-[11px] font-extrabold text-[#0A3A7A]">{text(row.title || row.name)}</span>
-            <span className="mt-1 block text-[10px] text-[#7B8996]">{text(row.published_at || row.date, "SWFI record")}</span>
+            <span className="block truncate text-[11px] font-extrabold text-[#0A3A7A]">{brdText(row.title || row.name)}</span>
+            <span className="mt-1 block text-[10px] text-[#7B8996]">{brdText(row.published_at || row.date, "SWFI record")}</span>
           </span>
         </DataLink>
       ))}
@@ -678,11 +1410,11 @@ function EngagementCards({ rows: sourceRows }: { rows: Record<string, unknown>[]
   return (
     <div className="grid gap-2 sm:grid-cols-3">
       {sourceRows.slice(0, 3).map((row, index) => (
-        <DataLink key={`${text(row.title || row.name)}-${index}`} href={mandateDetailHref(row, sourceHref(row))} sourceHref={sourceHref(row)} className="overflow-hidden rounded-[6px] border border-[#E4EAF0] bg-[#F8FAFC] text-inherit no-underline">
+        <DataLink key={`${brdText(row.title || row.name)}-${index}`} href={mandateDetailHref(row, sourceHref(row))} sourceHref={sourceHref(row)} className="overflow-hidden rounded-[6px] border border-[#E4EAF0] bg-[#F8FAFC] text-inherit no-underline">
           <img src={assetHref(`/swfi-assets/images/${images[index % images.length]}`)} alt="" className="h-16 w-full object-cover" />
           <span className="block p-2">
-            <span className="block truncate text-[11px] font-extrabold text-[#0A3A7A]">{text(row.title || row.name)}</span>
-            <span className="mt-1 block text-[10px] text-[#7B8996]">{text(row.institution)} · {timelineDate(row)}</span>
+            <span className="block truncate text-[11px] font-extrabold text-[#0A3A7A]">{brdText(row.title || row.name)}</span>
+            <span className="mt-1 block text-[10px] text-[#7B8996]">{brdText(row.institution)} · {timelineDate(row)}</span>
           </span>
         </DataLink>
       ))}
@@ -696,9 +1428,9 @@ function ActivityFeedPanel({ marketRows, newsRows, fundraisingRows }: {
   fundraisingRows: Record<string, unknown>[];
 }) {
   const items = [
-    ...marketRows.slice(0, 2).map((row) => ({ row, label: "Deal updated", href: transactionDetailHref(row, sourceHref(row)), detail: text(row.title || row.name) })),
-    ...fundraisingRows.slice(0, 2).map((row) => ({ row, label: "Mandate posted", href: mandateDetailHref(row, sourceHref(row)), detail: text(row.title || row.name) })),
-    ...newsRows.slice(0, 2).map((row) => ({ row, label: "Research published", href: researchRecordHref(row), detail: text(row.title || row.name) })),
+    ...marketRows.slice(0, 2).map((row) => ({ row, label: "Deal updated", href: transactionDetailHref(row, sourceHref(row)), detail: brdText(row.title || row.name) })),
+    ...fundraisingRows.slice(0, 2).map((row) => ({ row, label: "Mandate posted", href: mandateDetailHref(row, sourceHref(row)), detail: brdText(row.title || row.name) })),
+    ...newsRows.slice(0, 2).map((row) => ({ row, label: "Research published", href: researchRecordHref(row), detail: brdText(row.title || row.name) })),
   ].slice(0, 5);
   return (
     <div className="grid gap-2">
@@ -726,31 +1458,181 @@ function DealIntelligencePanel({ rows: sourceRows, sectorRows }: { rows: Record<
         <DonutGauge value={gauge} />
         <div className="min-w-0">
           <div className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#7B8996]">Deal momentum</div>
-          <div className="mt-1 text-[13px] font-bold text-[#203448]">{topSector ? text(topSector.name || topSector.value) : LOADING}</div>
-          <div className="mt-1 text-[11px] text-[#7B8996]">{topSector ? `${text(topSector.count)} source records` : "Data source: SWFI records"}</div>
+          <div className="mt-1 text-[13px] font-bold text-[#203448]">{topSector ? brdText(topSector.name || topSector.value) : DASHBOARD_EMPTY}</div>
+          <div className="mt-1 text-[11px] text-[#7B8996]">{topSector ? `${brdText(topSector.count)} source records` : "Data source: SWFI records"}</div>
         </div>
       </div>
       {topDeal ? (
         <DataLink href={transactionDetailHref(topDeal, sourceHref(topDeal))} sourceHref={sourceHref(topDeal)} className="rounded-[6px] bg-[#F8FAFC] p-3 text-inherit no-underline">
-          <span className="block text-[11px] font-bold text-[#0A3A7A]">{text(topDeal.title || topDeal.name)}</span>
-          <span className="mt-1 block text-[18px] font-extrabold text-[#13283D]">{money(topDeal.amount_display || topDeal.capital_display || topDeal.amount)}</span>
+          <span className="block text-[11px] font-bold text-[#0A3A7A]">{brdText(topDeal.title || topDeal.name)}</span>
+          <span className="mt-1 block text-[18px] font-extrabold text-[#13283D]">{cleanMoney(topDeal.amount_display || topDeal.capital_display || topDeal.amount)}</span>
         </DataLink>
-      ) : <div className="text-[12px] text-[#405062]">{LOADING}</div>}
+      ) : <div className="text-[12px] text-[#405062]">{DASHBOARD_EMPTY}</div>}
       {topDeals.length > 1 ? (
         <div className="grid gap-1">
           {topDeals.slice(1).map((row, index) => (
             <DataLink
-              key={`${text(row.title || row.name)}-${index}`}
+              key={`${brdText(row.title || row.name)}-${index}`}
               href={transactionDetailHref(row, sourceHref(row))}
               sourceHref={sourceHref(row)}
               className="grid grid-cols-[minmax(0,1fr)_82px] gap-2 rounded-[5px] px-2 py-1.5 text-[11px] text-[#405062] no-underline hover:bg-[#F5F8FB]"
             >
-              <span className="truncate font-bold text-[#0A3A7A]">{text(row.title || row.name)}</span>
-              <span className="text-right font-extrabold text-[#13283D]">{money(row.amount_display || row.capital_display || row.amount)}</span>
+              <span className="truncate font-bold text-[#0A3A7A]">{brdText(row.title || row.name)}</span>
+              <span className="text-right font-extrabold text-[#13283D]">{cleanMoney(row.amount_display || row.capital_display || row.amount)}</span>
             </DataLink>
           ))}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+type UnifiedInsight = {
+  label: string;
+  title: string;
+  detail: string;
+  href: string;
+  sourceHref?: string;
+  metric: string;
+  value: number;
+};
+
+function unifiedIntelligenceRows({
+  topInvestors,
+  marketRows,
+  fundraisingRows,
+  newsRows,
+  sectorRows,
+}: {
+  topInvestors: Record<string, unknown>[];
+  marketRows: Record<string, unknown>[];
+  fundraisingRows: Record<string, unknown>[];
+  newsRows: Record<string, unknown>[];
+  sectorRows: Record<string, unknown>[];
+}): UnifiedInsight[] {
+  const insights: UnifiedInsight[] = [];
+  const allocator = topInvestors[0];
+  if (allocator) {
+    const source = sourceHref(allocator);
+    const deals = activityCountValue(allocator);
+    insights.push({
+      label: "Allocator",
+      title: brdText(allocator.name),
+      detail: [allocatorMeta(allocator), dealCountLabel(deals)].filter(Boolean).join(" · "),
+      href: profileDetailHref(allocator, source),
+      sourceHref: source,
+      metric: dealCountLabel(deals),
+      value: deals || 1,
+    });
+  }
+
+  const deal = [...marketRows].sort((a, b) => amountValue(b) - amountValue(a))[0];
+  if (deal) {
+    const source = sourceHref(deal);
+    const amount = amountValue(deal);
+    insights.push({
+      label: "Deal",
+      title: brdText(deal.title || deal.name),
+      detail: [brdText(deal.institution, ""), brdText(deal.sector || deal.industry || deal.category, "")].filter(Boolean).join(" · "),
+      href: transactionDetailHref(deal, source),
+      sourceHref: source,
+      metric: amount ? compactMoney(amount) : cleanMoney(deal.amount_display || deal.capital_display || deal.amount),
+      value: amount || 1,
+    });
+  }
+
+  const mandate = [...fundraisingRows].sort((a, b) => deadlineTime(a) - deadlineTime(b))[0];
+  if (mandate) {
+    const source = sourceHref(mandate);
+    const score = mandateUrgencyScore(mandate);
+    insights.push({
+      label: "RFP",
+      title: brdText(mandate.title || mandate.name),
+      detail: [brdText(mandate.institution, ""), brdText(mandate.strategy || mandate.asset_class_or_strategy, ""), timelineDate(mandate)].filter(Boolean).join(" · "),
+      href: mandateDetailHref(mandate, source),
+      sourceHref: source,
+      metric: timelineDate(mandate),
+      value: score,
+    });
+  }
+
+  const sector = [...sectorRows].sort((a, b) => sectorValue(b) - sectorValue(a))[0];
+  if (sector) {
+    const label = brdText(sector.name || sector.value);
+    const value = sectorValue(sector);
+    insights.push({
+      label: "Sector",
+      title: label,
+      detail: `${brdText(sector.count)} transactions · ${cleanMoney(sector.capital_display || sector.capital_deployed || sector.capital)}`,
+      href: `/deals/?filter=${encodeURIComponent(label)}`,
+      metric: value ? compactMoney(value) : brdText(sector.count),
+      value: value || numericSortValue(brdText(sector.count, "")) || 1,
+    });
+  }
+
+  const news = newsRows[0];
+  if (news) {
+    const source = sourceHref(news);
+    insights.push({
+      label: "Intel",
+      title: brdText(news.title || news.name),
+      detail: [brdText(news.source, ""), brdText(news.published_at || news.date, "")].filter(Boolean).join(" · "),
+      href: researchRecordHref(news),
+      sourceHref: source,
+      metric: "Latest",
+      value: publishedRecencyScore(news),
+    });
+  }
+
+  return insights;
+}
+
+function UnifiedIntelligencePanel({ rows: insights }: { rows: UnifiedInsight[] }) {
+  const max = Math.max(1, ...insights.map((insight) => insight.value));
+  const visible = insights.slice(0, 5);
+  return (
+    <div className="grid gap-3">
+      <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-5" role="img" aria-label="Source-backed cross-source intelligence heatmap">
+        {visible.map((insight, index) => {
+          const intensity = Math.max(16, Math.round((insight.value / max) * 100));
+          return (
+            <DataLink
+              key={insight.label}
+              href={insight.href}
+              sourceHref={insight.sourceHref}
+              className="min-h-[70px] rounded-[5px] border border-[#E1E8EF] p-2 text-inherit no-underline"
+              style={{
+                backgroundColor: `rgba(10, 58, 122, ${0.08 + (intensity / 100) * 0.22})`,
+              }}
+            >
+              <span className="block text-[9px] font-extrabold uppercase tracking-[0.08em] text-[#526171]">{insight.label}</span>
+              <span className="mt-1 block text-[15px] font-extrabold text-[#13283D]">{insight.metric}</span>
+              <span className="mt-1 block h-1.5 overflow-hidden rounded bg-white/70">
+                <span className="block h-full rounded bg-[#B90D12]" style={{ width: `${intensity}%` }} />
+              </span>
+              <span className="sr-only">{index + 1}. {insight.title}</span>
+            </DataLink>
+          );
+        })}
+      </div>
+      <div className="grid gap-2">
+        {visible.map((insight) => (
+          <DataLink
+            key={`${insight.label}-${insight.title}`}
+            href={insight.href}
+            sourceHref={insight.sourceHref}
+            className="grid grid-cols-[104px_minmax(0,1fr)] gap-2 rounded-[6px] border border-[#E5EBF1] px-2.5 py-2 text-inherit no-underline hover:bg-[#F5F8FB]"
+          >
+            <span className="text-[10px] font-extrabold uppercase tracking-[0.1em] text-[#7B8996]">{insight.label}</span>
+            <span className="min-w-0">
+              <span className="block truncate text-[12px] font-bold text-[#0A3A7A]">{insight.title}</span>
+              <span className="mt-0.5 block truncate text-[10.5px] text-[#657484]">{insight.detail}</span>
+            </span>
+          </DataLink>
+        ))}
+      </div>
+      {!visible.length ? <div className="text-[12px] text-[#405062]">{DASHBOARD_EMPTY}</div> : null}
+      <div className="text-[10px] font-semibold text-[#7B8996]">Joined from available SWFI source packets.</div>
     </div>
   );
 }
@@ -762,8 +1644,8 @@ function NewsTicker({ rows: sourceRows }: { rows: Record<string, unknown>[] }) {
       <div className="shrink-0 font-extrabold uppercase tracking-[0.14em] text-[#80A9DD]">Latest News & Intelligence</div>
       <div className="flex min-w-0 flex-1 gap-6 overflow-hidden">
         {visible.map((row) => (
-          <DataLink key={text(row.title || row.name)} href={researchRecordHref(row)} sourceHref={sourceHref(row)} className="shrink-0 text-white/90 no-underline">
-            {text(row.title || row.name)}
+          <DataLink key={brdText(row.title || row.name)} href={researchRecordHref(row)} sourceHref={sourceHref(row)} className="shrink-0 text-white/90 no-underline">
+            {brdText(row.title || row.name)}
           </DataLink>
         ))}
       </div>
@@ -775,13 +1657,13 @@ function dashboardMetricCards(packets: Packets, topAumRows: Record<string, unkno
   const totalAum = totalAumValue(packets.top20, topAumRows);
   const activeAllocators = numericSortValue(packetCount(packets.allocators90, "count")) || metricNumber(packets.metrics, "allocators") || 0;
   const sectorCapital = sumNumbers(sectorRows.map(sectorValue));
-  const rfps = metricNumber(packets.metrics, "rfps") || 0;
-  const swfs = metricNumber(packets.metrics, "swfs") || 0;
+  const rfps = metricNumber(packets.metrics, "rfps") || packetCountNumber(packets.rfps) || 0;
+  const swfs = metricNumber(packets.metrics, "swfs") || packetCountNumber(packets.entities) || 0;
   const research = metricNumber(packets.metrics, "news") || packetCountNumber(packets.news) || 0;
   return [
     {
       label: "TOTAL AUM ENGAGED",
-      value: totalAum ? compactMoney(totalAum) : metricCard(packets.metrics, "institutions"),
+      value: totalAum ? compactMoney(totalAum) : metricCardWithFallback(packets.metrics, "institutions", packetCountNumber(packets.entities)),
       note: "Top AUM ranking",
       href: "/profiles",
       series: seriesFromNumbers(topAumRows.map(aumValue)),
@@ -805,7 +1687,7 @@ function dashboardMetricCards(packets: Packets, topAumRows: Record<string, unkno
     },
     {
       label: "LIVE RFPS / MANDATES",
-      value: rfps ? compactNumber(rfps) : metricCard(packets.metrics, "rfps"),
+      value: rfps ? compactNumber(rfps) : "Not disclosed",
       note: "Live RFPs",
       href: "/mandates",
       series: seriesFromNumbers([rfps]),
@@ -813,7 +1695,7 @@ function dashboardMetricCards(packets: Packets, topAumRows: Record<string, unkno
     },
     {
       label: "SWF PROFILES",
-      value: swfs ? compactNumber(swfs) : metricCard(packets.metrics, "swfs"),
+      value: swfs ? compactNumber(swfs) : "Not disclosed",
       note: "SWF profiles",
       href: "/profiles/?filter=Sovereign%20Wealth%20Fund",
       series: seriesFromNumbers([swfs]),
@@ -900,9 +1782,9 @@ function StackedArea({ rows: sourceRows }: { rows: Record<string, unknown>[] }) 
       </svg>
       <div className="flex flex-wrap gap-2 text-[10px] text-[#526171]">
         {chartRows.map((row, index) => (
-          <DashboardLink key={text(row.name || row.value)} href={`/deals/?filter=${encodeURIComponent(text(row.name || row.value, ""))}`} className="flex items-center gap-1 text-[#526171] no-underline">
+          <DashboardLink key={brdText(row.name || row.value)} href={`/deals/?filter=${encodeURIComponent(brdText(row.name || row.value, ""))}`} className="flex items-center gap-1 text-[#526171] no-underline">
             <span className="h-2 w-2 rounded-full" style={{ backgroundColor: palette[index % palette.length] }} />
-            <span>{text(row.name || row.value)}</span>
+            <span>{brdText(row.name || row.value)}</span>
           </DashboardLink>
         ))}
       </div>
@@ -914,8 +1796,8 @@ function ExpandedEntityRows({ rows: sourceRows, controls }: { rows: Record<strin
   return (
     <MiniRecordTable
       headers={["Entity", "Type", "Country", "AUM"]}
-      rows={sourceRows.map((row) => [entityCell(row), entityTypeCell(row), text(row.country), aumDisplay(row)])}
-      empty={SOURCE_GAP}
+      rows={sourceRows.map((row) => [entityCell(row), entityTypeCell(row), brdText(row.country), aumDisplay(row)])}
+      empty={DASHBOARD_EMPTY}
       controls={controls}
     />
   );
@@ -925,8 +1807,8 @@ function ExpandedInvestorRows({ rows: sourceRows, controls }: { rows: Record<str
   return (
     <MiniRecordTable
       headers={["Entity", "Deals", "Type", "Region"]}
-      rows={sourceRows.map((row) => [entityCell(row), activityCountCell(row), entityTypeCell(row), text(row.region || row.country)])}
-      empty={SOURCE_GAP}
+      rows={sourceRows.map((row) => [entityCell(row), activityCountCell(row), entityTypeCell(row), brdText(row.region || row.country)])}
+      empty={DASHBOARD_EMPTY}
       controls={controls}
     />
   );
@@ -936,8 +1818,8 @@ function ExpandedDealRows({ rows: sourceRows, controls }: { rows: Record<string,
   return (
     <MiniRecordTable
       headers={["Deal", "Institution", "Industry / Category", "Amount"]}
-      rows={sourceRows.map((row) => [dealCell(row), text(row.institution), text(row.sector || row.industry || row.category), money(row.amount_display || row.capital_display || row.amount)])}
-      empty={SOURCE_GAP}
+      rows={sourceRows.map((row) => [dealCell(row), brdText(row.institution), brdText(row.sector || row.industry || row.category), cleanMoney(row.amount_display || row.capital_display || row.amount)])}
+      empty={DASHBOARD_EMPTY}
       controls={controls}
     />
   );
@@ -947,8 +1829,8 @@ function ExpandedMandateRows({ rows: sourceRows, controls }: { rows: Record<stri
   return (
     <MiniRecordTable
       headers={["Mandate", "Institution", "Strategy", "Deadline"]}
-      rows={sourceRows.map((row) => [mandateCell(row), text(row.institution), text(row.strategy || row.asset_class_or_strategy), text(row.deadline || row.due_at)])}
-      empty={SOURCE_GAP}
+      rows={sourceRows.map((row) => [mandateCell(row), brdText(row.institution), brdText(row.strategy || row.asset_class_or_strategy), brdText(row.deadline || row.due_at)])}
+      empty={DASHBOARD_EMPTY}
       controls={controls}
     />
   );
@@ -958,8 +1840,8 @@ function ExpandedNewsRows({ rows: sourceRows, controls }: { rows: Record<string,
   return (
     <MiniRecordTable
       headers={["Headline", "Source", "Published", "Record"]}
-      rows={sourceRows.map((row) => [researchCell(row), text(row.source), text(row.published_at || row.date, "Not disclosed"), sourceDetailCell("SWFI source", sourceHref(row), "/intelligence/")])}
-      empty={SOURCE_GAP}
+      rows={sourceRows.map((row) => [researchCell(row), brdText(row.source), brdText(row.published_at || row.date, "Not disclosed"), sourceDetailCell("SWFI source", sourceHref(row), "/intelligence/")])}
+      empty={DASHBOARD_EMPTY}
       controls={controls}
     />
   );
@@ -969,8 +1851,24 @@ function ExpandedSectorRows({ rows: sourceRows, controls }: { rows: Record<strin
   return (
     <MiniRecordTable
       headers={["Industry / Category", "Capital", "Transactions", "Open"]}
-      rows={sourceRows.map((row) => [sectorCell(row), money(row.capital_display || row.capital_deployed || row.capital), text(row.count), sectorCell(row)])}
-      empty={SOURCE_GAP}
+      rows={sourceRows.map((row) => [sectorCell(row), cleanMoney(row.capital_display || row.capital_deployed || row.capital), brdText(row.count), sectorCell(row)])}
+      empty={DASHBOARD_EMPTY}
+      controls={controls}
+    />
+  );
+}
+
+function ExpandedUnifiedInsightRows({ rows: insights, controls }: { rows: UnifiedInsight[]; controls: DashboardTableControls }) {
+  return (
+    <MiniRecordTable
+      headers={["Signal", "Record", "Metric", "Source Detail"]}
+      rows={insights.map((insight) => [
+        insight.label,
+        { label: insight.title, href: insight.href, sourceHref: insight.sourceHref, citationText: "SWFI source on file" },
+        insight.metric,
+        insight.detail,
+      ])}
+      empty={DASHBOARD_EMPTY}
       controls={controls}
     />
   );
@@ -1068,7 +1966,7 @@ function flowLabels() {
 
 function deterministicStackLayers(rows: Record<string, unknown>[]) {
   const baseSeries = rows.map((row, rowIndex) => ({
-    label: text(row.name || row.value),
+    label: brdText(row.name || row.value),
     values: flowLabels().map((_, pointIndex) => deterministicFlowPoint(sectorValue(row), rowIndex, pointIndex)),
   }));
   const cumulative = Array(flowLabels().length).fill(0) as number[];
@@ -1136,8 +2034,11 @@ function metricNumber(packet: Packet | undefined, key: string) {
 }
 
 function packetCountNumber(packet: Packet | undefined) {
-  const value = numericSortValue(packetCount(packet, "count"));
-  return value || undefined;
+  if (!packet || !isFact(packet)) return undefined;
+  const direct = numericSortValue(packetCount(packet, "count"));
+  if (direct) return direct;
+  const rowCount = rows(packet).length;
+  return rowCount > 0 ? rowCount : undefined;
 }
 
 function aumValue(row: Record<string, unknown>) {
@@ -1159,7 +2060,7 @@ function compactNumber(value: number) {
 }
 
 function compactMoney(value: number) {
-  if (!Number.isFinite(value)) return SOURCE_GAP;
+  if (!Number.isFinite(value)) return "Not disclosed";
   if (value === 0) return "$0";
   const abs = Math.abs(value);
   const units: [number, string][] = [
@@ -1184,7 +2085,7 @@ function seriesFromNumbers(values: number[]) {
 function DashboardLink({ href, children, ...props }: AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }) {
   if (href.startsWith("#")) return <a href={href} {...props}>{children}</a>;
   if (href.startsWith("http://") || href.startsWith("https://")) {
-    if (isSwfiPlatformRecordHref(href)) return <a href={swfiMirrorHref(href)} {...props}>{children}</a>;
+    if (isSwfiPlatformRecordHref(href)) return <a href={swfiAuthHandoffHref(href)} {...props}>{children}</a>;
     return <a href={href} {...props}>{children}</a>;
   }
   return <a href={appHref(href)} {...props}>{children}</a>;
@@ -1197,9 +2098,13 @@ function researchRecordHref(row: Record<string, unknown>) {
 async function loadDashboardPackets(onPacket: (key: PacketKey, packet: Packet) => void) {
   const entries = DASHBOARD_LOAD_ORDER.map((key) => [key, ENDPOINTS[key]] as [PacketKey, string]);
   await Promise.all(entries.map(async ([key, path]) => {
-    const packet = await fetchPacket(path, dashboardTimeout(key), { attempts: 3 });
+    const packet = await fetchPacket(path, dashboardTimeout(key), { attempts: dashboardAttempts(key) });
     onPacket(key, packet);
   }));
+}
+
+function dashboardAttempts(key: PacketKey) {
+  return key === "news" || key === "top20" ? 8 : 3;
 }
 
 function dashboardTimeout(key: PacketKey) {
@@ -1254,20 +2159,26 @@ function dataAsOfLabelFor(packet?: Packet) {
 }
 
 function packetCount(packet: Packet | undefined, key = "rows") {
-  if (!packet) return LOADING;
-  if (!isFact(packet)) return SOURCE_GAP;
+  if (!packet) return "Not disclosed";
+  if (!isFact(packet)) return "Not disclosed";
   const data = packetData(packet);
   const value = data[key];
   if (typeof value === "number") return value.toLocaleString("en-US");
-  return count(packet);
+  return cleanDisplayValue(count(packet));
 }
 
 function metricCard(packet: Packet | undefined, key: string) {
-  if (!packet) return LOADING;
-  if (!isFact(packet)) return SOURCE_GAP;
+  if (!packet) return "Not disclosed";
+  if (!isFact(packet)) return "Not disclosed";
   const data = packetData(packet) as { cards?: Record<string, { value?: unknown }> } | undefined;
   const value = data?.cards?.[key]?.value;
-  return typeof value === "number" ? value.toLocaleString("en-US") : SOURCE_GAP;
+  return typeof value === "number" ? value.toLocaleString("en-US") : "Not disclosed";
+}
+
+function metricCardWithFallback(packet: Packet | undefined, key: string, fallback?: number) {
+  const value = metricCard(packet, key);
+  if (value !== "Not disclosed") return value;
+  return fallback && Number.isFinite(fallback) && fallback > 0 ? compactNumber(fallback) : value;
 }
 
 function KpiCard({ label, value, note, source, href }: { label: string; value: string; note: string; source: string; href: string }) {
@@ -1432,11 +2343,11 @@ function AllocatorActivityVisual({ rows: sourceRows, ready }: { rows: Record<str
     .slice(0, 5);
   const max = Math.max(1, ...chartRows.map(activityCountValue));
   return (
-    <VisualPanel title="Active Allocator Activity" source={ENDPOINTS.allocators30} empty={ready ? SOURCE_GAP : LOADING} hasRows={chartRows.length > 0}>
+    <VisualPanel title="Active Allocator Activity" source={ENDPOINTS.allocators30} empty={DASHBOARD_EMPTY} hasRows={chartRows.length > 0}>
       {chartRows.map((row, index) => {
         const value = activityCountValue(row);
         return (
-          <div key={`${text(row.name)}-${index}`} className="border-b border-[#F2F5F8] py-2 last:border-b-0">
+          <div key={`${brdText(row.name)}-${index}`} className="border-b border-[#F2F5F8] py-2 last:border-b-0">
             <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_76px] sm:items-start">
               <div className="min-w-0 font-bold text-[#16538C]">{displayCell(entityCell(row))}</div>
               <div className="text-right text-[12px] font-semibold text-[#41566B] sm:text-right">{dealCountLabel(value)}</div>
@@ -1456,18 +2367,18 @@ function DealAmountVisual({ rows: sourceRows, ready }: { rows: Record<string, un
     .slice(0, 5);
   const max = Math.max(1, ...chartRows.map(amountValue));
   return (
-    <VisualPanel title="Largest Recent Deals" source={ENDPOINTS.transactions30} empty={ready ? SOURCE_GAP : LOADING} hasRows={chartRows.length > 0}>
+    <VisualPanel title="Largest Recent Deals" source={ENDPOINTS.transactions30} empty={DASHBOARD_EMPTY} hasRows={chartRows.length > 0}>
       {chartRows.map((row, index) => {
         const value = amountValue(row);
-        const amount = money(row.amount_display || row.capital_display || row.amount);
+        const amount = cleanMoney(row.amount_display || row.capital_display || row.amount);
         return (
-          <div key={`${text(row.title || row.name)}-${index}`} className="border-b border-[#F2F5F8] py-2 last:border-b-0">
+          <div key={`${brdText(row.title || row.name)}-${index}`} className="border-b border-[#F2F5F8] py-2 last:border-b-0">
             <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_88px] sm:items-start">
               <div className="min-w-0 font-bold text-[#16538C]">{displayCell(dealCell(row))}</div>
               <div className="text-right text-[12px] font-semibold text-[#41566B]">{amount}</div>
             </div>
             <Bar value={value} max={max} />
-            <div className="mt-1 text-[11px] text-[#7A8A9B]">{text(row.institution)} · {text(row.sector)}</div>
+            <div className="mt-1 text-[11px] text-[#7A8A9B]">{brdText(row.institution)} · {brdText(row.sector)}</div>
           </div>
         );
       })}
@@ -1480,16 +2391,16 @@ function MandateTimelineVisual({ rows: sourceRows, ready }: { rows: Record<strin
     .sort((a, b) => deadlineTime(a) - deadlineTime(b))
     .slice(0, 5);
   return (
-    <VisualPanel title="RFP Deadline Timeline" source={ENDPOINTS.rfps} empty={ready ? SOURCE_GAP : LOADING} hasRows={chartRows.length > 0}>
+    <VisualPanel title="RFP Deadline Timeline" source={ENDPOINTS.rfps} empty={DASHBOARD_EMPTY} hasRows={chartRows.length > 0}>
       <div className="grid gap-2">
         {chartRows.map((row, index) => (
-          <div key={`${text(row.title || row.name)}-${index}`} className="grid grid-cols-[88px_minmax(0,1fr)] gap-3 border-b border-[#F2F5F8] pb-2 last:border-b-0">
+          <div key={`${brdText(row.title || row.name)}-${index}`} className="grid grid-cols-[88px_minmax(0,1fr)] gap-3 border-b border-[#F2F5F8] pb-2 last:border-b-0">
             <div className="rounded border border-[#C7D2DD] bg-[#F7F9FA] px-2 py-1 text-center text-[11px] font-bold text-[#11314F]">
               {timelineDate(row)}
             </div>
             <div className="min-w-0">
               <div className="font-bold text-[#16538C]">{displayCell(mandateCell(row))}</div>
-              <div className="mt-1 text-[11px] text-[#7A8A9B]">{text(row.institution)} · {text(row.strategy || row.asset_class_or_strategy)}</div>
+              <div className="mt-1 text-[11px] text-[#7A8A9B]">{brdText(row.institution)} · {brdText(row.strategy || row.asset_class_or_strategy)}</div>
             </div>
           </div>
         ))}
@@ -1502,17 +2413,17 @@ function SectorFlowVisual({ rows: sourceRows, ready }: { rows: Record<string, un
   const chartRows = sourceRows.slice(0, 5);
   const max = Math.max(1, ...chartRows.map(sectorValue));
   return (
-    <VisualPanel title="Sector Flow" source={ENDPOINTS.sectorFlows} empty={ready ? SOURCE_GAP : LOADING} hasRows={chartRows.length > 0}>
+    <VisualPanel title="Sector Flow" source={ENDPOINTS.sectorFlows} empty={DASHBOARD_EMPTY} hasRows={chartRows.length > 0}>
       {chartRows.map((row, index) => {
         const value = sectorValue(row);
         return (
-          <div key={`${text(row.name || row.value)}-${index}`} className="border-b border-[#F2F5F8] py-2 last:border-b-0">
+          <div key={`${brdText(row.name || row.value)}-${index}`} className="border-b border-[#F2F5F8] py-2 last:border-b-0">
             <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_88px] sm:items-start">
               <div className="min-w-0 font-bold text-[#16538C]">{displayCell(sectorCell(row))}</div>
-              <div className="text-right text-[12px] font-semibold text-[#41566B]">{money(row.capital_display || row.capital_deployed || row.capital)}</div>
+              <div className="text-right text-[12px] font-semibold text-[#41566B]">{cleanMoney(row.capital_display || row.capital_deployed || row.capital)}</div>
             </div>
             <Bar value={value} max={max} />
-            <div className="mt-1 text-[11px] text-[#7A8A9B]">{text(row.count)} transactions</div>
+            <div className="mt-1 text-[11px] text-[#7A8A9B]">{brdText(row.count)} transactions</div>
           </div>
         );
       })}
@@ -1551,18 +2462,18 @@ function dealCountLabel(value: number | string) {
 }
 
 function allocatorMeta(row: Record<string, unknown>) {
-  return [entityTypeCell(row), text(row.region || row.country, "")]
-    .filter((part) => part && part !== SOURCE_GAP)
+  return [entityTypeCell(row), brdText(row.region || row.country, "")]
+    .filter((part) => part && part !== SOURCE_GAP && part !== "Not disclosed")
     .join(" · ");
 }
 
 function amountValue(row: Record<string, unknown>) {
-  const display = money(row.amount_display || row.capital_display || row.amount);
+  const display = cleanMoney(row.amount_display || row.capital_display || row.amount);
   return numericSortValue(display) ?? 0;
 }
 
 function sectorValue(row: Record<string, unknown>) {
-  const capital = money(row.capital_display || row.capital_deployed || row.capital);
+  const capital = cleanMoney(row.capital_display || row.capital_deployed || row.capital);
   return numericSortValue(capital) ?? numericSortValue(text(row.count, "")) ?? 0;
 }
 
@@ -1575,14 +2486,29 @@ function deadlineTime(row: Record<string, unknown>) {
 function timelineDate(row: Record<string, unknown>) {
   const value = text(row.deadline || row.due_at, "");
   const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) return text(value, "Not disclosed");
+  if (!Number.isFinite(parsed)) return brdText(value, "Not disclosed");
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit" }).format(new Date(parsed));
+}
+
+function mandateUrgencyScore(row: Record<string, unknown>) {
+  const parsed = deadlineTime(row);
+  if (!Number.isFinite(parsed) || parsed === Number.MAX_SAFE_INTEGER) return 1;
+  const days = Math.max(0, Math.round((parsed - Date.now()) / 86_400_000));
+  return Math.max(1, 120 - Math.min(119, days));
+}
+
+function publishedRecencyScore(row: Record<string, unknown>) {
+  const value = text(row.published_at || row.date, "");
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) return 1;
+  const days = Math.max(0, Math.round((Date.now() - parsed) / 86_400_000));
+  return Math.max(1, 90 - Math.min(89, days));
 }
 
 function aumDisplay(row: Record<string, unknown>) {
   const numeric = numericSortValue(text(row.aum, ""));
   const currency = text(row.aum_currency, "").trim();
-  if (numeric == null || !currency) return SOURCE_GAP;
+  if (numeric == null || !currency) return "Not disclosed";
   return `${currency} ${numeric.toLocaleString("en-US")}`;
 }
 
@@ -1615,7 +2541,7 @@ function entitySourceUrl(entityId: string): string {
 function dealCell(row: Record<string, unknown>): Cell {
   const source = sourceHref(row);
   return {
-    label: text(row.title || row.name),
+    label: brdText(row.title || row.name),
     href: transactionDetailHref(row, source),
     sourceHref: source,
     citationText: "SWFI transaction source on file",
@@ -1625,7 +2551,7 @@ function dealCell(row: Record<string, unknown>): Cell {
 function mandateCell(row: Record<string, unknown>): Cell {
   const source = sourceHref(row);
   return {
-    label: text(row.title || row.name),
+    label: brdText(row.title || row.name),
     href: mandateDetailHref(row, source),
     sourceHref: source,
     citationText: "SWFI Compass source on file",
@@ -1635,7 +2561,7 @@ function mandateCell(row: Record<string, unknown>): Cell {
 function researchCell(row: Record<string, unknown>): Cell {
   const source = sourceHref(row);
   return {
-    label: text(row.title || row.name),
+    label: brdText(row.title || row.name),
     href: source || researchDetailHref(row, source),
     sourceHref: source,
     citationText: "SWFI source on file",
@@ -1648,7 +2574,7 @@ function sourceDetailCell(label: string, href?: string, fallback = "/research/")
 }
 
 function cellText(cell: Cell): string {
-  return typeof cell === "string" ? cell : cell.label;
+  return cleanDisplayValue(typeof cell === "string" ? cell : cell.label);
 }
 
 function searchableCellText(cell: Cell): string {
@@ -1669,21 +2595,22 @@ function compareCells(a: Cell | undefined, b: Cell | undefined, dir: "asc" | "de
 }
 
 function displayCell(cell: Cell) {
-  if (typeof cell === "string") return cell;
+  if (typeof cell === "string") return cleanDisplayValue(cell);
   const hasSource = Boolean(cell.sourceHref);
+  const label = cleanDisplayValue(cell.label);
   return (
     <span className="grid gap-1">
-      <DataLink href={cell.href || "#"} sourceHref={cell.sourceHref} className="text-[#16538C] underline">{cell.label}</DataLink>
+      <DataLink href={cell.href || "#"} sourceHref={cell.sourceHref} className="text-[#16538C] underline">{label}</DataLink>
       {hasSource ? <span className="text-[10.5px] leading-tight text-[#7A8A9B]">SWFI source on file</span> : null}
     </span>
   );
 }
 
-function DataLink({ href, sourceHref, className, children }: { href: string; sourceHref?: string; className: string; children: React.ReactNode }) {
+function DataLink({ href, sourceHref, className, style, children }: { href: string; sourceHref?: string; className: string; style?: CSSProperties; children: React.ReactNode }) {
   const target = href;
   const provenance = sourceHref || sourceProvenanceHref(href);
   const recordLink = isCanonicalSwfiRecordHref(href);
-  return <DashboardLink href={target} title={provenance ? "SWFI source on file" : undefined} data-record-link={recordLink ? "true" : undefined} data-source-state={provenance ? "on-file" : undefined} className={className}>{children}</DashboardLink>;
+  return <DashboardLink href={target} title={provenance ? "SWFI source on file" : undefined} data-record-link={recordLink ? "true" : undefined} data-source-state={provenance ? "on-file" : undefined} className={className} style={style}>{children}</DashboardLink>;
 }
 
 function isCanonicalSwfiRecordHref(href: string | undefined): boolean {
@@ -1719,7 +2646,7 @@ function entityCell(row: Record<string, unknown>): Cell {
   const entityId = text(row.entity_id, "");
   const source = sourceHref(row) || entitySourceUrl(entityId);
   return {
-    label: text(row.name),
+    label: brdText(row.name),
     href: profileDetailHref(row, source || undefined),
     sourceHref: source || undefined,
     citationText: entityId ? "SWFI source on file" : "SWFI allocator activity source",
@@ -1727,7 +2654,7 @@ function entityCell(row: Record<string, unknown>): Cell {
 }
 
 function entityTypeCell(row: Record<string, unknown>): string {
-  return text(row.entity_type || row.type, "Not disclosed");
+  return brdText(row.entity_type || row.type, "Not disclosed");
 }
 
 function activityCountCell(row: Record<string, unknown>): Cell {
@@ -1742,7 +2669,7 @@ function activityCountCell(row: Record<string, unknown>): Cell {
 }
 
 function sectorCell(row: Record<string, unknown>): Cell {
-  const label = text(row.name || row.value);
+  const label = brdText(row.name || row.value);
   return {
     label,
     href: `/deals/?filter=${encodeURIComponent(label)}`,

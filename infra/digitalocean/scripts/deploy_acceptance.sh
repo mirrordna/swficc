@@ -3,6 +3,7 @@ set -euo pipefail
 
 HOST="${SWFIPN_HOST:-}"
 DOMAIN="${SWFIPN_DOMAIN:-}"
+API_DOMAIN="${SWFIPN_API_DOMAIN:-api.swfi.com}"
 REMOTE_ROOT="${SWFIPN_REMOTE_ROOT:-/opt/swfipn-acceptance}"
 FRONTEND_REPO="${SWFIPN_FRONTEND_REPO:-/Users/mirror-pro/repos/swfi-dashboard}"
 BACKEND_REPO="${SWFI2_BACKEND_REPO:-/Users/mirror-pro/repos/SWFI2.0-final}"
@@ -60,21 +61,22 @@ ssh $SSH_OPTS "$HOST" "test -s '$REMOTE_ROOT/shared/.env.swfi2-backend' && test 
 
 ssh $SSH_OPTS "$HOST" "ln -sfn '$REMOTE_ROOT/shared/.env.swfi2-backend' '$REMOTE_RELEASE/.env.swfi2-backend' && ln -sfn '$REMOTE_ROOT/shared/.env.swfipn-web' '$REMOTE_RELEASE/.env.swfipn-web'"
 
-ssh $SSH_OPTS "$HOST" "cd '$REMOTE_RELEASE' && SWFI2_BACKEND_CONTEXT=./SWFI2.0-final SWFIPN_FRONTEND_CONTEXT=./swfi-dashboard SWFIPN_DOMAIN='$DOMAIN' SWFIPN_ASSET_VERSION='$ASSET_VERSION' SWFIPN_GIT_SHA='$GIT_SHA' SWFIPN_GIT_DIRTY='$GIT_DIRTY' docker compose -p '$COMPOSE_PROJECT' -f compose.acceptance.yml build"
+ssh $SSH_OPTS "$HOST" "cd '$REMOTE_RELEASE' && SWFI2_BACKEND_CONTEXT=./SWFI2.0-final SWFIPN_FRONTEND_CONTEXT=./swfi-dashboard SWFIPN_DOMAIN='$DOMAIN' SWFIPN_API_DOMAIN='$API_DOMAIN' SWFIPN_ASSET_VERSION='$ASSET_VERSION' SWFIPN_GIT_SHA='$GIT_SHA' SWFIPN_GIT_DIRTY='$GIT_DIRTY' docker compose -p '$COMPOSE_PROJECT' -f compose.acceptance.yml build"
 
 ssh $SSH_OPTS "$HOST" "docker volume create swfipn_acceptance_caddy_data >/dev/null && docker volume create swfipn_acceptance_caddy_config >/dev/null && cid=\$(docker ps --filter 'name=caddy-1' --format '{{.Names}}' | head -n 1); if [ -n \"\$cid\" ]; then docker run --rm --volumes-from \"\$cid\" -v swfipn_acceptance_caddy_data:/to-data -v swfipn_acceptance_caddy_config:/to-config alpine sh -c 'cp -a /data/. /to-data/ 2>/dev/null || true; cp -a /config/. /to-config/ 2>/dev/null || true'; fi"
 
-ssh $SSH_OPTS "$HOST" "if [ -L '$REMOTE_ROOT/current' ]; then current=\$(readlink -f '$REMOTE_ROOT/current'); if [ -n \"\$current\" ] && [ -f \"\$current/compose.acceptance.yml\" ]; then release_project=\$(basename \"\$current\" | tr '[:upper:]' '[:lower:]'); cd \"\$current\" && for project in '$COMPOSE_PROJECT' \"\$release_project\" current; do SWFIPN_DOMAIN='$DOMAIN' docker compose -p \"\$project\" -f compose.acceptance.yml down --remove-orphans || true; done; fi; fi"
+ssh $SSH_OPTS "$HOST" "if [ -L '$REMOTE_ROOT/current' ]; then current=\$(readlink -f '$REMOTE_ROOT/current'); if [ -n \"\$current\" ] && [ -f \"\$current/compose.acceptance.yml\" ]; then release_project=\$(basename \"\$current\" | tr '[:upper:]' '[:lower:]'); cd \"\$current\" && for project in '$COMPOSE_PROJECT' \"\$release_project\" current; do SWFIPN_DOMAIN='$DOMAIN' SWFIPN_API_DOMAIN='$API_DOMAIN' docker compose -p \"\$project\" -f compose.acceptance.yml down --remove-orphans || true; done; fi; fi"
 
-ssh $SSH_OPTS "$HOST" "cd '$REMOTE_RELEASE' && SWFI2_BACKEND_CONTEXT=./SWFI2.0-final SWFIPN_FRONTEND_CONTEXT=./swfi-dashboard SWFIPN_DOMAIN='$DOMAIN' SWFIPN_ASSET_VERSION='$ASSET_VERSION' SWFIPN_GIT_SHA='$GIT_SHA' SWFIPN_GIT_DIRTY='$GIT_DIRTY' docker compose -p '$COMPOSE_PROJECT' -f compose.acceptance.yml up -d"
+ssh $SSH_OPTS "$HOST" "cd '$REMOTE_RELEASE' && SWFI2_BACKEND_CONTEXT=./SWFI2.0-final SWFIPN_FRONTEND_CONTEXT=./swfi-dashboard SWFIPN_DOMAIN='$DOMAIN' SWFIPN_API_DOMAIN='$API_DOMAIN' SWFIPN_ASSET_VERSION='$ASSET_VERSION' SWFIPN_GIT_SHA='$GIT_SHA' SWFIPN_GIT_DIRTY='$GIT_DIRTY' docker compose -p '$COMPOSE_PROJECT' -f compose.acceptance.yml up -d"
 
-ssh $SSH_OPTS "$HOST" "ln -sfn '$REMOTE_RELEASE' '$REMOTE_ROOT/current' && cd '$REMOTE_RELEASE' && SWFIPN_DOMAIN='$DOMAIN' docker compose -p '$COMPOSE_PROJECT' -f compose.acceptance.yml ps"
+ssh $SSH_OPTS "$HOST" "ln -sfn '$REMOTE_RELEASE' '$REMOTE_ROOT/current' && cd '$REMOTE_RELEASE' && SWFIPN_DOMAIN='$DOMAIN' SWFIPN_API_DOMAIN='$API_DOMAIN' docker compose -p '$COMPOSE_PROJECT' -f compose.acceptance.yml ps"
 
 mkdir -p "$FRONTEND_REPO/output"
 SWFIPN_DEPLOY_RECEIPT="$FRONTEND_REPO/output/swfipn-strict-acceptance-deploy-latest.json" \
 SWFIPN_DEPLOY_GENERATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 SWFIPN_DEPLOY_RELEASE="$REMOTE_RELEASE" \
 SWFIPN_DEPLOY_DOMAIN="$DOMAIN" \
+SWFIPN_DEPLOY_API_DOMAIN="$API_DOMAIN" \
 SWFIPN_DEPLOY_HOST="$HOST" \
 SWFIPN_DEPLOY_ASSET_VERSION="$ASSET_VERSION" \
 SWFIPN_DEPLOY_GIT_SHA="$GIT_SHA" \
@@ -90,6 +92,7 @@ receipt = {
     "status": "pass",
     "release": os.environ["SWFIPN_DEPLOY_RELEASE"],
     "domain": os.environ["SWFIPN_DEPLOY_DOMAIN"],
+    "api_domain": os.environ["SWFIPN_DEPLOY_API_DOMAIN"],
     "host": os.environ["SWFIPN_DEPLOY_HOST"],
     "asset_version": os.environ["SWFIPN_DEPLOY_ASSET_VERSION"],
     "git_sha": os.environ["SWFIPN_DEPLOY_GIT_SHA"],

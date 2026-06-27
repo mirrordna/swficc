@@ -336,6 +336,37 @@ def auth_login_html(next_path="/swficc/", error=""):
 </html>"""
 
 
+def auth_bridge_html(message, next_path="/swficc/"):
+    safe_next = safe_next_path(next_path)
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SWFI Sign In</title>
+  <style>
+    :root {{ color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f2f4f6; color: #1b2733; }}
+    body {{ min-height: 100vh; margin: 0; display: grid; place-items: center; background: #f2f4f6; }}
+    main {{ width: min(92vw, 420px); border: 1px solid #dce3ea; background: #fff; padding: 28px; border-radius: 8px; box-shadow: 0 24px 70px rgba(17,49,79,.12); }}
+    .brand {{ color: #11314f; text-decoration: none; display: inline-block; margin-bottom: 22px; }}
+    .brand strong {{ display: block; font-size: 22px; letter-spacing: .05em; }}
+    .brand span {{ display: block; color: #7a8a9b; font-size: 9px; letter-spacing: .06em; }}
+    h1 {{ color: #11314f; font-size: 21px; letter-spacing: 0; margin: 0 0 8px; }}
+    p {{ color: #41566b; margin: 0 0 18px; font-size: 13px; line-height: 1.5; }}
+    a {{ color: #16538c; font-size: 13px; text-decoration: underline; }}
+  </style>
+</head>
+<body>
+  <main>
+    <a class="brand" href="/swficc/"><strong>SWFI</strong><span>SOVEREIGN WEALTH FUND INSTITUTE</span></a>
+    <h1>Sign in could not be completed</h1>
+    <p>{escape_html(message)}</p>
+    <a href="{escape_html(safe_next)}">Return</a>
+  </main>
+</body>
+</html>"""
+
+
 class StaticProxyHandler(BaseHTTPRequestHandler):
     server_version = "swfipn-static"
 
@@ -356,11 +387,15 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
         if self.is_logout_path(parsed.path):
             self.logout()
             return
+        if self.is_auth_bridge_path(parsed.path):
+            self.handle_swfi_session_bridge(parsed)
+            return
         if self.is_session_status_path(parsed.path):
             self.session_status()
             return
         if self.requires_record_auth(parsed.path) and not self.current_session():
-            self.redirect(self.swfi_signin_location(parsed, default_next=self.current_swficc_target(parsed)))
+            record_target = self.swfi_record_redirect_target(parsed)
+            self.redirect(self.swfi_signin_location(parsed, default_next=record_target or self.current_swficc_target(parsed)))
             return
         if location := self.source_mirror_redirect(parsed):
             self.redirect(location)
@@ -387,11 +422,15 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
         if self.is_logout_path(parsed.path):
             self.logout(head=True)
             return
+        if self.is_auth_bridge_path(parsed.path):
+            self.not_found(head=True)
+            return
         if self.is_session_status_path(parsed.path):
             self.session_status(head=True)
             return
         if self.requires_record_auth(parsed.path) and not self.current_session():
-            self.redirect(self.swfi_signin_location(parsed, default_next=self.current_swficc_target(parsed)), head=True)
+            record_target = self.swfi_record_redirect_target(parsed)
+            self.redirect(self.swfi_signin_location(parsed, default_next=record_target or self.current_swficc_target(parsed)), head=True)
             return
         if location := self.source_mirror_redirect(parsed):
             self.redirect(location, head=True)
@@ -406,10 +445,41 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
         if self.is_login_path(parsed.path):
             self.redirect(self.swfi_signin_location(parsed))
             return
+        if self.should_proxy_caller_auth_backend(parsed.path):
+            self.proxy_backend(parsed, method="POST")
+            return
+        self.not_found()
+
+    def do_PATCH(self):
+        parsed = urllib.parse.urlsplit(self.path)
+        if self.should_proxy_caller_auth_backend(parsed.path):
+            self.proxy_backend(parsed, method="PATCH")
+            return
+        self.not_found()
+
+    def do_DELETE(self):
+        parsed = urllib.parse.urlsplit(self.path)
+        if self.should_proxy_caller_auth_backend(parsed.path):
+            self.proxy_backend(parsed, method="DELETE")
+            return
         self.not_found()
 
     def should_proxy_backend(self, path):
-        return path in {"/health", "/healthz"} or path.startswith("/api/") or path.startswith("/v1/")
+        return path in {"/health", "/healthz", "/docs"} or path.startswith("/api/") or path.startswith("/v1/")
+
+    def should_proxy_caller_auth_backend(self, path):
+        return (
+            path == "/v1/admin/api-keys"
+            or path.startswith("/v1/admin/api-keys/")
+            or path.startswith("/v1/admin/organizations")
+            or path.startswith("/v1/admin/users")
+            or path.startswith("/v1/admin/content-items")
+            or path == "/v1/admin/permissions"
+            or path == "/api/v1/saved-searches"
+            or path.startswith("/api/v1/saved-searches/")
+            or path == "/api/v1/alerts"
+            or path.startswith("/api/v1/alerts/")
+        )
 
     def is_origin_ready_path(self, path):
         return path in {"/__origin/ready", "/swficc/__origin/ready"}
@@ -426,10 +496,15 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
     def is_logout_path(self, path):
         return path in {"/logout", "/logout/", "/swficc/logout", "/swficc/logout/"}
 
+    def is_auth_bridge_path(self, path):
+        return path in {"/auth/bridge", "/auth/bridge/", "/swficc/auth/bridge", "/swficc/auth/bridge/"}
+
     def is_session_status_path(self, path):
         return False
 
     def requires_record_auth(self, path):
+        if os.environ.get("SWFIPN_REQUIRE_RECORD_AUTH", "").strip().lower() not in {"1", "true", "yes", "on"}:
+            return False
         normalized = path
         if normalized == "/swficc":
             normalized = "/"
@@ -496,11 +571,126 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
 
     def swfi_signin_location(self, parsed, default_next="/swficc/"):
         params = urllib.parse.parse_qs(parsed.query)
+        if self.server.bridge_login_enabled:
+            next_candidate = params.get("next", [""])[0] or self.current_swficc_target(parsed)
+            if not next_candidate or self.is_login_path(parsed.path):
+                next_candidate = params.get("next", [""])[0] or default_next
+            next_path = safe_swficc_path_from_url(next_candidate, allowed_host=self.public_host(), fallback="/swficc/")
+            bridge_path = f"/swficc/auth/bridge/?{urllib.parse.urlencode({'next': next_path})}"
+            bridge_url = urllib.parse.urlunsplit((self.public_scheme(), self.public_host(), bridge_path, "", ""))
+            query = urllib.parse.urlencode({"msg": "auth", "redirect": bridge_url})
+            return f"https://www.swfi.com/v1/signin/?{query}"
+        record_target = self.swfi_record_target_from_value(params.get("next", [""])[0]) or self.swfi_record_target_from_value(default_next)
+        if record_target:
+            query = urllib.parse.urlencode({"msg": "auth", "redirect": record_target})
+            return f"https://www.swfi.com/v1/signin/?{query}"
         host = self.public_host()
         next_path = safe_swficc_path_from_url(params.get("next", [""])[0], allowed_host=host, fallback=default_next)
         return_url = urllib.parse.urlunsplit((self.public_scheme(), host, next_path, "", ""))
         query = urllib.parse.urlencode({"msg": "auth", "redirect": return_url})
         return f"https://www.swfi.com/v1/signin/?{query}"
+
+    def swfi_record_target_from_value(self, value):
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        if re.fullmatch(r"/v1/(entities|people|transactions|compass)/[a-fA-F0-9]{24}", raw):
+            return raw
+        try:
+            return self.swfi_record_redirect_target(urllib.parse.urlsplit(raw))
+        except Exception:
+            return ""
+
+    def swfi_record_redirect_target(self, parsed):
+        params = urllib.parse.parse_qs(parsed.query)
+        for key in ("source", "swfi_url", "url"):
+            target = self.swfi_record_target_from_url((params.get(key) or [""])[0])
+            if target:
+                return target
+        normalized = parsed.path
+        if normalized == "/swficc":
+            normalized = "/"
+        elif normalized.startswith("/swficc/"):
+            normalized = normalized.removeprefix("/swficc")
+        normalized = normalized if normalized.endswith("/") else f"{normalized}/"
+        detail_sections = {
+            "/profiles/detail/": "entities",
+            "/transactions/detail/": "transactions",
+            "/people/detail/": "people",
+            "/mandates/detail/": "compass",
+        }
+        section = detail_sections.get(normalized)
+        if not section:
+            return ""
+        record_id = (params.get("id") or [""])[0]
+        if re.fullmatch(r"[a-fA-F0-9]{24}", record_id):
+            return f"/v1/{section}/{record_id}"
+        if section == "entities":
+            return self.lookup_entity_record_target(params)
+        return ""
+
+    def swfi_record_target_from_url(self, value):
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        try:
+            parsed = urllib.parse.urlsplit(raw)
+        except ValueError:
+            return ""
+        host = (parsed.hostname or "").lower()
+        if host not in {"www.swfi.com", "swfi.com"}:
+            return ""
+        match = re.fullmatch(r"/v1/(entities|people|transactions|compass)/([a-fA-F0-9]{24})", parsed.path)
+        if not match:
+            return ""
+        return f"/v1/{match.group(1)}/{match.group(2)}"
+
+    def lookup_entity_record_target(self, params):
+        name = (params.get("name") or [""])[0].strip()
+        slug = (params.get("slug") or [""])[0].strip()
+        query = name or slug.replace("-", " ")
+        if not query:
+            return ""
+        endpoint = f"{self.server.backend.rstrip('/')}/api/source-data/search/v1?{urllib.parse.urlencode({'collection': 'entities', 'q': query, 'limit': '8', 'page': '1'})}"
+        try:
+            request = urllib.request.Request(endpoint, headers={
+                "Accept": "application/json",
+                "Connection": "close",
+                "X-SWFIPN-Public": "1",
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36",
+            })
+            if self.server.backend_token:
+                request.add_header("Authorization", f"Bearer {self.server.backend_token}")
+            with urllib.request.urlopen(request, timeout=min(8, self.server.backend_timeout)) as response:
+                packet = json.loads(response.read().decode("utf-8"))
+        except Exception:
+            return ""
+        data = packet.get("data") if isinstance(packet, dict) else {}
+        rows = []
+        if isinstance(data, dict):
+            rows = data.get("rows") or data.get("results") or []
+        if not isinstance(rows, list):
+            return ""
+        expected_slug = slug.lower()
+        expected_name = name.casefold()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            row_slug = str(row.get("slug") or row.get("profile_slug") or "").lower()
+            row_name = str(row.get("name") or row.get("institution") or "").casefold()
+            if expected_slug and row_slug and row_slug != expected_slug:
+                continue
+            if expected_name and row_name and row_name != expected_name:
+                continue
+            target = self.swfi_record_target_from_url(str(row.get("source_url") or row.get("swfi_url") or ""))
+            if target:
+                return target
+        for row in rows:
+            if isinstance(row, dict):
+                target = self.swfi_record_target_from_url(str(row.get("source_url") or row.get("swfi_url") or ""))
+                if target:
+                    return target
+        return ""
 
     def public_scheme(self):
         forwarded = str(self.headers.get("X-Forwarded-Proto", "")).split(",", 1)[0].strip().lower()
@@ -543,11 +733,47 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
     def session_status(self, head=False):
         session = self.current_session()
         if session:
-            body = {"authenticated": True, "pending": False, "entitlements": ["dashboard"], "dashboard_access": True}
+            body = {
+                "authenticated": True,
+                "pending": False,
+                "entitlements": ["dashboard"],
+                "dashboard_access": True,
+                "auth_source": session.get("source") or "local_session",
+            }
             self.send_json(HTTPStatus.OK, body, head=head)
             return
         body = {"authenticated": False, "pending": False, "entitlements": [], "dashboard_access": False}
         self.send_json(HTTPStatus.UNAUTHORIZED, body, head=head)
+
+    def handle_swfi_session_bridge(self, parsed):
+        params = urllib.parse.parse_qs(parsed.query)
+        next_path = safe_swficc_path_from_url(params.get("next", [""])[0], allowed_host=self.public_host(), fallback="/swficc/")
+        assertion = (
+            params.get("assertion", [""])[0]
+            or params.get("swfi_assertion", [""])[0]
+            or params.get("token", [""])[0]
+        )
+        if not self.server.bridge_enabled:
+            self.send_html(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                auth_bridge_html("The SWFI session bridge is not configured on this runtime.", next_path),
+            )
+            return
+        payload, failure = self.bridge_assertion_payload(assertion)
+        if failure:
+            self.send_html(
+                HTTPStatus.UNAUTHORIZED,
+                auth_bridge_html("The SWFI sign-in response could not be verified.", next_path),
+            )
+            return
+        user_id = self.bridge_user_id(payload)
+        if not user_id:
+            self.send_html(
+                HTTPStatus.UNAUTHORIZED,
+                auth_bridge_html("The SWFI sign-in response did not include a verified user.", next_path),
+            )
+            return
+        self.redirect_with_bridge_session(next_path, payload)
 
     def logout(self, head=False):
         self.send_response(HTTPStatus.FOUND)
@@ -582,6 +808,74 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
         except Exception:
             return None
 
+    def bridge_assertion_payload(self, assertion):
+        raw = str(assertion or "").strip()
+        if not raw:
+            return None, "missing_assertion"
+        try:
+            parts = raw.split(".")
+            if len(parts) == 2:
+                signed_part, signature = parts
+                payload_part = signed_part
+            elif len(parts) == 3:
+                header_part, payload_part, signature = parts
+                signed_part = f"{header_part}.{payload_part}"
+            else:
+                return None, "bad_assertion_format"
+            digest = hmac.new(self.server.bridge_secret.encode("utf-8"), signed_part.encode("utf-8"), hashlib.sha256).digest()
+            if not safe_equal(signature, b64url(digest)):
+                return None, "bad_assertion_signature"
+            payload = json.loads(b64url_decode(payload_part).decode("utf-8"))
+            if not isinstance(payload, dict):
+                return None, "bad_assertion_payload"
+            now = int(time.time())
+            exp = int(payload.get("exp", 0) or 0)
+            iat = int(payload.get("iat", now) or now)
+            if exp < now:
+                return None, "assertion_expired"
+            if iat > now + 300:
+                return None, "assertion_iat_in_future"
+            issuer = str(payload.get("iss") or "").strip()
+            if self.server.bridge_issuer and issuer != self.server.bridge_issuer:
+                return None, "bad_assertion_issuer"
+            expected_audience = self.server.bridge_audience or self.public_host()
+            audience = payload.get("aud")
+            audiences = audience if isinstance(audience, list) else [audience]
+            if expected_audience and expected_audience not in [str(item or "").strip() for item in audiences]:
+                return None, "bad_assertion_audience"
+            return payload, ""
+        except Exception:
+            return None, "bad_assertion"
+
+    def bridge_user_id(self, payload):
+        if not isinstance(payload, dict):
+            return ""
+        for key in ("sub", "email", "user_id"):
+            candidate = str(payload.get(key) or "").strip()
+            if candidate and len(candidate) <= 128 and re.fullmatch(r"[A-Za-z0-9_.:@-]+", candidate):
+                return candidate
+        return ""
+
+    def bridge_roles(self, payload):
+        roles = payload.get("roles") if isinstance(payload, dict) else []
+        if isinstance(roles, str):
+            roles = [roles]
+        if not isinstance(roles, list):
+            return []
+        clean_roles = []
+        for role in roles:
+            normalized = str(role or "").strip().lower().replace("-", "_").replace(" ", "_")
+            if normalized in {"super_admin", "admin", "editor", "viewer"} and normalized not in clean_roles:
+                clean_roles.append(normalized)
+        return clean_roles
+
+    def bridge_admin_role(self, session):
+        roles = self.bridge_roles(session)
+        for role in ("super_admin", "admin", "editor", "viewer"):
+            if role in roles:
+                return role
+        return ""
+
     def redirect_with_session(self, location, username):
         now = int(time.time())
         payload = {"u": username, "iat": now, "exp": now + SESSION_TTL_SECONDS}
@@ -591,6 +885,30 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
         self.send_header("Location", safe_next_path(location))
         self.send_security_headers()
         self.send_header("Set-Cookie", self.session_cookie(token, max_age=SESSION_TTL_SECONDS))
+        self.send_header("Set-Cookie", self.session_cookie("", max_age=0, path="/swficc"))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def redirect_with_bridge_session(self, location, payload):
+        now = int(time.time())
+        ttl = min(SESSION_TTL_SECONDS, max(1, int(payload.get("exp", now + SESSION_TTL_SECONDS)) - now))
+        user_id = self.bridge_user_id(payload)
+        session_payload = {
+            "u": user_id,
+            "sub": str(payload.get("sub") or user_id).strip()[:128],
+            "email": str(payload.get("email") or "").strip()[:128],
+            "roles": self.bridge_roles(payload),
+            "source": "swfi_session_bridge",
+            "iat": now,
+            "exp": now + ttl,
+        }
+        payload_part = b64url(json.dumps(session_payload, separators=(",", ":")).encode("utf-8"))
+        token = f"{payload_part}.{self.sign_payload(payload_part)}"
+        self.send_response(HTTPStatus.FOUND)
+        self.send_header("Location", safe_next_path(location))
+        self.send_security_headers()
+        self.send_header("Set-Cookie", self.session_cookie(token, max_age=ttl))
         self.send_header("Set-Cookie", self.session_cookie("", max_age=0, path="/swficc"))
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", "0")
@@ -628,6 +946,11 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
             self.write_body(encoded)
 
     def source_mirror_redirect(self, parsed):
+        accept = str(self.headers.get("Accept") or "").lower()
+        if self.headers.get("X-API-Key") or "application/json" in accept:
+            return None
+        if parsed.path.rstrip("/") in {"/v1/entities/aggregates", "/swficc/v1/entities/aggregates"}:
+            return None
         parts = [part for part in parsed.path.split("/") if part]
         if parts and parts[0] == "swficc":
             parts = parts[1:]
@@ -660,7 +983,7 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
-    def proxy_backend(self, parsed, head=False):
+    def proxy_backend(self, parsed, head=False, method=None):
         backend = self.server.backend.rstrip("/")
         backend_path = parsed.path
         if backend_path == "/swficc":
@@ -671,11 +994,57 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
         if parsed.query:
             target = f"{target}?{parsed.query}"
         try:
-            request = urllib.request.Request(target, method="HEAD" if head else "GET")
+            request_method = method or ("HEAD" if head else "GET")
+            request_body = None
+            if request_method in {"POST", "PUT", "PATCH"}:
+                content_length = int(self.headers.get("Content-Length") or 0)
+                request_body = self.rfile.read(content_length) if content_length > 0 else b""
+            request = urllib.request.Request(target, data=request_body, method=request_method)
             internal_receipt_request = str(
                 self.headers.get("X-SWFIPN-Internal") or self.headers.get("X-SWFI-Internal") or ""
             ).lower() in {"1", "true", "yes"}
+            api_product_request = backend_path == "/docs" or backend_path.startswith("/v1/")
+            caller_auth_request = (
+                backend_path == "/v1/admin/api-keys"
+                or backend_path.startswith("/v1/admin/api-keys/")
+                or backend_path.startswith("/v1/admin/organizations")
+                or backend_path.startswith("/v1/admin/users")
+                or backend_path.startswith("/v1/admin/content-items")
+                or backend_path == "/v1/admin/permissions"
+                or backend_path == "/api/v1/saved-searches"
+                or backend_path.startswith("/api/v1/saved-searches/")
+                or backend_path == "/api/v1/alerts"
+                or backend_path.startswith("/api/v1/alerts/")
+            )
             request.add_header("Accept", self.headers.get("Accept", "application/json"))
+            if content_type := str(self.headers.get("Content-Type") or "").strip():
+                request.add_header("Content-Type", content_type)
+            if api_key := str(self.headers.get("X-API-Key") or "").strip():
+                request.add_header("X-API-Key", api_key)
+            if webhook_test := str(self.headers.get("X-SWFIPN-Webhook-Test") or "").strip():
+                request.add_header("X-SWFIPN-Webhook-Test", webhook_test)
+            bridge_session = self.current_session() if caller_auth_request else None
+            if caller_auth_request and bridge_session and bridge_session.get("source") == "swfi_session_bridge":
+                if self.server.backend_token:
+                    request.add_header("Authorization", f"Bearer {self.server.backend_token}")
+                user_id = self.bridge_user_id(bridge_session)
+                if user_id:
+                    request.add_header("X-SWFI-User-Id", user_id)
+                    request.add_header("X-SWFI-Admin-User", user_id)
+                if admin_role := self.bridge_admin_role(bridge_session):
+                    request.add_header("X-SWFI-Admin-Role", admin_role)
+                request.add_header("X-SWFI-Auth-Source", "swfi_session_bridge")
+            elif caller_auth_request:
+                if authorization := str(self.headers.get("Authorization") or "").strip():
+                    request.add_header("Authorization", authorization)
+                if swfi_user := str(self.headers.get("X-SWFI-User-Id") or "").strip():
+                    request.add_header("X-SWFI-User-Id", swfi_user)
+                if swfipn_user := str(self.headers.get("X-SWFIPN-User") or "").strip():
+                    request.add_header("X-SWFIPN-User", swfipn_user)
+                if admin_role := str(self.headers.get("X-SWFI-Admin-Role") or "").strip():
+                    request.add_header("X-SWFI-Admin-Role", admin_role)
+                if admin_user := str(self.headers.get("X-SWFI-Admin-User") or "").strip():
+                    request.add_header("X-SWFI-Admin-User", admin_user)
             if internal_receipt_request:
                 request.add_header("X-SWFIPN-Internal", "1")
             else:
@@ -689,11 +1058,11 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
                     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36",
                 ),
             )
-            if self.server.backend_token:
+            if self.server.backend_token and not caller_auth_request:
                 request.add_header("Authorization", f"Bearer {self.server.backend_token}")
             with urllib.request.urlopen(request, timeout=self.server.backend_timeout) as response:
                 raw_body = b"" if head else response.read()
-                body = raw_body if internal_receipt_request else public_api_body(parsed.path, raw_body)
+                body = raw_body if internal_receipt_request or api_product_request else public_api_body(parsed.path, raw_body)
                 self.send_response(response.status)
                 self.copy_backend_headers(response.headers, len(body))
                 self.end_headers()
@@ -701,7 +1070,8 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
                     self.write_body(body)
         except urllib.error.HTTPError as exc:
             raw_body = b"" if head else exc.read()
-            body = raw_body if str(self.headers.get("X-SWFIPN-Internal") or self.headers.get("X-SWFI-Internal") or "").lower() in {"1", "true", "yes"} else public_api_body(parsed.path, raw_body)
+            api_product_request = backend_path == "/docs" or backend_path.startswith("/v1/")
+            body = raw_body if api_product_request or str(self.headers.get("X-SWFIPN-Internal") or self.headers.get("X-SWFI-Internal") or "").lower() in {"1", "true", "yes"} else public_api_body(parsed.path, raw_body)
             self.send_response(exc.code)
             self.copy_backend_headers(exc.headers, len(body))
             self.end_headers()
@@ -842,6 +1212,19 @@ class StaticProxyServer(ThreadingHTTPServer):
             strip=False,
         )
         self.auth_enabled = bool(self.auth_username and self.auth_password and self.auth_secret)
+        self.bridge_secret = load_secret(
+            "SWFIPN_SWFI_SESSION_BRIDGE_SECRET",
+            "SWFIPN_SWFI_SESSION_BRIDGE_SECRET_KEYCHAIN_SERVICE",
+            ["SWFIPN_SWFI_SESSION_BRIDGE_SECRET", "swfipn-swfi-session-bridge-secret"],
+            strip=False,
+        )
+        self.bridge_issuer = os.environ.get("SWFIPN_SWFI_SESSION_BRIDGE_ISSUER", "swfi.com").strip()
+        self.bridge_audience = os.environ.get("SWFIPN_SWFI_SESSION_BRIDGE_AUDIENCE", "").strip()
+        self.bridge_enabled = bool(self.bridge_secret and self.auth_secret)
+        self.bridge_login_enabled = self.bridge_enabled and os.environ.get(
+            "SWFIPN_SWFI_SESSION_BRIDGE_LOGIN_ENABLED",
+            "",
+        ).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def env_list(name, default):

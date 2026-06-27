@@ -12,10 +12,12 @@ const originHost = new URL(origin).hostname;
 const username = process.env.SWFIPN_AUTH_TEST_USERNAME || "";
 const password = process.env.SWFIPN_AUTH_TEST_PASSWORD || "";
 const brandHeaderLinks = [
-  ["About Us", "/about/"],
-  ["Solutions", "/solutions/"],
-  ["Demo", "/demo/"],
-  ["Contact Us", "/contact/"],
+  ["DASHBOARD", "/"],
+  ["NEWS", "/intelligence/"],
+  ["ENTITIES", "/profiles/"],
+  ["PEOPLE", "/people/"],
+  ["TRANSACTIONS", "/transactions/"],
+  ["COMPASS", "/mandates/"],
 ];
 
 function normalizeOrigin(value) {
@@ -60,6 +62,18 @@ function isCanonicalSwfiRecordHref(href) {
     if (!["www.swfi.com", "swfi.com", "cms.swfi.com"].includes(parsed.hostname)) return false;
     if (parsed.pathname === "/" && /^\?p=\d+/i.test(parsed.search)) return true;
     return /^\/v1\/(entities|people|transactions|compass|news)\/[a-f0-9]{24}\/?$/i.test(parsed.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function isSwfiSigninRecordHandoff(href, section = "entities") {
+  try {
+    const parsed = new URL(String(href || ""));
+    if (!["www.swfi.com", "swfi.com"].includes(parsed.hostname)) return false;
+    if (parsed.pathname.replace(/\/?$/, "/") !== "/v1/signin/") return false;
+    const redirect = parsed.searchParams.get("redirect") || "";
+    return new RegExp(`^/v1/${section}/[a-f0-9]{24}$`, "i").test(redirect);
   } catch {
     return false;
   }
@@ -117,15 +131,15 @@ async function unauthenticatedClickCheck(browser) {
 async function unauthenticatedProfileRowClickCheck(browser) {
   const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });
   const page = await context.newPage();
-  const result = { id: "dashboard_profile_row_links_to_canonical_swfi_record", ok: true, failures: [], target_href: "", final_url: "", next: "", body_excerpt: "" };
+  const result = { id: "dashboard_profile_row_links_to_swfi_signin_handoff", ok: true, failures: [], target_href: "", final_url: "", next: "", body_excerpt: "" };
   try {
     await page.goto(appUrl("/"), { waitUntil: "domcontentloaded", timeout: 90_000 });
     await page.waitForTimeout(4000);
-    result.target_href = await page.locator('#insight-top-investors a[href^="https://www.swfi.com/v1/entities/"], a[data-record-link="true"][href^="https://www.swfi.com/v1/entities/"]').first().getAttribute("href", { timeout: 60_000 }) || "";
+    result.target_href = await page.locator('a[href^="https://www.swfi.com/v1/signin/"][href*="%2Fv1%2Fentities%2F"], a[href^="https://swfi.com/v1/signin/"][href*="%2Fv1%2Fentities%2F"]').first().getAttribute("href", { timeout: 60_000 }) || "";
     result.final_url = page.url();
     result.body_excerpt = await bodyText(page);
-    if (!isCanonicalSwfiRecordHref(result.target_href)) {
-      result.failures.push(`missing_canonical_swfi_record_href:${result.target_href || "missing"}`);
+    if (!isSwfiSigninRecordHandoff(result.target_href, "entities")) {
+      result.failures.push(`missing_swfi_signin_entity_handoff:${result.target_href || "missing"}`);
     }
   } catch (error) {
     result.failures.push(error.message);
@@ -145,7 +159,7 @@ async function unauthenticatedBrandHeaderClickCheck(browser) {
       const row = { label, expected_next: appPath(route), target_href: "", final_url: "", next: "", body_excerpt: "" };
       await page.goto(appUrl("/"), { waitUntil: "domcontentloaded", timeout: 90_000 });
       await page.waitForTimeout(1500);
-      const link = page.locator("header a", { hasText: label }).first();
+      const link = page.locator(`a:has-text("${label}")`).first();
       row.target_href = await link.getAttribute("href", { timeout: 30_000 }) || "";
       await link.click({ timeout: 30_000 });
       await page.waitForLoadState("domcontentloaded", { timeout: 30_000 }).catch(() => null);

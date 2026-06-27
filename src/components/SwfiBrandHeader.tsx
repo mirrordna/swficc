@@ -4,6 +4,7 @@ import { appHref, assetHref } from "@/lib/selfContainedLinks";
 
 const brandLinks = [
   ["About Us", "/about/"],
+  ["Products", "/products/"],
   ["Solutions", "/solutions/"],
   ["Demo", "/demo/"],
   ["Contact Us", "/contact/"],
@@ -39,11 +40,11 @@ export default function SwfiBrandHeader({
 }) {
   return (
     <header data-gsap-reveal className="relative z-50 shrink-0 border-b border-[#7E1417] bg-[#A61C20] text-white">
-      <div className="mx-auto flex min-h-[72px] max-w-[1296px] flex-wrap items-center gap-4 px-4 py-3 lg:flex-nowrap lg:px-[72px]">
-        <a href={appHref("/")} className="flex min-w-[190px] items-center text-white no-underline" aria-label="SWFI home">
-          <img src={assetHref("/swfi-assets/logo.svg")} alt="SWFI" className="h-12 w-[130px]" />
+      <div className="mx-auto flex min-h-[80px] max-w-[1296px] flex-wrap items-center gap-5 px-4 py-3 lg:flex-nowrap lg:px-[72px]">
+        <a href={appHref("/")} className="flex min-w-[150px] items-center text-white no-underline" aria-label="SWFI home">
+          <img src={assetHref("/swfi-assets/logo.svg")} alt="SWFI" className="h-12 w-[130px] object-contain" />
         </a>
-        <nav aria-label="SWFI brand navigation" className="ml-auto flex flex-wrap items-center gap-5 text-[15px] font-semibold">
+        <nav aria-label="SWFI brand navigation" className="ml-auto flex flex-wrap items-center gap-6 text-[16px] font-bold lg:gap-12">
           {brandLinks.map(([label, href]) => {
             const rawHref = String(href);
             const target = absoluteOrAppHref(href);
@@ -54,7 +55,7 @@ export default function SwfiBrandHeader({
                 <a
                   href={gated ? loginHref(target) : target}
                   data-dashboard-target={gated ? target : undefined}
-                  className="inline-flex items-center gap-1 text-white no-underline hover:underline"
+                  className={`relative inline-flex items-center gap-1 text-white no-underline after:absolute after:left-0 after:top-[calc(100%+5px)] after:h-[3px] after:w-full after:scale-x-0 after:rounded after:bg-white after:transition-transform hover:after:scale-x-100 ${label === "Sign In" ? "rounded-full border border-transparent px-4 py-3 hover:border-white hover:after:scale-x-0" : ""}`}
                 >
                   <span>{label}</span>
                   {dropdown.length ? (
@@ -62,7 +63,7 @@ export default function SwfiBrandHeader({
                   ) : null}
                 </a>
                 {dropdown.length ? (
-                  <div className="invisible absolute right-0 top-full z-50 grid min-w-[260px] translate-y-2 gap-1 rounded bg-white p-3 text-[14px] font-semibold text-[#22272F] opacity-0 shadow-lg transition group-hover:visible group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:visible group-focus-within:translate-y-0 group-focus-within:opacity-100">
+                  <div className="invisible absolute left-0 top-[calc(100%+27px)] z-50 grid min-w-[280px] translate-y-2 gap-1 bg-white p-3 text-[14px] font-normal text-[#22272F] opacity-0 shadow-lg transition group-hover:visible group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:visible group-focus-within:translate-y-0 group-focus-within:opacity-100">
                     {dropdown.map(([itemLabel, itemHref]) => {
                       const itemTarget = absoluteOrAppHref(itemHref);
                       return (
@@ -70,7 +71,7 @@ export default function SwfiBrandHeader({
                           key={itemLabel}
                           href={gated ? loginHref(itemTarget) : itemTarget}
                           data-dashboard-target={gated ? itemTarget : undefined}
-                          className="rounded px-3 py-2 text-[#22272F] no-underline hover:bg-[#F8F8F8] hover:text-[#A61C20]"
+                          className="px-3 py-2 text-[#70798B] no-underline hover:bg-[#F8F8F8] hover:text-[#A61C20]"
                         >
                           {itemLabel}
                         </a>
@@ -87,10 +88,10 @@ export default function SwfiBrandHeader({
         <form
           action="/swficc/search/"
           method="get"
-          className="mx-auto flex h-9 max-w-[1296px] items-center overflow-hidden rounded border border-[#C7D2DD] bg-[#F7F9FA] px-3 text-[13px] text-[#41566B]"
+          className="mx-auto flex h-9 max-w-[1296px] items-center overflow-hidden border border-[#C8D1E5] bg-[#F8F9FA] px-3 text-[13px] text-[#444D5F]"
         >
-          <label htmlFor={searchId} className="shrink-0 font-semibold text-[#11314F]">Smart Search Bar</label>
-          <span className="shrink-0 text-[#7A8A9B]">&nbsp;-&nbsp;</span>
+          <label htmlFor={searchId} className="shrink-0 font-semibold text-[#22272F]">Smart Search Bar</label>
+          <span className="shrink-0 text-[#70798B]">&nbsp;-&nbsp;</span>
           <input
             id={searchId}
             name="q"

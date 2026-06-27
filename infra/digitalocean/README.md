@@ -70,6 +70,38 @@ Public hostname:
 swfipn.activemirror.ai -> Cloudflare proxied A -> 161.35.56.218
 ```
 
+API hostname target:
+
+```text
+api.swfi.com -> A 161.35.56.218
+```
+
+The acceptance Caddy config includes a dedicated `SWFIPN_API_DOMAIN`
+virtual host. It proxies `https://api.swfi.com/docs` and `/v1/*` directly
+to `swfi2-backend:8362`. Until DNS points `api.swfi.com` at this droplet,
+the public production API gate remains blocked even when the acceptance API
+control passes at `https://swfipn.activemirror.ai`.
+
+Preflight the DNS cutover without changing records:
+
+```bash
+npm run brd:api-dns:cutover
+```
+
+Apply the cutover only with a DigitalOcean token that can write `swfi.com`
+DNS records:
+
+```bash
+SWFIPN_API_DNS_APPLY=1 npm run brd:api-dns:cutover
+```
+
+The cutover controller reads the token from `DIGITALOCEAN_ACCESS_TOKEN`,
+`DO_API_TOKEN`, or the `swfi-digital-ocean` Keychain service. By default it
+prefers the `swfipn-acceptance` Keychain account before falling back to a
+service-only lookup. It writes `output/swfipn-api-dns-cutover-latest.json` with
+redacted values, the prior record id/data/TTL for rollback, the patch result,
+DNS polling samples, and the post-cutover API gate result.
+
 Verified public asset version:
 
 ```text
@@ -97,8 +129,20 @@ SWFI2_FACT_SOURCE=mongo
 SWFI_MONGO_URI=
 SWFI_MONGO_DB=swfi
 SWFI2_API_TOKEN=
+SWFI2_PRODUCT_API_KEYS=
 SWFI2_SYNC_MAX_STALENESS_SECONDS=1800
 ```
+
+Product API keys may also be created through the service-token protected
+lifecycle endpoint after deploy. The compose stack persists managed key hashes
+in the `swfipn_acceptance_api_product_key_store` Docker volume at:
+
+```text
+/app/product-state/api-product-keys.json
+```
+
+The create endpoint returns the raw API key once. List and revoke responses do
+not return key material or key hashes.
 
 Use `SWFI2_FACT_SOURCE=swfi_api` only if the server has SWFI.com API
 credentials or a valid session cookie. Do not print or commit either file.
@@ -110,9 +154,50 @@ SWFIPN_AUTH_USERNAME=
 SWFIPN_AUTH_PASSWORD=
 SWFIPN_AUTH_SESSION_SECRET=
 SWFIPN_BACKEND_TOKEN=
+SWFIPN_REQUIRE_RECORD_AUTH=1
 ```
 
 `SWFIPN_BACKEND_TOKEN` must equal backend `SWFI2_API_TOKEN`.
+
+Optional Phase 2 runtime integrations stay disabled until their receipts pass:
+
+```bash
+# .env.swfipn-web
+SWFIPN_SWFI_SESSION_BRIDGE_SECRET=
+SWFIPN_SWFI_SESSION_BRIDGE_ISSUER=swfi.com
+SWFIPN_SWFI_SESSION_BRIDGE_AUDIENCE=https://swfipn.activemirror.ai/swficc/
+SWFIPN_SWFI_SESSION_BRIDGE_LOGIN_ENABLED=1
+
+# .env.swfi2-backend
+SWFI2_SENDGRID_API_KEY=
+SWFI2_SENDGRID_FROM_EMAIL=
+SWFI2_SENDGRID_FROM_NAME=SWFI
+SWFI2_SENDGRID_SANDBOX_MODE=0
+```
+
+Apply these without exposing values in terminal output:
+
+```bash
+SWFIPN_HOST=swfipn-do \
+SWFIPN_SWFI_SESSION_BRIDGE_SECRET="$SWFI_BRIDGE_SECRET" \
+SWFIPN_SWFI_SESSION_BRIDGE_ISSUER=swfi.com \
+SWFIPN_SWFI_SESSION_BRIDGE_AUDIENCE=https://swfipn.activemirror.ai/swficc/ \
+SWFIPN_SWFI_SESSION_BRIDGE_LOGIN_ENABLED=1 \
+SWFI2_SENDGRID_API_KEY="<sendgrid-api-key>" \
+SWFI2_SENDGRID_FROM_EMAIL=notifications@example.com \
+SWFI2_SENDGRID_FROM_NAME=SWFI \
+SWFIPN_RESTART=1 \
+npm run runtime:config:apply
+```
+
+The script writes `output/swfipn-runtime-config-apply-latest.json` with key
+names only. After applying, rerun:
+
+```bash
+npm run runtime:phase2:preflight:public
+npm run brd:swfi-session:gate:public
+npm run brd:sendgrid-email:gate:public
+```
 
 ## Deploy
 
@@ -122,6 +207,7 @@ From the directory that contains both repos:
 SWFI2_BACKEND_CONTEXT=./SWFI2.0-final \
 SWFIPN_FRONTEND_CONTEXT=./swfi-dashboard \
 SWFIPN_DOMAIN=swfipn-acceptance.example.com \
+SWFIPN_API_DOMAIN=api.swfi.com \
 docker compose -f swfi-dashboard/infra/digitalocean/compose.acceptance.yml up -d --build
 ```
 

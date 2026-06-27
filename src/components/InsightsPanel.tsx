@@ -91,8 +91,8 @@ function TabContent({ tabKey, insight }: { tabKey: TabKey; insight: QuickInsight
                     return (
                   <a
                     href={selfContainedHref(item.profile_url, "/profiles/")}
-                    data-source-url={provenance}
-                    title={provenance ? `Source: ${provenance}` : undefined}
+                    data-source-state={provenance ? "on-file" : undefined}
+                    title={provenance ? "Source on file" : undefined}
                     className="text-black font-semibold no-underline hover:underline"
                   >
                       {item.name || item.title || "Institution"}
@@ -116,8 +116,8 @@ function TabContent({ tabKey, insight }: { tabKey: TabKey; insight: QuickInsight
           <div className="mt-2.5">
             <a
               href={selfContainedHref(insight.href, "/profiles/")}
-              data-source-url={insightProvenance}
-              title={insightProvenance ? `Source: ${insightProvenance}` : undefined}
+              data-source-state={insightProvenance ? "on-file" : undefined}
+              title={insightProvenance ? "Source on file" : undefined}
               className="text-black text-sm font-semibold no-underline hover:underline"
             >
               View all active investors
@@ -143,8 +143,8 @@ function TabContent({ tabKey, insight }: { tabKey: TabKey; insight: QuickInsight
         <div className="mt-2.5">
           <a
             href={selfContainedHref(insight.href, "/search/")}
-            data-source-url={insightProvenance}
-            title={insightProvenance ? `Source: ${insightProvenance}` : undefined}
+            data-source-state={insightProvenance ? "on-file" : undefined}
+            title={insightProvenance ? "Source on file" : undefined}
             className="text-black text-sm font-semibold no-underline hover:underline"
           >
             View all
@@ -162,8 +162,8 @@ function ItemCard({ item }: { item: InsightItem }) {
   return (
     <a
       href={selfContainedHref(href, "/profiles/")}
-      data-source-url={provenance || undefined}
-      title={provenance ? `Source: ${provenance}` : undefined}
+      data-source-state={provenance ? "on-file" : undefined}
+      title={provenance ? "Source on file" : undefined}
       className="grid gap-1 border border-gray-300 p-2 no-underline text-inherit hover:bg-gray-50"
     >
       <strong className="text-gray-900 text-sm">{item.name || item.title || "Record"}</strong>

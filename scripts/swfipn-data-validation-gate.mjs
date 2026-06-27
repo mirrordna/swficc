@@ -94,12 +94,15 @@ function readLedger() {
   };
 }
 
-async function fetchJson(endpoint) {
+async function fetchJson(endpoint, { internal = false } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), defaultTimeoutMs);
   try {
     const url = endpointUrl(endpoint);
-    const response = await fetch(url, { headers: { Accept: "application/json", "X-SWFIPN-Public": "1" }, signal: controller.signal });
+    const headers = internal
+      ? { Accept: "application/json", "X-SWFIPN-Internal": "1" }
+      : { Accept: "application/json", "X-SWFIPN-Public": "1" };
+    const response = await fetch(url, { headers, signal: controller.signal });
     const text = await response.text();
     let body;
     try {
@@ -411,6 +414,26 @@ function runModuleBusinessChecks(result, module, packet) {
   if (module.id === "search") validateSearch(result, packet);
 }
 
+async function packetForBusinessChecks(module, publicPacket) {
+  if (module.id !== "active_allocators") return publicPacket;
+  const internalPacket = await fetchJson(module.endpoint, { internal: true });
+  if (internalPacket.http_status >= 400 || !internalPacket.body || typeof internalPacket.body !== "object") {
+    return publicPacket;
+  }
+  const publicData = packetData(publicPacket);
+  const internalData = packetData(internalPacket.body);
+  if (!internalData.methodology || typeof internalData.methodology !== "object" || Array.isArray(internalData.methodology)) {
+    return publicPacket;
+  }
+  return {
+    ...publicPacket,
+    data: {
+      ...publicData,
+      methodology: internalData.methodology,
+    },
+  };
+}
+
 async function inspectModule(module) {
   const result = {
     id: module.id || "unknown",
@@ -453,7 +476,8 @@ async function inspectModule(module) {
 
     if (module.freshness === "live" && !packet.body.generated_at) result.failures.push("live_packet_missing_generated_at");
     if (rows.length) result.failures.push(...duplicateFailures(rows, module));
-    runModuleBusinessChecks(result, module, packet.body);
+    const businessPacket = await packetForBusinessChecks(module, packet.body);
+    runModuleBusinessChecks(result, module, businessPacket);
 
     const exposureFindings = apiExposureFindings(packet.body).slice(0, 30);
     result.api_exposure = {

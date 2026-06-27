@@ -18,8 +18,8 @@ export default function SectorShifts({ shifts }: { shifts: SectorShiftItem[] }) 
           <a
             key={s.sector}
             href={selfContainedHref(s.href, "/transactions/")}
-            data-source-url={provenance}
-            title={provenance ? `Source: ${provenance}` : undefined}
+            data-source-state={provenance ? "on-file" : undefined}
+            title={provenance ? "Source on file" : undefined}
             className="grid gap-1.5 border border-gray-300 p-2 no-underline text-inherit hover:bg-gray-50"
           >
             <strong className="text-gray-900 text-sm">{s.sector}</strong>

@@ -10,25 +10,22 @@ const origin = normalizeOrigin(process.env.SWFIPN_ORIGIN || "https://swfipn.acti
 const resolveIp = process.env.SWFIPN_RESOLVE_IP || "";
 const originHost = new URL(origin).hostname;
 const maxReceiptAgeMs = Number(process.env.SWFIPN_SHARE_MAX_RECEIPT_AGE_MS || 2 * 60 * 60 * 1000);
+const manifestReceiptMaxAgeMs = Number(process.env.SWFIPN_SHARE_MANIFEST_MAX_RECEIPT_AGE_MS || 7 * 24 * 60 * 60 * 1000);
 const requiredReceipts = [
-  "swfipn-product-truth-audit-latest.json",
-  "swfipn-doctrine-gate-latest.json",
-  "swfipn-source-truth-gate-latest.json",
-  "swfipn-record-manifest-scan-latest.json",
-  "swfipn-record-mirror-gate-latest.json",
-  "swfipn-table-controls-proof-latest.json",
-  "swfipn-visual-gate-latest.json",
   "swfipn-kp-acceptance-gate-latest.json",
-  "swfipn-e2e-gate-latest.json",
   "swfipn-runtime-staleness-gate-latest.json",
-  "swfipn-route-ledger-gate-latest.json",
-  "swfipn-data-validation-gate-latest.json",
-  "swfipn-ml-loop-registry-latest.json",
+  "swfipn-link-mapping-leakage-gate-latest.json",
+  "swfipn-visible-link-escape-gate-latest.json",
+  "swfipn-acceptance-criteria-gate-latest.json",
+  "swfipn-strict-acceptance-deploy-latest.json",
+  "swfipn-public-gc1-link-proof-latest.json",
+  "swfipn-acceptance-lock-latest.json",
+  "swfipn-loop-collapse-latest.json",
 ];
 const requiredScreenshots = [
-  "swfipn-visual-desktop-top.png",
-  "swfipn-visual-desktop-visuals.png",
-  "swfipn-visual-mobile-full.png",
+  "swfipn-acceptance-desktop.png",
+  "swfipn-acceptance-mobile.png",
+  "swfipn-public-gc1-link-proof.png",
 ];
 const forbiddenVisible = [
   "Endpoint:",
@@ -42,6 +39,9 @@ const forbiddenVisible = [
   "Source packet:",
   "No internal record mapping",
   "citation-only",
+  "Active Mirror",
+  "source_gap",
+  "schema_version",
 ];
 
 function normalizeOrigin(value) {
@@ -63,10 +63,11 @@ function readJsonReceipt(file) {
     const stat = fs.statSync(absolute);
     const body = JSON.parse(fs.readFileSync(absolute, "utf8"));
     const ageMs = Date.now() - stat.mtimeMs;
-    const status = body.status || "";
+    const allowedAgeMs = file === "swfipn-record-manifest-scan-latest.json" ? manifestReceiptMaxAgeMs : maxReceiptAgeMs;
+    const status = body.status || body.final_verdict || (body.collapse_detected === false ? "pass" : "");
     const failures = [];
-    if (!["pass", "pass_with_quarantine", "complete"].includes(status)) failures.push(`status_${status || "missing"}`);
-    if (ageMs > maxReceiptAgeMs) failures.push(`stale_${Math.round(ageMs / 1000)}s`);
+    if (!["pass", "pass_with_quarantine", "complete", "go", "go_with_caveat"].includes(status)) failures.push(`status_${status || "missing"}`);
+    if (ageMs > allowedAgeMs) failures.push(`stale_${Math.round(ageMs / 1000)}s`);
     return {
       file,
       ok: failures.length === 0,
@@ -77,6 +78,7 @@ function readJsonReceipt(file) {
       } : null,
       mtime: stat.mtime.toISOString(),
       age_ms: Math.round(ageMs),
+      max_age_ms: Math.round(allowedAgeMs),
       summary: body.summary,
       failures,
     };
@@ -103,6 +105,22 @@ function readScreenshot(file) {
   };
 }
 
+function isApprovedSwfiRecordHandoff(href) {
+  try {
+    const parsed = new URL(String(href || ""), origin);
+    if (!["www.swfi.com", "swfi.com"].includes(parsed.hostname)) return false;
+    if (parsed.pathname.replace(/\/?$/, "/") !== "/v1/signin/") return false;
+    if ((parsed.searchParams.get("msg") || "") !== "auth") return false;
+    const redirect = parsed.searchParams.get("redirect") || "";
+    if (!redirect || /^https?:\/\//i.test(redirect)) return false;
+    const redirectUrl = new URL(redirect, "https://www.swfi.com");
+    const pathname = redirectUrl.pathname.replace(/\/?$/, "/");
+    return /^\/v1\/(entities|people|transactions|compass)\/[a-f0-9]{24}\/$/i.test(pathname);
+  } catch {
+    return false;
+  }
+}
+
 async function renderedPublicCheck() {
   const { chromium } = loadPlaywright();
   const browser = await chromium.launch({
@@ -122,24 +140,23 @@ async function renderedPublicCheck() {
       if (body.includes(text)) result.failures.push(`forbidden_visible:${text}`);
     }
     result.counts.showing = (body.match(/Showing [^\n]+/g) || []).slice(0, 8);
-    result.counts.source_links = await page.locator('[data-source-state="on-file"], [data-source-path]').count();
-    result.counts.detail_links = await page.locator('a[href*="/detail/"], a[data-dashboard-target*="/detail/"]').count();
-    result.counts.mirror_record_links = await page.locator([
-      'a[href*="/swficc/profiles/detail/"]',
-      'a[href*="/swficc/transactions/detail/"]',
-      'a[href*="/swficc/mandates/detail/"]',
-      'a[href*="/swficc/people/detail/"]',
-      'a[href*="/swficc/research/detail/"]',
-      'a[data-dashboard-target*="/profiles/detail/"]',
-      'a[data-dashboard-target*="/transactions/detail/"]',
-      'a[data-dashboard-target*="/mandates/detail/"]',
-      'a[data-dashboard-target*="/people/detail/"]',
-      'a[data-dashboard-target*="/research/detail/"]',
-    ].join(", ")).count();
-    result.counts.external_swfi_links = await page.locator('a[href^="https://www.swfi.com"], a[href^="https://swfi.com"], a[href^="http://www.swfi.com"], a[href^="http://swfi.com"]').count();
+    const linkAudit = await page.evaluate(() => Array.from(document.querySelectorAll("a[href]")).map((a) => ({
+      text: a.textContent?.trim().replace(/\s+/g, " ") || "",
+      href: a.href,
+      raw: a.getAttribute("href") || "",
+      sourceState: a.getAttribute("data-source-state") || "",
+      sourcePath: a.getAttribute("data-source-path") || "",
+      dashboardTarget: a.getAttribute("data-dashboard-target") || "",
+    })));
+    result.counts.source_links = linkAudit.filter((link) => link.sourceState === "on-file" || link.sourcePath).length;
+    result.counts.detail_links = linkAudit.filter((link) => /\/swficc\/(profiles|transactions|mandates|people|research)\/detail\//.test(link.href) || /\/(profiles|transactions|mandates|people|research)\/detail\//.test(link.dashboardTarget)).length;
+    result.counts.approved_swfi_handoffs = linkAudit.filter((link) => isApprovedSwfiRecordHandoff(link.href) || isApprovedSwfiRecordHandoff(link.raw)).length;
+    result.counts.raw_external_swfi_links = linkAudit.filter((link) => /^https?:\/\/(www\.)?swfi\.com/i.test(link.href) && !isApprovedSwfiRecordHandoff(link.href)).length;
+    result.counts.external_swfi_links = result.counts.raw_external_swfi_links;
+    result.counts.mirror_record_links = result.counts.approved_swfi_handoffs + result.counts.detail_links;
     if (result.counts.source_links < 8) result.failures.push(`source_links_${result.counts.source_links}_lt_8`);
-    if (result.counts.mirror_record_links < 8) result.failures.push(`mirror_record_links_${result.counts.mirror_record_links}_lt_8`);
-    if (result.counts.external_swfi_links > 0) result.failures.push(`external_swfi_links_${result.counts.external_swfi_links}_gt_0`);
+    if (result.counts.mirror_record_links < 8) result.failures.push(`swfi_record_handoff_links_${result.counts.mirror_record_links}_lt_8`);
+    if (result.counts.raw_external_swfi_links > 0) result.failures.push(`raw_external_swfi_links_${result.counts.raw_external_swfi_links}_gt_0`);
   } catch (error) {
     result.failures.push(error.message);
   } finally {

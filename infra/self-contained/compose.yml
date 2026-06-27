@@ -37,6 +37,13 @@ services:
       SWFI_ATLAS_URI: ${SWFI_ATLAS_URI:?SWFI_ATLAS_URI is required for bootstrap sync}
     command: ["python", "scripts/sync_mongo_stream.py"]
 
+  swfi2-key-store-init:
+    image: alpine:3.21
+    restart: "no"
+    command: ["sh", "-c", "mkdir -p /app/product-state && chown -R 10002:10002 /app/product-state"]
+    volumes:
+      - swfi2_api_product_key_store:/app/product-state
+
   swfi2-backend:
     build:
       context: ${SWFI2_BACKEND_CONTEXT:-../../../SWFI2.0-final}
@@ -48,6 +55,8 @@ services:
         condition: service_healthy
       swfi2-sync-init:
         condition: service_completed_successfully
+      swfi2-key-store-init:
+        condition: service_completed_successfully
     environment:
       SWFI2_SERVICE_NAME: swfi2-self-contained-backend
       SWFI2_HOST: 0.0.0.0
@@ -56,9 +65,15 @@ services:
       SWFI2_STRICT_BOOT: "1"
       SWFI2_ALLOW_UNAUTH_LOCAL: "0"
       SWFI2_MONGO_CUTOVER_GUARD: "1"
+      SWFI2_PRODUCT_API_KEY_STORE_PATH: /app/product-state/api-product-keys.json
+      SWFI2_ADMIN_STORE_PATH: /app/product-state/admin-governance.json
+      SWFI2_SAVED_SEARCH_STORE_PATH: /app/product-state/saved-searches.json
+      SWFI2_ALERT_STORE_PATH: /app/product-state/alerts.json
       SWFI_MONGO_DB: ${SWFI_MONGO_DB:-swfi}
       SWFI_MONGO_URI: ${SWFI_MONGO_URI:?SWFI_MONGO_URI must point at the in-stack mongo service}
       SWFI2_API_TOKEN: ${SWFI2_API_TOKEN:?SWFI2_API_TOKEN is required}
+    volumes:
+      - swfi2_api_product_key_store:/app/product-state
     expose:
       - "8362"
     healthcheck:
@@ -87,6 +102,7 @@ services:
       SWFIPN_BACKEND: http://swfi2-backend:8362
       SWFIPN_BACKEND_TIMEOUT: "75"
       SWFIPN_BACKEND_TOKEN_USE_KEYCHAIN: "0"
+      SWFIPN_REQUIRE_RECORD_AUTH: "1"
       SWFIPN_BACKEND_TOKEN: ${SWFIPN_BACKEND_TOKEN:?SWFIPN_BACKEND_TOKEN must match SWFI2_API_TOKEN}
       SWFIPN_AUTH_USERNAME: ${SWFIPN_AUTH_USERNAME:?SWFIPN_AUTH_USERNAME is required}
       SWFIPN_AUTH_PASSWORD: ${SWFIPN_AUTH_PASSWORD:?SWFIPN_AUTH_PASSWORD is required}
@@ -176,6 +192,7 @@ services:
         condition: service_healthy
     environment:
       SWFIPN_DOMAIN: ${SWFIPN_DOMAIN:?SWFIPN_DOMAIN is required}
+      SWFIPN_API_DOMAIN: ${SWFIPN_API_DOMAIN:-api.swfi.com}
       ACME_EMAIL: ${ACME_EMAIL:-admin@activemirror.ai}
     ports:
       - "80:80"
@@ -189,5 +206,6 @@ volumes:
   swfi2_mongo_data:
   swfi2_mongo_config:
   swfi2_mongo_backups:
+  swfi2_api_product_key_store:
   swfi2_caddy_data:
   swfi2_caddy_config:

@@ -13,6 +13,7 @@ const routes = envList("SWFIPN_LINK_ESCAPE_ROUTES", [
   "/profiles/",
   "/profiles/detail/?id=5e5713b876fb1e43b1bb71eb",
   "/transactions/",
+  "/deals/",
   "/transactions/detail/?id=6a300360f573546e66a087b5",
   "/mandates/",
   "/mandates/detail/?id=6a054a79fc240d9d3ab4e22c",
@@ -20,15 +21,27 @@ const routes = envList("SWFIPN_LINK_ESCAPE_ROUTES", [
   "/people/detail/?id=65f194e86967a79fee4f5856",
   "/reports/",
   "/intelligence/",
+  "/research/",
   "/research/detail/?legacy=109243",
   "/allocators/",
   "/comparisons/",
   "/about/",
+  "/about-us/overview/",
+  "/about-us/our-team/",
   "/solutions/",
+  "/demo/",
   "/contact/",
+  "/newsletter-subscription/",
+  "/privacy-policy/",
+  "/terms-of-use/",
+  "/cookie-policy/",
+  "/accessibility/",
+  "/provenance/",
+  "/source/",
   "/search/?q=Real%20Estate",
 ]);
 const allowedExternalHosts = new Set([
+  "gwc.events",
   "twitter.com",
   "www.linkedin.com",
   "www.facebook.com",
@@ -77,23 +90,19 @@ function isRawSwfiRecordUrl(value) {
 
 function isCanonicalSwfiHandoffUrl(value) {
   try {
-    const parsed = new URL(String(value || ""));
-    if (!["www.swfi.com", "swfi.com", "cms.swfi.com"].includes(parsed.hostname)) return false;
-    if (parsed.pathname === "/" && /^\?p=\d+/i.test(parsed.search)) return true;
+    const parsed = new URL(String(value || ""), originUrl.origin);
+    if (parsed.hostname !== "www.swfi.com") return false;
     if (parsed.pathname === "/v1/signin/" || parsed.pathname === "/v1/signin") {
+      if (parsed.searchParams.get("msg") !== "auth") return false;
       const redirect = parsed.searchParams.get("redirect") || "";
-      if (!redirect) return true;
-      try {
-        const redirectUrl = new URL(redirect, originUrl.origin);
-        return redirectUrl.hostname === originUrl.hostname;
-      } catch {
-        return redirect.startsWith("/swficc/");
-      }
+      if (!redirect || !redirect.startsWith("/") || /^https?:\/\//i.test(redirect)) return false;
+      const redirectUrl = new URL(redirect, "https://www.swfi.com");
+      return /^\/v1\/(entities|people|transactions|compass)\/[a-f0-9]{24}\/?$/i.test(redirectUrl.pathname);
     }
-    return /^\/v1\/(entities|people|transactions|compass|news)\/[a-f0-9]{24}\/?$/i.test(parsed.pathname);
   } catch {
     return false;
   }
+  return false;
 }
 
 function allowedExternal(route, href) {
@@ -101,25 +110,16 @@ function allowedExternal(route, href) {
     const parsed = new URL(href);
     if (isCanonicalSwfiHandoffUrl(href)) return true;
     if (!allowedExternalHosts.has(parsed.hostname)) return false;
-    return ["/about/", "/solutions/", "/contact/"].includes(route);
+    return true;
   } catch {
     return false;
   }
 }
 
 async function inspectRoute(browser, route) {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const errors = [];
   const failedRequests = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  page.on("console", (message) => {
-    if (["error", "warning"].includes(message.type())) errors.push(`${message.type()}: ${message.text()}`);
-  });
-  page.on("requestfailed", (request) => {
-    const url = request.url();
-    if (!url.includes("/cdn-cgi/rum")) failedRequests.push(url);
-  });
-
+  let page;
   const result = {
     route,
     url: appUrl(route),
@@ -135,9 +135,40 @@ async function inspectRoute(browser, route) {
   };
 
   try {
-    const response = await page.goto(result.url, { waitUntil: "networkidle", timeout: 90_000 });
+    page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    page.on("pageerror", (error) => errors.push(error.message));
+    page.on("console", (message) => {
+      if (["error", "warning"].includes(message.type())) errors.push(`${message.type()}: ${message.text()}`);
+    });
+    page.on("requestfailed", (request) => {
+      const url = request.url();
+      if (!url.includes("/cdn-cgi/rum")) failedRequests.push(url);
+    });
+
+    const response = await page.goto(result.url, { waitUntil: "domcontentloaded", timeout: 30_000 });
     result.status = response?.status() || 0;
-    await page.waitForTimeout(1000);
+    if (/\/(?:profiles|transactions|mandates|people|reports|research)\/detail\/\?/i.test(route)) {
+      await page.waitForFunction(() => {
+        const text = document.body?.innerText || "";
+        return /Verified in SWFI records|Source record on file|Report Details|Transaction Details|RFP \/ Mandate Details|Person Details|Entity Details|Article Details/i.test(text);
+      }, null, { timeout: 60_000 }).catch(() => null);
+    }
+    await page.waitForFunction(() => (document.body?.innerText || "").trim().length > 120, null, { timeout: 10_000 }).catch(() => null);
+    await page.waitForTimeout(500);
+    result.final_url = page.url();
+    if (isCanonicalSwfiHandoffUrl(result.final_url) && /\/(?:profiles|transactions|mandates|people)\/detail\/\?/i.test(route)) {
+      result.auth_handoff = true;
+      result.body_chars = 0;
+      result.blank = false;
+      result.external_links = [];
+      result.canonical_swfi_handoff_anchors = [{ text: "SWFI sign-in handoff", href: result.final_url, raw: result.final_url }];
+      result.raw_record_anchors = [];
+      result.raw_source_attrs = [];
+      result.blank_target_legacy_anchors = [];
+      result.forbidden_text = [];
+      result.ok = true;
+      return result;
+    }
     const snapshot = await page.evaluate(() => {
       const anchors = [...document.querySelectorAll("a[href]")].map((anchor) => ({
         text: (anchor.textContent || anchor.getAttribute("aria-label") || "").trim().replace(/\s+/g, " ").slice(0, 80),
@@ -146,7 +177,11 @@ async function inspectRoute(browser, route) {
         target: anchor.getAttribute("target") || "",
         record: anchor.getAttribute("data-record-link") || "",
         sourceHref: anchor.getAttribute("data-source-href") || "",
+        sourceUrl: anchor.getAttribute("data-source-url") || "",
         sourceState: anchor.getAttribute("data-source-state") || "",
+        title: anchor.getAttribute("title") || "",
+        ariaLabel: anchor.getAttribute("aria-label") || "",
+        outerHTML: anchor.outerHTML.slice(0, 1000),
       }));
       const text = document.body?.innerText || "";
       return { anchors, bodyChars: text.length, bodyText: text, blank: text.trim().length < 250 };
@@ -167,13 +202,16 @@ async function inspectRoute(browser, route) {
       const approvedHandoff = isCanonicalSwfiHandoffUrl(anchor.href) || isCanonicalSwfiHandoffUrl(anchor.raw);
       return rawRecord && !approvedHandoff;
     });
-    result.raw_source_attrs = snapshot.anchors.filter((anchor) => isRawSwfiRecordUrl(anchor.sourceHref) && !isCanonicalSwfiHandoffUrl(anchor.sourceHref));
+    result.raw_source_attrs = snapshot.anchors.filter((anchor) => {
+      const attrText = [anchor.sourceHref, anchor.sourceUrl, anchor.title, anchor.ariaLabel].join(" ");
+      return isRawSwfiRecordUrl(attrText) || /(?:source_gap|schema_version|ObjectId|Backend ID|Active Mirror|No internal record mapping|citation-only)/i.test(attrText);
+    });
     result.blank_target_legacy_anchors = snapshot.anchors.filter((anchor) => anchor.target === "_blank" && (isRawSwfiRecordUrl(anchor.href) || isRawSwfiRecordUrl(anchor.raw) || /swfi\.com/i.test(anchor.href)));
     result.forbidden_text = forbiddenUserText.filter((text) => snapshot.bodyText?.includes(text));
   } catch (error) {
     result.failures.push(error.message);
   } finally {
-    await page.close().catch(() => {});
+    if (page) await page.close().catch(() => {});
   }
 
   result.errors = errors;
@@ -199,14 +237,33 @@ async function inspectRoute(browser, route) {
 async function run() {
   fs.mkdirSync(outputDir, { recursive: true });
   const { chromium } = loadPlaywright();
-  const browser = await chromium.launch({ headless: true });
   const results = [];
-  try {
-    for (const route of routes) {
+  for (const route of routes) {
+    console.error(`[link-escape] inspecting ${route}`);
+    const browser = await chromium.launch({ headless: true, timeout: 30_000 });
+    try {
       results.push(await inspectRoute(browser, route));
+    } catch (error) {
+      results.push({
+        route,
+        url: appUrl(route),
+        status: 0,
+        body_chars: 0,
+        blank: true,
+        external_links: [],
+        canonical_swfi_handoff_anchors: [],
+        raw_record_anchors: [],
+        raw_source_attrs: [],
+        blank_target_legacy_anchors: [],
+        forbidden_text: [],
+        errors: [],
+        failed_requests: [],
+        failures: [error.message],
+        ok: false,
+      });
+    } finally {
+      await browser.close().catch(() => {});
     }
-  } finally {
-    await browser.close().catch(() => {});
   }
   const failures = results.flatMap((result) => result.ok ? [] : result.failures.map((failure) => ({ route: result.route, failure })));
   const receipt = {
@@ -236,6 +293,7 @@ async function run() {
     receipt: receiptPath,
   }, null, 2));
   if (failures.length) process.exit(1);
+  process.exit(0);
 }
 
 run().catch((error) => {

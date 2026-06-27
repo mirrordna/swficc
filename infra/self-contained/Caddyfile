@@ -15,3 +15,17 @@
 
 	reverse_proxy swfipn-web:8353
 }
+
+{$SWFIPN_API_DOMAIN:api.swfi.com} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()"
+	}
+
+	reverse_proxy swfi2-backend:8362
+}

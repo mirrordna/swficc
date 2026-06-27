@@ -60,14 +60,14 @@ const CORE_ROUTES = [
     ],
   },
   { route: "/profiles/", ready: "Entity Name", allowSourceGap: false, waitMs: 90_000 },
-  { route: "/people/", ready: "Showing 5 of", allowSourceGap: false, waitMs: 90_000 },
-  { route: "/deals/", ready: "SWFI transaction source", allowSourceGap: false, waitMs: 90_000 },
-  { route: "/comparisons/", ready: "Showing 5 of", allowSourceGap: false, waitMs: 180_000 },
+  { route: "/people/", ready: "Showing 25 of", allowSourceGap: false, waitMs: 90_000 },
+  { route: "/deals/", ready: "Showing 25 of", allowSourceGap: false, waitMs: 90_000 },
+  { route: "/comparisons/", ready: "Showing 25 of", allowSourceGap: false, waitMs: 180_000 },
   { route: "/transactions/", ready: "Data source", allowSourceGap: false, waitMs: 90_000 },
-  { route: "/mandates/", ready: "Showing 5 of", allowSourceGap: false, waitMs: 90_000 },
+  { route: "/mandates/", ready: "Showing 25 of", allowSourceGap: false, waitMs: 90_000 },
   { route: "/reports/", ready: "Reports Intelligence", allowSourceGap: false },
   { route: "/intelligence/", ready: "Showing 5 of", allowSourceGap: false, waitMs: 180_000 },
-  { route: "/research/", ready: "Showing 5 of", allowSourceGap: false, waitMs: 180_000 },
+  { route: "/research/", ready: "Showing 25 of", allowSourceGap: false, waitMs: 180_000 },
   { route: "/search/", ready: "Institution, Person, Strategy", allowSourceGap: false, waitMs: 90_000 },
   { route: "/provenance/", ready: "Source References", allowSourceGap: false, waitMs: 90_000 },
 ];
@@ -234,6 +234,54 @@ function isAllowedSwfiRecordUrl(href) {
     return /^\/v1\/(?:entities|people|transactions|compass)\//.test(parsed.pathname);
   } catch {
     return false;
+  }
+}
+
+function swfiSigninHandoffUrl(value, expectedTarget) {
+  try {
+    const parsed = new URL(String(value || ""), new URL(origin).origin);
+    if (!["www.swfi.com", "swfi.com"].includes(parsed.hostname)) return false;
+    if (parsed.pathname.replace(/\/?$/, "/") !== "/v1/signin/") return false;
+    if ((parsed.searchParams.get("msg") || "") !== "auth") return false;
+    const redirect = parsed.searchParams.get("redirect") || "";
+    if (!redirect) return false;
+    const redirectUrl = new URL(redirect, new URL(origin).origin);
+    const expectedUrl = new URL(expectedTarget, new URL(origin).origin);
+    return redirectUrl.origin === expectedUrl.origin
+      && redirectUrl.pathname.replace(/\/?$/, "/") === expectedUrl.pathname.replace(/\/?$/, "/")
+      && redirectUrl.search === expectedUrl.search;
+  } catch {
+    return false;
+  }
+}
+
+function protectedSwficcDetailTarget(value) {
+  try {
+    const parsed = new URL(value, origin);
+    return [
+      "/profiles/detail/",
+      "/transactions/detail/",
+      "/mandates/detail/",
+      "/people/detail/",
+    ].some((route) => parsed.pathname.includes(route));
+  } catch {
+    return false;
+  }
+}
+
+async function handoffRequestOk(targetHref, timeoutMs = 20_000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(targetHref, { redirect: "manual", signal: controller.signal });
+    const location = response.headers.get("location") || "";
+    return {
+      ok: response.status >= 300 && response.status < 400 && swfiSigninHandoffUrl(location, targetHref),
+      status: response.status,
+      location,
+    };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -464,12 +512,35 @@ async function inspectRoute(browser, authContext, spec) {
     if (!spec.allowSourceGap && result.source_gap_count) result.failures.push(`source_gap_count_${result.source_gap_count}`);
 
     const maxLinks = gateLevel === "smoke" ? (spec.route === "/" ? 4 : 2) : (spec.route === "/" ? 8 : 5);
-    const checkLinks = dataLinks.filter((link) => sameAppUrl(appTarget(link))).slice(0, maxLinks);
+    const seenTargets = new Set();
+    const checkLinks = dataLinks
+      .filter((link) => sameAppUrl(appTarget(link)))
+      .filter((link) => {
+        const target = appTarget(link);
+        if (seenTargets.has(target)) return false;
+        seenTargets.add(target);
+        return true;
+      })
+      .slice(0, maxLinks);
     result.data_links_checked = checkLinks.length;
     for (const link of checkLinks) {
-      const linkPage = await authContext.newPage({ viewport: { width: 1280, height: 800 } });
       const targetHref = appTarget(link);
       const linkResult = { text: link.text, href: targetHref, ok: true, failures: [] };
+      if (!validateLocalAuth && protectedSwficcDetailTarget(targetHref)) {
+        try {
+          const handoff = await handoffRequestOk(targetHref, LINK_CHECK_TIMEOUT_MS);
+          linkResult.auth_handoff = handoff.ok;
+          linkResult.http_status = handoff.status;
+          if (!handoff.ok) linkResult.failures.push(`missing_swfi_signin_handoff:${handoff.status}:${handoff.location || "missing_location"}`);
+        } catch (error) {
+          linkResult.failures.push(error.message);
+        }
+        linkResult.ok = linkResult.failures.length === 0;
+        result.checked_links.push(linkResult);
+        if (!linkResult.ok) result.failures.push(`data_link_failed:${link.text}:${linkResult.failures.join("|")}`);
+        continue;
+      }
+      const linkPage = await authContext.newPage({ viewport: { width: 1280, height: 800 } });
       try {
         const linkTimeout = targetHref.includes("/profiles/detail/") ? PROFILE_LINK_CHECK_TIMEOUT_MS : LINK_CHECK_TIMEOUT_MS;
         const linkResponse = await linkPage.goto(targetHref, { waitUntil: "domcontentloaded", timeout: linkTimeout });
@@ -499,8 +570,20 @@ async function inspectRoute(browser, authContext, spec) {
 }
 
 async function inspectSimple(context, item, prefix) {
-  const page = await context.newPage({ viewport: { width: 1280, height: 800 } });
   const result = { id: `${prefix}:${item.id}`, url: urlFor(item.url), ok: true, failures: [], source_gap_count: 0, body_first: [], links: [] };
+  if (prefix === "detail" && !validateLocalAuth && protectedSwficcDetailTarget(result.url)) {
+    try {
+      const handoff = await handoffRequestOk(result.url, SIMPLE_CHECK_TIMEOUT_MS);
+      result.auth_handoff = handoff.ok;
+      result.http_status = handoff.status;
+      if (!handoff.ok) result.failures.push(`missing_swfi_signin_handoff:${handoff.status}:${handoff.location || "missing_location"}`);
+    } catch (error) {
+      result.failures.push(error.message);
+    }
+    result.ok = result.failures.length === 0;
+    return result;
+  }
+  const page = await context.newPage({ viewport: { width: 1280, height: 800 } });
   try {
     const response = await page.goto(result.url, { waitUntil: "domcontentloaded", timeout: 45_000 });
     if (!response || response.status() >= 400) result.failures.push(`http_${response?.status() || "missing"}`);
@@ -637,48 +720,78 @@ async function run() {
   const detailCases = selectedDetailCases();
   const searchCases = selectedSearchCases();
   const controlRoutes = selectedControlRoutes();
-  const browser = await chromium.launch({
+  const launchOptions = {
     headless: true,
-    args: resolveIp ? [`--host-resolver-rules=MAP ${originHost} ${resolveIp}`] : [],
-  });
-  const checks = [];
-  let authContext = null;
-  try {
-    if (validateLocalAuth) {
-      authContext = await loginContext(browser);
-      checks.push({ id: "auth_context", ok: true, skipped: false, failures: [] });
-    } else {
-      authContext = await browser.newContext({ storageState: { cookies: [], origins: [] }, viewport: { width: 1366, height: 900 } });
-      checks.push({ id: "auth_context_phase1_public", ok: true, skipped: true, failures: [], reason: "Phase 1 uses SWFI auth handoff, not a custom SWFIPN login." });
+    args: [
+      "--disable-gpu",
+      ...(resolveIp ? [`--host-resolver-rules=MAP ${originHost} ${resolveIp}`] : []),
+    ],
+  };
+  async function runWithContext(id, callback) {
+    const browser = await chromium.launch(launchOptions);
+    let context = null;
+    try {
+      context = validateLocalAuth
+        ? await loginContext(browser)
+        : await browser.newContext({ storageState: { cookies: [], origins: [] }, viewport: { width: 1366, height: 900 } });
+      return await callback(browser, context);
+    } catch (error) {
+      return { id, ok: false, failures: [error.message] };
+    } finally {
+      if (context) await context.close().catch(() => {});
+      await browser.close().catch(() => {});
     }
+  }
+  const checks = [];
+  if (validateLocalAuth) {
+    checks.push({ id: "auth_context_per_check", ok: true, skipped: false, failures: [] });
+  } else {
+    checks.push({ id: "auth_context_phase1_public", ok: true, skipped: true, failures: [], reason: "Phase 1 uses SWFI auth handoff, not a custom SWFIPN login." });
+  }
   checks.push(...await runLimited(
     coreRoutes,
     1,
-    (spec) => withDeadline(`route:${spec.route}`, spec.deadlineMs || ROUTE_CHECK_TIMEOUT_MS, () => inspectRoute(browser, authContext, spec), (error) => routeTimeoutResult(spec, error)),
+    (spec) => withDeadline(
+      `route:${spec.route}`,
+      spec.deadlineMs || ROUTE_CHECK_TIMEOUT_MS,
+      () => runWithContext(`route:${spec.route}`, (browser, context) => inspectRoute(browser, context, spec)),
+      (error) => routeTimeoutResult(spec, error),
+    ),
     (spec) => `route:${spec.route}`,
   ));
   checks.push(...await runLimited(
     detailCases,
     1,
-    (item) => withDeadline(`detail:${item.id}`, item.deadlineMs || SIMPLE_CHECK_TIMEOUT_MS, () => inspectSimple(authContext, item, "detail"), (error) => simpleTimeoutResult(item, "detail", error)),
+    (item) => withDeadline(
+      `detail:${item.id}`,
+      item.deadlineMs || SIMPLE_CHECK_TIMEOUT_MS,
+      () => runWithContext(`detail:${item.id}`, (_browser, context) => inspectSimple(context, item, "detail")),
+      (error) => simpleTimeoutResult(item, "detail", error),
+    ),
     (item) => `detail:${item.id}`,
   ));
   checks.push(...await runLimited(
     searchCases,
     1,
-    (item) => withDeadline(`search:${item.id}`, item.deadlineMs || SIMPLE_CHECK_TIMEOUT_MS, () => inspectSimple(authContext, item, "search"), (error) => simpleTimeoutResult(item, "search", error)),
+    (item) => withDeadline(
+      `search:${item.id}`,
+      item.deadlineMs || SIMPLE_CHECK_TIMEOUT_MS,
+      () => runWithContext(`search:${item.id}`, (_browser, context) => inspectSimple(context, item, "search")),
+      (error) => simpleTimeoutResult(item, "search", error),
+    ),
     (item) => `search:${item.id}`,
   ));
   checks.push(...await runLimited(
     controlRoutes,
     1,
-    (route) => withDeadline(`controls:${route}`, CONTROL_CHECK_TIMEOUT_MS, () => inspectControls(authContext, route), (error) => controlsTimeoutResult(route, error)),
+    (route) => withDeadline(
+      `controls:${route}`,
+      CONTROL_CHECK_TIMEOUT_MS,
+      () => runWithContext(`controls:${route}`, (_browser, context) => inspectControls(context, route)),
+      (error) => controlsTimeoutResult(route, error),
+    ),
     (route) => `controls:${route}`,
   ));
-  } finally {
-    if (authContext) await authContext.close().catch(() => {});
-    await browser.close().catch(() => {});
-  }
 
   const failures = checks.filter((check) => !check.ok).map((check) => ({
     id: check.id,

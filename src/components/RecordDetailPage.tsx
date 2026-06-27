@@ -3,12 +3,12 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { Packet, Row } from "@/lib/sourcePackets";
 import { fetchPacket, isFact, money, packetData, packetReason, rows, SOURCE_GAP, text } from "@/lib/sourcePackets";
-import { profileDetailHref, sourceRecordId, transactionDetailHref } from "@/lib/detailRoutes";
+import { personDetailHref, profileDetailHref, sourceRecordId, transactionDetailHref } from "@/lib/detailRoutes";
 import { appHref, sourceDetailHref } from "@/lib/selfContainedLinks";
 import { HOME_PACKET_SNAPSHOT } from "@/lib/homeSourceSnapshot";
 import SwfiBrandHeader from "@/components/SwfiBrandHeader";
 
-type Kind = "profile" | "transaction" | "mandate" | "person";
+type Kind = "profile" | "transaction" | "mandate" | "person" | "report";
 
 const NOT_DISCLOSED = "Not disclosed";
 const LOADING = "Loading";
@@ -20,6 +20,7 @@ const CONFIG: Record<Kind, { title: string; back: string; sourceLabel: string }>
   transaction: { title: "Transaction Details", back: "/transactions/", sourceLabel: "Source record" },
   mandate: { title: "Compass / RFP Detail", back: "/mandates/", sourceLabel: "Source record" },
   person: { title: "Person Detail", back: "/people/", sourceLabel: "Source record" },
+  report: { title: "Report Detail", back: "/reports/", sourceLabel: "Source record" },
 };
 
 const DETAIL_NAV = [
@@ -103,6 +104,7 @@ async function loadRecord(kind: Kind, params: URLSearchParams): Promise<{ packet
   if (kind === "profile") return loadProfile(params);
   if (kind === "transaction") return loadTransaction(params);
   if (kind === "mandate") return loadMandate(params);
+  if (kind === "report") return loadReport(params);
   return loadPerson(params);
 }
 
@@ -253,6 +255,24 @@ async function loadPerson(params: URLSearchParams) {
   return { packet, record: match, endpoint: attemptedEndpoint ? `${attemptedEndpoint} -> ${endpoint}` : endpoint, reason: match ? "" : "person_record_not_returned_by_current_source_endpoint" };
 }
 
+async function loadReport(params: URLSearchParams) {
+  const id = params.get("key") || params.get("id") || "";
+  const title = params.get("title") || "";
+  if (id) {
+    const endpoint = `/api/reports/${encodeURIComponent(id)}/v1`;
+    const packet = await fetchPacket(endpoint, 90_000);
+    const record = (packetData(packet).record || rows(packet)[0]) as Row | undefined;
+    return { packet, record: isFact(packet) ? record : undefined, endpoint, reason: packetReason(packet) };
+  }
+  if (title) {
+    const endpoint = `/api/reports/v1?q=${encodeURIComponent(title)}&limit=25&page=1`;
+    const packet = await fetchPacket(endpoint, 90_000);
+    const match = findRecord(rows(packet), "", title, "");
+    return { packet, record: match, endpoint, reason: match ? "" : "report_record_not_returned_by_current_source_endpoint" };
+  }
+  return { packet: localSourceGapPacket("report_id_or_title_required"), endpoint: "/api/reports/{report_id}/v1", reason: "report_id_or_title_required" };
+}
+
 function localSourceGapPacket(reason: string): Packet {
   return {
     status: "unavailable",
@@ -291,6 +311,7 @@ function RecordFields({ kind, record, sourceUrl }: { kind: Kind; record: Row; so
   if (kind === "transaction") return <TransactionRecord record={record} sourceUrl={sourceUrl} />;
   if (kind === "mandate") return <MandateRecord record={record} sourceUrl={sourceUrl} />;
   if (kind === "person") return <PersonRecord record={record} sourceUrl={sourceUrl} />;
+  if (kind === "report") return <ReportRecord record={record} sourceUrl={sourceUrl} />;
 
   return null;
 }
@@ -443,7 +464,7 @@ function MandateRecord({ record, sourceUrl }: { record: Row; sourceUrl: string }
         <div className="text-[11px] font-bold uppercase tracking-[0.07em] text-[#7A8A9B]">Institution</div>
         <div className="text-sm text-[#41566B]">
           {text(record.institution, "") ? (
-            <a href={appHref(institutionHref)} className="text-[#16538C] underline">{text(record.institution)}</a>
+            <a href={recordOrAppHref(institutionHref)} className="text-[#16538C] underline">{text(record.institution)}</a>
           ) : NOT_DISCLOSED}
         </div>
       </section>
@@ -476,12 +497,17 @@ function MandateRecord({ record, sourceUrl }: { record: Row; sourceUrl: string }
 }
 
 function PersonRecord({ record, sourceUrl }: { record: Row; sourceUrl: string }) {
+  const email = personEmail(record);
+  const linkedIn = personLinkedInHref(record);
+  const selfHref = personDetailHref(record, sourceUrl || sourceHref(record));
   const fields = [
     ["Name", text(record.name || record.title)],
     ["Title", personTitle(record)],
     ["Institution", text(record.institution || record.entity || record.organization)],
     ["Country", text(record.country)],
     ["Region", text(record.region)],
+    ["Email", email],
+    ["LinkedIn", linkedIn],
   ];
   const sourceFields = [
     ["Source Record", sourceUrl || text(record.source_url || record.swfi_url) ? "SWFI record" : ""],
@@ -489,15 +515,75 @@ function PersonRecord({ record, sourceUrl }: { record: Row; sourceUrl: string })
 
   return (
     <section className="grid gap-4 rounded border border-[#DCE3EA] bg-white p-4">
+      <nav className="flex flex-wrap gap-2 text-sm" aria-label="Person profile sections">
+        {[
+          ["Overview", "#overview"],
+          ["Contact", "#contact"],
+          ["Source", "#source-record"],
+        ].map(([label, href]) => (
+          <a key={label} href={href} className="rounded border border-[#C7D2DD] bg-white px-2 py-1 text-[#16538C] underline">{label}</a>
+        ))}
+      </nav>
+      <section className="grid gap-2 rounded border border-[#DCE3EA] p-3">
+        <div className="text-[11px] font-bold uppercase tracking-[0.07em] text-[#7A8A9B]">Profile Actions</div>
+        <div className="flex flex-wrap gap-2 text-sm">
+          {email ? (
+            <button type="button" onClick={() => copyPersonEmail(email)} className="rounded border border-[#C7D2DD] bg-white px-3 py-1.5 font-semibold text-[#16538C]">Copy Email</button>
+          ) : (
+            <span className="rounded border border-[#DCE3EA] bg-[#F7F9FA] px-3 py-1.5 text-[#7A8A9B]">Email not disclosed</span>
+          )}
+          {linkedIn ? (
+            <a href={sourceMirrorHref(linkedIn, "/people/detail/")} data-source-state="on-file" className="rounded border border-[#C7D2DD] bg-white px-3 py-1.5 font-semibold text-[#16538C] underline">LinkedIn</a>
+          ) : (
+            <span className="rounded border border-[#DCE3EA] bg-[#F7F9FA] px-3 py-1.5 text-[#7A8A9B]">LinkedIn not disclosed</span>
+          )}
+          <span className="rounded border border-[#DCE3EA] bg-[#F7F9FA] px-3 py-1.5 text-[#7A8A9B]">Follow requires SWFI account access</span>
+          <a href={personVcardHref(record, sourceUrl)} download={`${safeFilename(text(record.name || record.title, "person"))}.vcf`} className="rounded border border-[#C7D2DD] bg-white px-3 py-1.5 font-semibold text-[#16538C] underline">Export Contact</a>
+          <a href={recordOrAppHref(selfHref)} className="rounded border border-[#C7D2DD] bg-white px-3 py-1.5 font-semibold text-[#16538C] underline">Profile Link</a>
+        </div>
+      </section>
       <div className="grid gap-3">
-        <div className="text-[11px] font-bold uppercase tracking-[0.07em] text-[#7A8A9B]">Person Details</div>
+        <div id="overview" className="text-[11px] font-bold uppercase tracking-[0.07em] text-[#7A8A9B]">Person Details</div>
         <div className="grid gap-2">
           {fields.map(([label, value]) => (
             <DetailRow key={label} label={label} value={value} />
           ))}
         </div>
       </div>
+      <section id="contact" className="grid gap-2 rounded border border-[#DCE3EA] p-3">
+        <div className="text-[11px] font-bold uppercase tracking-[0.07em] text-[#7A8A9B]">Contact</div>
+        <DetailRow label="Email" value={email} />
+        <DetailRow label="LinkedIn" value={linkedIn} returnRoute="/people/detail/" />
+      </section>
       <SourceRecordSection fields={sourceFields} sourceUrl={sourceUrl} returnRoute="/people/detail/" />
+    </section>
+  );
+}
+
+function ReportRecord({ record, sourceUrl }: { record: Row; sourceUrl: string }) {
+  const assetUrl = text(record.report_url || record.source_url, "");
+  const fields = [
+    ["Report", text(record.title || record.name)],
+    ["Type", text(record.type)],
+    ["Published At", text(record.published_at || record.publishedAt)],
+    ["Updated At", text(record.updated_at || record.updatedAt)],
+    ["Report Asset", assetUrl ? "Report asset on file" : ""],
+  ];
+  const sourceFields = [
+    ["Source Record", sourceUrl || assetUrl ? "SWFI report record" : ""],
+  ];
+
+  return (
+    <section className="grid gap-4 rounded border border-[#DCE3EA] bg-white p-4">
+      <div className="grid gap-3">
+        <div className="text-[11px] font-bold uppercase tracking-[0.07em] text-[#7A8A9B]">Report Details</div>
+        <div className="grid gap-2">
+          {fields.map(([label, value]) => (
+            <DetailRow key={label} label={label} value={value} sourceUrl={label === "Report Asset" ? assetUrl : ""} returnRoute="/reports/detail/" />
+          ))}
+        </div>
+      </div>
+      <SourceRecordSection fields={sourceFields} sourceUrl={sourceUrl || assetUrl} returnRoute="/reports/detail/" />
     </section>
   );
 }
@@ -571,10 +657,57 @@ function isHttpValue(value: string): boolean {
   return value.startsWith("http://") || value.startsWith("https://");
 }
 
+function recordOrAppHref(href: string): string {
+  return isHttpValue(href) ? href : appHref(href);
+}
+
 function sourceDisplayLabel(label: string, value: string): string {
   if (!isHttpValue(value) && value !== "SWFI source" && value !== "SWFI record") return value;
   if (/swfi\.com/i.test(value) || /source|url/i.test(label)) return "SWFI record";
   return "Source link";
+}
+
+function personEmail(record: Row): string {
+  const value = text(record.email || record.email_address || record.work_email || record.contact_email, "");
+  return /@/.test(value) ? value : "";
+}
+
+function personLinkedInHref(record: Row): string {
+  const value = text(record.linkedin_url || record.linkedin || record.linkedin_profile || record.linked_in, "");
+  if (value.startsWith("https://www.linkedin.com/") || value.startsWith("https://linkedin.com/")) return value;
+  return "";
+}
+
+function copyPersonEmail(email: string) {
+  if (!email || typeof navigator === "undefined" || !navigator.clipboard) return;
+  void navigator.clipboard.writeText(email);
+}
+
+function personVcardHref(record: Row, sourceUrl: string): string {
+  const fullName = text(record.name || record.title, "Not disclosed");
+  const title = personTitle(record);
+  const organization = text(record.institution || record.entity || record.organization, "");
+  const email = personEmail(record);
+  const linkedIn = personLinkedInHref(record);
+  const lines = [
+    "BEGIN:VCARD",
+    "VERSION:3.0",
+    `FN:${vcardEscape(fullName)}`,
+    title && title !== NOT_DISCLOSED ? `TITLE:${vcardEscape(title)}` : "",
+    organization ? `ORG:${vcardEscape(organization)}` : "",
+    email ? `EMAIL:${vcardEscape(email)}` : "",
+    linkedIn ? `URL:${vcardEscape(linkedIn)}` : sourceUrl ? `URL:${vcardEscape(sourceUrl)}` : "",
+    "END:VCARD",
+  ].filter(Boolean).join("\n");
+  return `data:text/vcard;charset=utf-8,${encodeURIComponent(lines)}`;
+}
+
+function vcardEscape(value: string): string {
+  return value.replaceAll("\\", "\\\\").replaceAll("\n", "\\n").replaceAll(",", "\\,").replaceAll(";", "\\;");
+}
+
+function safeFilename(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "swfi-person";
 }
 
 function personTitle(record: Row): string {
@@ -621,7 +754,7 @@ function EntityRow({ entity }: { entity: Row }) {
   return (
     <tr className="border-b border-[#F2F5F8] align-top text-[#41566B]">
       <td className="py-2 pr-3 font-semibold text-[#11314F]">
-        <a href={appHref(href)} className="text-[#16538C] underline">{name}</a>
+        <a href={recordOrAppHref(href)} className="text-[#16538C] underline">{name}</a>
       </td>
       <td className="py-2 pr-3">{text(entity.type, NOT_DISCLOSED)}</td>
       <td className="py-2 pr-3">{text(entity.country, NOT_DISCLOSED)}</td>
@@ -764,7 +897,7 @@ function ProfileRelatedRecords({ entityName }: { entityName: string }) {
               {transactionRows.map((row, index) => (
                 <tr key={`${text(row.source_url || row.title, "transaction")}-${index}`} className="border-b border-[#F2F5F8] align-top text-[#41566B]">
                   <td className="py-2 pr-3 font-semibold text-[#11314F]">
-                    <a href={appHref(transactionDetailHref(row, sourceHref(row)))} className="text-[#16538C] underline">
+                    <a href={recordOrAppHref(transactionDetailHref(row, sourceHref(row)))} className="text-[#16538C] underline">
                       {text(row.title || row.name, NOT_DISCLOSED)}
                     </a>
                   </td>
@@ -790,7 +923,7 @@ function entityLinks(entities: Row[], fallback: string) {
         const name = text(entity.name || entity.entityName, NOT_DISCLOSED);
         const href = profileDetailHref({ name, entity_id: text(entity.id || entity.entity_id || entity.entityID, ""), slug: entity.slug }, sourceHref(entity) || undefined);
         return (
-          <a key={`${name}-${index}`} href={appHref(href)} className="text-[#16538C] underline">
+          <a key={`${name}-${index}`} href={recordOrAppHref(href)} className="text-[#16538C] underline">
             {name}
           </a>
         );
@@ -930,6 +1063,7 @@ function detailReturnRoute(kind: Kind): string {
   if (kind === "profile") return "/profiles/detail/";
   if (kind === "mandate") return "/mandates/detail/";
   if (kind === "person") return "/people/detail/";
+  if (kind === "report") return "/reports/detail/";
   return "/transactions/detail/";
 }
 

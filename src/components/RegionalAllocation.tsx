@@ -28,8 +28,8 @@ export default function RegionalAllocation({ regions }: { regions: RegionalItem[
                 <td className="border border-gray-300 px-2 py-1.5">
                   <a
                     href={selfContainedHref(r.href, "/transactions/")}
-                    data-source-url={provenance}
-                    title={provenance ? `Source: ${provenance}` : undefined}
+                    data-source-state={provenance ? "on-file" : undefined}
+                    title={provenance ? "Source on file" : undefined}
                     className="text-black no-underline hover:underline"
                   >
                     {r.region}
