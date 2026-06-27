@@ -135,7 +135,8 @@
     "route-parity:gate": "node scripts/swfipn-route-parity-gate.mjs",
     "route-parity:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ SWFIPN_BACKEND_ORIGIN=https://swfipn.activemirror.ai node scripts/swfipn-route-parity-gate.mjs",
     "route-parity:statistical": "node scripts/swfipn-route-parity-statistical-gate.mjs",
-    "route-parity:statistical:public": "SWFIPN_BACKEND_ORIGIN=https://swfipn.activemirror.ai node scripts/swfipn-route-parity-statistical-gate.mjs"
+    "route-parity:statistical:public": "SWFIPN_BACKEND_ORIGIN=https://swfipn.activemirror.ai node scripts/swfipn-route-parity-statistical-gate.mjs",
+    "parity:full:public": "npm run universe:map:public && npm run route-parity:gate:public && npm run route-parity:statistical:public"
   },
   "dependencies": {
     "gsap": "^3.15.0",
