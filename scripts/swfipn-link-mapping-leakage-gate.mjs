@@ -44,7 +44,7 @@ const routeExpectations = {
   "/profiles/": { entities: 5 },
   "/profiles/?filter=GC1%20Ventures": {
     entities: 1,
-    exact: [{ text: /GC1 Ventures/i, redirect: "/v1/entities/5e39a581fcbe7e8ca723278c" }],
+    exact: [{ text: /GC1 Ventures/i, redirect: "/profiles/detail/?id=5e39a581fcbe7e8ca723278c" }],
   },
   "/people/": { people: 5 },
   "/transactions/": { transactions: 5 },

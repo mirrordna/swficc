@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import SwfiBrandHeader from "@/components/SwfiBrandHeader";
 import type { Packet } from "@/lib/sourcePackets";
 import { fetchPacket, isFact, money, rows, text } from "@/lib/sourcePackets";
-import { appHref, isSwfiPlatformRecordHref, selfContainedHref, swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
+import { appHref, isSwfiPlatformRecordHref, selfContainedHref } from "@/lib/selfContainedLinks";
 
 const SEARCH_PREFETCH_CACHE_PREFIX = "swfipn.search.prefetch.v1:";
 
@@ -83,7 +83,7 @@ export default function SearchResultsPage() {
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h1 className="m-0 text-[19px] font-bold text-[#11314F]">Smart Search Bar</h1>
-              <p className="m-0 mt-1 text-[12px] text-[#7A8A9B]">SWFI-backed rows only; record links open the corresponding SWFI record pages.</p>
+              <p className="m-0 mt-1 text-[12px] text-[#7A8A9B]">SWFI-backed rows only; record links open the corresponding SWFIPN record pages.</p>
             </div>
             <div className="rounded border border-[#DCE3EA] px-3 py-2 text-[12px] text-[#41566B]">
               {loading && !packet ? "Loading" : showingText}
@@ -137,7 +137,7 @@ function sourceHref(row: Record<string, unknown>): string {
 
 function productHref(href: string | undefined, fallback = "/"): string {
   if (!href) return appHref(fallback);
-  if (isSwfiPlatformRecordHref(href)) return swfiAuthHandoffHref(href);
+  if (isSwfiPlatformRecordHref(href)) return selfContainedHref(href, fallback);
   if (href.startsWith("http://") || href.startsWith("https://")) return href;
   return selfContainedHref(href, fallback);
 }

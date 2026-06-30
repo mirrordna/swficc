@@ -15,7 +15,7 @@ import {
   SOURCE_GAP,
   text,
 } from "@/lib/sourcePackets";
-import { appHref, isSwfiPlatformRecordHref, selfContainedHref, sourceProvenanceHref, swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
+import { appHref, isSwfiPlatformRecordHref, selfContainedHref, sourceProvenanceHref } from "@/lib/selfContainedLinks";
 import { legacyPostId, mandateDetailHref, personDetailHref, profileDetailHref, researchDetailHref, sourceRecordIdFor, transactionDetailHref } from "@/lib/detailRoutes";
 import SwfiBrandHeader from "@/components/SwfiBrandHeader";
 import AlertsRuleManager from "@/components/AlertsRuleManager";
@@ -803,7 +803,7 @@ function hardNavigateSameRouteFilter(event: MouseEvent<HTMLAnchorElement>, targe
 function productHref(href: string | undefined, fallback = "/"): string {
   if (!href) return appHref(fallback);
   if (isSwfiPlatformRecordHref(href)) {
-    return swfiAuthHandoffHref(href);
+    return selfContainedHref(href, fallback);
   }
   if (href.startsWith("http://") || href.startsWith("https://")) return href;
   return selfContainedHref(href, fallback);

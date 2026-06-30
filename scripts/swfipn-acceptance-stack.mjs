@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { createRequire } from "node:module";
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
@@ -19,7 +18,6 @@ const localOrigin = normalizeOrigin(`http://127.0.0.1:${port}/swficc/`);
 const backendOrigin = (process.env.SWFIPN_BACKEND_ORIGIN || "https://swfipn.activemirror.ai").replace(/\/$/, "");
 let activeOrigin = target === "local" ? localOrigin : publicOrigin;
 const commandTimeoutMs = Number(process.env.SWFIPN_ACCEPTANCE_COMMAND_TIMEOUT_MS || 1_200_000);
-const expectedGc1Redirect = "https://www.swfi.com/v1/signin/?msg=auth&redirect=%2Fv1%2Fentities%2F5e39a581fcbe7e8ca723278c";
 const remoteHost = process.env.SWFIPN_RUNTIME_REMOTE_HOST || process.env.SWFIPN_HOST || "swfipn-do";
 const remoteRoot = process.env.SWFIPN_REMOTE_ROOT || "/opt/swfipn-acceptance";
 const composeProject = process.env.SWFIPN_COMPOSE_PROJECT || "swfipn_acceptance";
@@ -320,74 +318,6 @@ async function releaseMarkerCheck() {
   }
 }
 
-async function gc1RedirectCheck() {
-  const url = new URL("profiles/detail/?slug=gc1-ventures&name=GC1+Ventures", activeOrigin).href;
-  try {
-    const response = await fetch(url, { redirect: "manual" });
-    const location = response.headers.get("location") || "";
-    return {
-      id: "gc1_direct_handoff",
-      kind: "http",
-      ok: [302, 303, 307, 308].includes(response.status) && location === expectedGc1Redirect,
-      status: response.status,
-      url,
-      expected_location: expectedGc1Redirect,
-      actual_location: location,
-    };
-  } catch (error) {
-    return { id: "gc1_direct_handoff", kind: "http", ok: false, url, error: error.message };
-  }
-}
-
-async function gc1RenderedProof() {
-  const require = createRequire(import.meta.url);
-  const { chromium } = require("playwright");
-  const screenshot = path.join(outputDir, target === "public" ? "swfipn-public-gc1-link-proof.png" : "swfipn-local-gc1-link-proof.png");
-  const proofReceipt = path.join(outputDir, target === "public" ? "swfipn-public-gc1-link-proof-latest.json" : "swfipn-local-gc1-link-proof-latest.json");
-  const url = new URL("profiles/?filter=GC1%20Ventures", activeOrigin).href;
-  const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
-  try {
-    const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 });
-    await page.waitForFunction(() => document.body.innerText.includes("GC1 Ventures") && !/Loading/.test(document.body.innerText), null, { timeout: 90_000 });
-    const links = await page.evaluate(() => Array.from(document.querySelectorAll("a[href]"))
-      .filter((a) => (a.textContent || "").includes("GC1 Ventures"))
-      .map((a) => ({
-        text: (a.textContent || "").replace(/\s+/g, " ").trim(),
-        href: a.href,
-        raw: a.getAttribute("href") || "",
-      })));
-    await page.screenshot({ path: screenshot, fullPage: true });
-    const ok = links.some((link) => link.href === expectedGc1Redirect || link.raw === expectedGc1Redirect);
-    const result = { id: "gc1_rendered_link", kind: "browser", ok, status: response?.status() || 0, url, expected: expectedGc1Redirect, links, screenshot };
-    fs.writeFileSync(proofReceipt, `${JSON.stringify({
-      schema_version: "swfipn.public_gc1_link_proof.v1",
-      generated_at: new Date().toISOString(),
-      status: ok ? "pass" : "fail",
-      url,
-      http_status: response?.status() || 0,
-      expected: expectedGc1Redirect,
-      links,
-      screenshot,
-    }, null, 2)}\n`);
-    return result;
-  } catch (error) {
-    fs.writeFileSync(proofReceipt, `${JSON.stringify({
-      schema_version: "swfipn.public_gc1_link_proof.v1",
-      generated_at: new Date().toISOString(),
-      status: "fail",
-      url,
-      expected: expectedGc1Redirect,
-      links: [],
-      screenshot,
-      error: error.message,
-    }, null, 2)}\n`);
-    return { id: "gc1_rendered_link", kind: "browser", ok: false, url, screenshot, error: error.message };
-  } finally {
-    await browser.close().catch(() => {});
-  }
-}
-
 function npmGate(id, script, receipt, env = {}, allowedStatuses) {
   const result = runCommand(id, "npm", ["run", script], { env });
   const summary = receiptSummary(receipt, allowedStatuses);
@@ -420,7 +350,7 @@ function writeReceipt(steps) {
     acceptance_matrix: [
       matrixRow("Public dashboard loads", "public_access", steps, ["release_marker"]),
       matrixRow("DO runtime current release and containers are healthy", "runtime_truth", steps, target === "public" ? ["remote_current_release", "remote_container_health", "runtime_staleness"] : []),
-      matrixRow("Rows hand off to SWFI auth with canonical record redirect", "route_parity", steps, ["gc1_direct_handoff", "gc1_rendered_link", "map_leakage"]),
+      matrixRow("Rows resolve to first-party SWFIPN record/detail pages", "route_parity", steps, ["closeout", "map_leakage"]),
       matrixRow("No internal/source/debug language leaks in rendered routes", "leakage", steps, ["map_leakage", "link_escape"]),
       matrixRow("KP acceptance criteria pass", "kp_acceptance", steps, ["kp_acceptance"]),
       matrixRow("Full acceptance criteria pass", "acceptance_criteria", steps, ["acceptance_criteria"]),
@@ -530,8 +460,6 @@ async function main() {
       ? { SWFIPN_ORIGIN: activeOrigin }
       : { SWFIPN_ORIGIN: publicOrigin, SWFIPN_BACKEND_ORIGIN: backendOrigin };
     steps.push(await releaseMarkerCheck());
-    steps.push(await gc1RedirectCheck());
-    steps.push(await gc1RenderedProof());
     steps.push(remoteCurrentProof());
     steps.push(remoteContainerProof());
     const runtimeStaleness = runCommand("runtime_staleness", "node", ["scripts/swfipn-runtime-staleness-gate.mjs"], {
@@ -545,6 +473,7 @@ async function main() {
       });
     const runtimeReceipt = receiptSummary("swfipn-runtime-staleness-gate-latest.json");
     steps.push({ ...runtimeStaleness, receipt: runtimeReceipt, ok: runtimeStaleness.ok && runtimeReceipt.ok });
+    steps.push(npmGate("closeout", target === "public" ? "closeout:gate:public" : "closeout:gate", "swfipn-closeout-gate-latest.json", gateEnv));
     steps.push(npmGate("map_leakage", target === "public" ? "map-leakage:gate:public" : "map-leakage:gate", "swfipn-link-mapping-leakage-gate-latest.json", gateEnv));
     steps.push(npmGate("link_escape", target === "public" ? "link:escape:gate:public" : "link:escape:gate", "swfipn-visible-link-escape-gate-latest.json", gateEnv));
     steps.push(npmGate("kp_acceptance", target === "public" ? "kp:gate:public" : "kp:gate", "swfipn-kp-acceptance-gate-latest.json", gateEnv));
