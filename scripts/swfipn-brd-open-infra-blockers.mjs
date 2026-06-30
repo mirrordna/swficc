@@ -120,9 +120,11 @@ const items = [
       : "cloudflare_dns_tooling_exists_cdn_acceptance_not_proven",
     evidence: "output/swfipn-cdn-static-assets-gate-latest.json; output/npm-audit-high-latest.json; output/swfipn-ci-cd-gate-latest.json",
     finish_command: "push workflow or trigger workflow_dispatch, then attach current successful CI run receipt and rerun npm run brd:infra:blockers",
-    remaining_external_input: cdnReceipt?.status === "pass" && npmHighClean && ciConfigured && !ciRemoteRunProven
-      ? "current successful remote CI run receipt"
-      : cdnReceipt?.status === "pass" && npmHighClean ? "CI/CD automated testing gate proof" : "Cloudflare/CDN proof and zero-high npm audit receipt",
+    remaining_external_input: cdnReceipt?.status === "pass" && npmHighClean && ciConfigured && ciRemoteRunProven
+      ? null
+      : cdnReceipt?.status === "pass" && npmHighClean && ciConfigured
+        ? "current successful remote CI run receipt"
+        : cdnReceipt?.status === "pass" && npmHighClean ? "CI/CD automated testing gate proof" : "Cloudflare/CDN proof and zero-high npm audit receipt",
   },
 ];
 
