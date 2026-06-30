@@ -324,7 +324,7 @@ async function run() {
   const { chromium } = loadPlaywright();
   const browser = await chromium.launch({
     headless: true,
-    args: resolveIp ? [`--host-resolver-rules=MAP ${originHost} ${resolveIp}`] : [],
+    args: stableBrowserArgs(originHost),
   });
   const checks = [];
   try {
@@ -401,6 +401,12 @@ async function run() {
     receipt: receiptPath,
   }, null, 2));
   if (failures.length) process.exit(1);
+}
+
+function stableBrowserArgs(host) {
+  const args = ["--disable-gpu", "--disable-dev-shm-usage"];
+  if (resolveIp) args.push(`--host-resolver-rules=MAP ${host} ${resolveIp}`);
+  return args;
 }
 
 run().catch((error) => {

@@ -13,7 +13,7 @@ const backendOrigin = (process.env.SWFIPN_BACKEND_ORIGIN || origin).replace(/\/$
 const sampleLimit = Number(process.env.SWFIPN_RECORD_MIRROR_SAMPLE_LIMIT || 2);
 const enumerateAll = process.env.SWFIPN_RECORD_MIRROR_ENUMERATE_ALL === "1";
 const enumeratePageLimit = Number(process.env.SWFIPN_RECORD_MIRROR_ENUMERATE_LIMIT || 50);
-const authMode = String(process.env.SWFIPN_RECORD_MIRROR_AUTH_MODE || "swfi-auth-handoff");
+const authMode = String(process.env.SWFIPN_RECORD_MIRROR_AUTH_MODE || "self-contained");
 const validateLegacyAuth = authMode === "legacy-auth";
 const username = validateLegacyAuth
   ? loadSecret("SWFIPN_AUTH_TEST_USERNAME", "SWFIPN_AUTH_USERNAME_KEYCHAIN_SERVICE", ["SWFIPN_AUTH_USERNAME", "SWFI_PREVIEW_AUTH_USERNAME"]).trim()

@@ -63,7 +63,7 @@ async function main() {
   const searchUrl = `${origin.replace(/\/$/, "")}/search/?q=${encodeURIComponent(query)}`;
   network.reset();
   const resultsStarted = Date.now();
-  await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 120_000 });
+  const resultsResponse = await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 120_000 });
   await page.waitForFunction(() => {
     const text = document.body.innerText || "";
     return !text.includes("Loading")
@@ -74,7 +74,8 @@ async function main() {
   const resultsBody = await page.locator("body").innerText();
   const resultsHasRowsOrEmptyState = /Showing\s+\d+\s+of\s+[\d,]+/.test(resultsBody) || resultsBody.includes("Not disclosed");
   const searchApiResponses = network.items().filter((item) => /api\/(v1\/public\/search|source-data\/search|transaction-drilldown)/.test(item.url));
-  const apiOk = searchApiResponses.some((item) => item.status === 200);
+  const serverRenderedSearch = String(resultsResponse?.headers()?.["x-swfipn-search-render"] || "").toLowerCase() === "server";
+  const apiOk = serverRenderedSearch || searchApiResponses.some((item) => item.status === 200);
 
   const failures = [];
   if (!autofocus) failures.push("modal_input_not_autofocused");
@@ -109,6 +110,7 @@ async function main() {
       modal_closed: modalClosed,
       results_has_rows_or_empty_state: resultsHasRowsOrEmptyState,
       search_api_200: apiOk,
+      server_rendered_search: serverRenderedSearch,
       console_errors: consoleErrors.slice(0, 10),
       failures
     },

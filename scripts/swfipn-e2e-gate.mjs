@@ -49,7 +49,7 @@ const CLIENT_FORBIDDEN_VISIBLE = [
 const CORE_ROUTES = [
   {
     route: "/",
-    ready: "KPI CARDS",
+    ready: "TOTAL AUM ENGAGED",
     allowSourceGap: false,
     waitMs: 150_000,
     requiredAnchors: [
@@ -526,20 +526,6 @@ async function inspectRoute(browser, authContext, spec) {
     for (const link of checkLinks) {
       const targetHref = appTarget(link);
       const linkResult = { text: link.text, href: targetHref, ok: true, failures: [] };
-      if (!validateLocalAuth && protectedSwficcDetailTarget(targetHref)) {
-        try {
-          const handoff = await handoffRequestOk(targetHref, LINK_CHECK_TIMEOUT_MS);
-          linkResult.auth_handoff = handoff.ok;
-          linkResult.http_status = handoff.status;
-          if (!handoff.ok) linkResult.failures.push(`missing_swfi_signin_handoff:${handoff.status}:${handoff.location || "missing_location"}`);
-        } catch (error) {
-          linkResult.failures.push(error.message);
-        }
-        linkResult.ok = linkResult.failures.length === 0;
-        result.checked_links.push(linkResult);
-        if (!linkResult.ok) result.failures.push(`data_link_failed:${link.text}:${linkResult.failures.join("|")}`);
-        continue;
-      }
       const linkPage = await authContext.newPage({ viewport: { width: 1280, height: 800 } });
       try {
         const linkTimeout = targetHref.includes("/profiles/detail/") ? PROFILE_LINK_CHECK_TIMEOUT_MS : LINK_CHECK_TIMEOUT_MS;
@@ -571,18 +557,6 @@ async function inspectRoute(browser, authContext, spec) {
 
 async function inspectSimple(context, item, prefix) {
   const result = { id: `${prefix}:${item.id}`, url: urlFor(item.url), ok: true, failures: [], source_gap_count: 0, body_first: [], links: [] };
-  if (prefix === "detail" && !validateLocalAuth && protectedSwficcDetailTarget(result.url)) {
-    try {
-      const handoff = await handoffRequestOk(result.url, SIMPLE_CHECK_TIMEOUT_MS);
-      result.auth_handoff = handoff.ok;
-      result.http_status = handoff.status;
-      if (!handoff.ok) result.failures.push(`missing_swfi_signin_handoff:${handoff.status}:${handoff.location || "missing_location"}`);
-    } catch (error) {
-      result.failures.push(error.message);
-    }
-    result.ok = result.failures.length === 0;
-    return result;
-  }
   const page = await context.newPage({ viewport: { width: 1280, height: 800 } });
   try {
     const response = await page.goto(result.url, { waitUntil: "domcontentloaded", timeout: 45_000 });
@@ -746,7 +720,7 @@ async function run() {
   if (validateLocalAuth) {
     checks.push({ id: "auth_context_per_check", ok: true, skipped: false, failures: [] });
   } else {
-    checks.push({ id: "auth_context_phase1_public", ok: true, skipped: true, failures: [], reason: "Phase 1 uses SWFI auth handoff, not a custom SWFIPN login." });
+    checks.push({ id: "auth_context_self_contained_public", ok: true, skipped: true, failures: [], reason: "Public acceptance uses first-party mirrored record pages; no custom SWFIPN login is required." });
   }
   checks.push(...await runLimited(
     coreRoutes,

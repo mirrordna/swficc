@@ -318,7 +318,7 @@
       "id": "BRD-UNIVERSE-001",
       "priority": "P0",
       "area": "Full Universe Coverage",
-      "requirement": "All source-backed backend records in the accepted universe have a resolvable internal or canonical route; reports are not accepted until a source-backed reports enumeration contract exists.",
+      "requirement": "All source-backed backend records in the accepted universe have a resolvable internal or canonical route; this proves mapping coverage only and must not be represented as full universe parity.",
       "brd_refs": [
         "P0153-P0158",
         "T23R025"
@@ -332,6 +332,35 @@
         "checks": [
           {
             "path": "failures",
+            "op": "empty_or_zero"
+          }
+        ],
+        "missing_status": "fail"
+      }
+    },
+    {
+      "id": "BRD-UNIVERSE-002",
+      "priority": "P0",
+      "area": "Full Universe Parity",
+      "requirement": "Full universe parity may only be claimed when mapping coverage, exhaustive detail rendering, exhaustive required-field parity, exhaustive browser route parity, current visual baseline, and current adversarial review are all receipt-backed. If any layer is sampled, stale, missing, blocked, harness-failed, or not implemented, full universe parity is UNPROVEN.",
+      "brd_refs": [
+        "P0153-P0158",
+        "T23R025"
+      ],
+      "evidence": {
+        "receipt": "output/swfipn-brd-contract-truth-gate-latest.json",
+        "allowed_statuses": [
+          "pass"
+        ],
+        "max_age_hours": 24,
+        "checks": [
+          {
+            "path": "full_universe_parity_status",
+            "op": "equals",
+            "value": "PASS"
+          },
+          {
+            "path": "bad_news_first",
             "op": "empty_or_zero"
           }
         ],

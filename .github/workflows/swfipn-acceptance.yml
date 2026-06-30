@@ -1,0 +1,60 @@
+name: SWFIPN Acceptance Gates
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "codex/**"
+  workflow_dispatch:
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Zero high-severity npm audit
+        run: npm run brd:npm-audit:high
+
+      - name: Python deps for Mongo index dry-run
+        run: python3 -m pip install pymongo
+
+      - name: Mongo index dry-run receipt
+        run: SWFIPN_DB_INDEX_DRY_RUN=1 npm run db:indexes
+
+      - name: Public search acceptance gate
+        run: npm run brd:search:gate:public
+
+      - name: CDN static asset public gate
+        run: npm run brd:cdn:gate:public
+
+      - name: Public closeout gate
+        run: npm run closeout:gate:public
+
+      - name: Upload receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: swfipn-acceptance-receipts
+          path: output/

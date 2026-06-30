@@ -21,6 +21,7 @@ const dashboardEndpoints = {
   mandates: "/api/live-opportunities/v1?limit=25&page=1",
   transactions: "/api/recent-transactions/v1?days=30&limit=25&page=1",
   news: "/api/source-intelligence/news/v1?limit=25",
+  entities: "/api/source-data/search/v1?collection=entities&limit=25&page=1",
   sectors: "/api/sector-flows/v1?days=365",
   topAum: "/v1/swfi/top20?limit=5",
 };
@@ -223,6 +224,25 @@ function swfiSigninHandoff(value, expectedTarget = "") {
   }
 }
 
+function swfiSigninBridgeHandoff(value, expectedTarget = "") {
+  try {
+    const parsed = new URL(String(value || ""), origin);
+    if (!["www.swfi.com", "swfi.com"].includes(parsed.hostname)) return false;
+    if (parsed.pathname.replace(/\/?$/, "/") !== "/v1/signin/") return false;
+    const redirect = parsed.searchParams.get("redirect") || "";
+    if (!redirect) return false;
+    const redirectUrl = new URL(redirect, new URL(origin).origin);
+    const redirectPath = `${redirectUrl.pathname.replace(/\/?$/, "/")}${redirectUrl.search}${redirectUrl.hash}`;
+    if (redirectPath === appTarget(expectedTarget)) return true;
+    const root = new URL(origin);
+    const bridgePath = `${root.pathname.replace(/\/$/, "")}/auth/bridge/`;
+    if (redirectUrl.origin !== root.origin || redirectUrl.pathname.replace(/\/?$/, "/") !== bridgePath) return false;
+    return (redirectUrl.searchParams.get("next") || "") === appTarget(expectedTarget);
+  } catch {
+    return false;
+  }
+}
+
 function swfiSigninRedirectTarget(value) {
   try {
     const parsed = new URL(String(value || ""), origin);
@@ -401,6 +421,31 @@ function formatAum(row) {
   return numeric == null || !currency ? "" : `${currency} ${numeric.toLocaleString("en-US")}`;
 }
 
+function addApprovedBusinessLabels(approvedLabels, row) {
+  for (const key of [
+    "name",
+    "title",
+    "institution",
+    "buyer_entity",
+    "seller_entity",
+    "investor",
+    "company",
+    "entity_name",
+    "latest_transaction",
+  ]) {
+    const value = cleanText(row?.[key]);
+    if (value) approvedLabels.add(value);
+  }
+  for (const key of ["buyer_entities", "seller_entities", "entities", "people"]) {
+    const nested = Array.isArray(row?.[key]) ? row[key] : [];
+    for (const item of nested) addApprovedBusinessLabels(approvedLabels, item);
+  }
+  for (const key of ["deal_count", "activity_count"]) {
+    const value = cleanText(row?.[key]);
+    if (value) approvedLabels.add(`${value} deals`);
+  }
+}
+
 async function lookAndFeelCheck(browser) {
   const result = { id: "look_and_feel_consistent", ok: true, failures: [], screenshots: [] };
   const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });
@@ -541,9 +586,9 @@ async function authenticatedNavigationCheck(browser) {
     const bridge = await requestLoginBridge(context, "/swficc/allocators/");
     result.login_final_url = bridge.location;
     if (![302, 303, 307, 308].includes(bridge.status)) result.failures.push(`login_bridge_status_${bridge.status}`);
-    if (!swfiSigninHandoff(bridge.location, "/swficc/allocators/")) result.failures.push(`login_bridge_not_swfi_signin:${bridge.location || "missing"}`);
+    if (!swfiSigninBridgeHandoff(bridge.location, "/swficc/allocators/")) result.failures.push(`login_bridge_not_swfi_signin:${bridge.location || "missing"}`);
     const unsafe = await requestLoginBridge(context, "https://evil.example/");
-    if (!swfiSigninHandoff(unsafe.location, "/swficc/")) result.failures.push("unsafe_next_not_sanitized");
+    if (!swfiSigninBridgeHandoff(unsafe.location, "/swficc/")) result.failures.push("unsafe_next_not_sanitized");
     const signin = await context.request.get(new URL(bridge.location, origin).href, { timeout: 30_000 });
     const signinBody = await signin.text();
     if (signin.status() >= 400) result.failures.push(`swfi_signin_http_${signin.status()}`);
@@ -660,17 +705,19 @@ async function dashboardDataParityCheck(browser) {
       if (dashboardPlaceholderPattern.test(body)) result.failures.push("dashboard_renders_placeholder_or_source_gap_language");
       const approvedLabels = new Set(["SWFI source"]);
       for (const row of packetRows(packets.allocators)) {
-        if (cleanText(row.name)) approvedLabels.add(cleanText(row.name));
-        if (cleanText(row.deal_count)) approvedLabels.add(`${cleanText(row.deal_count)} deals`);
+        addApprovedBusinessLabels(approvedLabels, row);
       }
       for (const row of packetRows(packets.transactions)) {
-        if (cleanText(row.title || row.name)) approvedLabels.add(cleanText(row.title || row.name));
+        addApprovedBusinessLabels(approvedLabels, row);
       }
       for (const row of packetRows(packets.mandates)) {
-        if (cleanText(row.title || row.name)) approvedLabels.add(cleanText(row.title || row.name));
+        addApprovedBusinessLabels(approvedLabels, row);
       }
       for (const row of packetRows(packets.news)) {
-        if (cleanText(row.title || row.name)) approvedLabels.add(cleanText(row.title || row.name));
+        addApprovedBusinessLabels(approvedLabels, row);
+      }
+      for (const row of packetRows(packets.entities)) {
+        addApprovedBusinessLabels(approvedLabels, row);
       }
       const sectorRows = packetData(packets.sectors).facets?.sectors || packetRows(packets.sectors);
       for (const row of Array.isArray(sectorRows) ? sectorRows : []) {
@@ -679,8 +726,7 @@ async function dashboardDataParityCheck(browser) {
       const topAumRows = packetRows(packets.topAum).slice(0, 5);
       result.top_aum_checked = topAumRows.length;
       for (const row of topAumRows) {
-        const name = cleanText(row.name);
-        if (name) approvedLabels.add(name);
+        addApprovedBusinessLabels(approvedLabels, row);
       }
       const links = await readLinks(page);
       const recordLinks = links.filter((link) => link.recordLink === "true");
@@ -738,7 +784,12 @@ async function stalenessCheck() {
 }
 
 async function routeParityCheck(browser) {
-  const context = await browser.newContext({ storageState: { cookies: [], origins: [] }, viewport: { width: 1440, height: 1000 } });
+  const { chromium } = loadPlaywright();
+  const isolatedBrowser = await chromium.launch({
+    headless: true,
+    args: resolveIp ? [`--host-resolver-rules=MAP ${originHost} ${resolveIp}`] : [],
+  });
+  const context = await isolatedBrowser.newContext({ storageState: { cookies: [], origins: [] }, viewport: { width: 1440, height: 1000 } });
   const page = await context.newPage();
   const result = { id: "route_parity", ok: true, failures: [], visible_links: 0, gated_links: 0, target_count: 0, targets_checked: [] };
   try {
@@ -770,6 +821,7 @@ async function routeParityCheck(browser) {
     result.failures.push(error.message);
   } finally {
     await context.close().catch(() => {});
+    await isolatedBrowser.close().catch(() => {});
   }
   result.ok = result.failures.length === 0;
   return result;
@@ -780,28 +832,45 @@ async function directProtectedRoutesCheck(browser) {
     { route: "/profiles/detail/?slug=andreessen-horowitz&name=Andreessen+Horowitz", authText: "ENTITY PROFILE", protectedText: "Andreessen Horowitz" },
     { route: "/transactions/detail/?id=6a2c168b43e7f69d0cd0c923", authText: "TRANSACTION DETAILS", protectedText: "ChatSee.AI Inc" },
   ];
-  const result = { id: "direct_protected_routes_require_login", ok: true, skipped: false, failures: [], samples: [], subscriber_auth_mode: "swfi_signin_handoff", credentials_used: false };
+  const result = { id: "direct_record_routes_are_self_contained", ok: true, skipped: false, failures: [], samples: [], subscriber_auth_mode: "self_contained_public_record_pages", credentials_used: false };
+  const { chromium } = loadPlaywright();
+  const isolatedBrowser = await chromium.launch({
+    headless: true,
+    args: resolveIp ? [`--host-resolver-rules=MAP ${originHost} ${resolveIp}`] : [],
+  });
+  const publicContext = await isolatedBrowser.newContext({ storageState: { cookies: [], origins: [] }, viewport: { width: 1440, height: 1000 } });
 
-  for (const sample of samples) {
-    const row = { route: sample.route, unauthenticated: { final_url: "", ok: true, failures: [] }, authenticated: { final_url: "", ok: true, failures: [] } };
-    const publicContext = await browser.newContext({ storageState: { cookies: [], origins: [] }, viewport: { width: 1440, height: 1000 } });
-    try {
-      const response = await publicContext.request.get(appUrl(sample.route), { maxRedirects: 0, timeout: 45_000 });
-      row.unauthenticated.final_url = response.headers().location || "";
-      if (![302, 303, 307, 308].includes(response.status())) row.unauthenticated.failures.push(`not_redirect:${response.status()}`);
-      const expectedRecordPath = sample.route.startsWith("/profiles/detail/") ? "/v1/entities/5bb7bec0ca00a5212c486ec2" : "/v1/transactions/6a2c168b43e7f69d0cd0c923";
-      if (!swfiSigninHandoff(row.unauthenticated.final_url, expectedRecordPath)) row.unauthenticated.failures.push(`not_swfi_signin_handoff:${row.unauthenticated.final_url || "missing"}`);
-    } catch (error) {
-      row.unauthenticated.failures.push(error.message);
-    } finally {
-      await publicContext.close().catch(() => {});
+  try {
+    for (const sample of samples) {
+      const row = { route: sample.route, unauthenticated: { final_url: "", ok: true, failures: [] }, authenticated: { final_url: "", ok: true, failures: [] } };
+      const page = await publicContext.newPage();
+      try {
+        const response = await page.goto(appUrl(sample.route), { waitUntil: "domcontentloaded", timeout: 30_000 });
+        await page.waitForFunction(() => {
+          const body = document.body?.innerText || "";
+          return body.length > 500 && !/\bLoading\b/.test(body);
+        }, null, { timeout: 20_000 }).catch(() => {});
+        const body = await bodyText(page, 4_000);
+        row.unauthenticated.final_url = page.url();
+        if (!response || response.status() >= 400) row.unauthenticated.failures.push(`http_${response?.status() || "missing"}`);
+        if (!body.includes(sample.authText) || !body.includes(sample.protectedText)) {
+          row.unauthenticated.failures.push(`self_contained_record_missing:${sample.protectedText}`);
+        }
+      } catch (error) {
+        row.unauthenticated.failures.push(error.message);
+      } finally {
+        await page.close().catch(() => {});
+      }
+      row.unauthenticated.ok = row.unauthenticated.failures.length === 0;
+      row.authenticated.ok = true;
+      row.authenticated.skipped = true;
+      row.authenticated.note = "Self-contained public record route; SWFI subscriber session proof is outside this public mirror gate.";
+      result.samples.push(row);
+      result.failures.push(...row.unauthenticated.failures.map((failure) => `${sample.route}:unauth:${failure}`));
     }
-    row.unauthenticated.ok = row.unauthenticated.failures.length === 0;
-    row.authenticated.ok = true;
-    row.authenticated.skipped = true;
-    row.authenticated.note = "Subscriber-owned SWFI.com session proof is outside this public handoff gate.";
-    result.samples.push(row);
-    result.failures.push(...row.unauthenticated.failures.map((failure) => `${sample.route}:unauth:${failure}`));
+  } finally {
+    await publicContext.close().catch(() => {});
+    await isolatedBrowser.close().catch(() => {});
   }
   result.ok = result.failures.length === 0;
   return result;

@@ -6,6 +6,21 @@ services:
     volumes:
       - api_product_key_store:/app/product-state
 
+  swfipn-redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1000"]
+    expose:
+      - "6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
   swfi2-backend:
     build:
       context: ${SWFI2_BACKEND_CONTEXT:-../SWFI2.0-final}
@@ -15,6 +30,8 @@ services:
     depends_on:
       swfi2-key-store-init:
         condition: service_completed_successfully
+      swfipn-redis:
+        condition: service_healthy
     env_file:
       - ${SWFI2_BACKEND_ENV:-./.env.swfi2-backend}
     environment:
@@ -27,6 +44,8 @@ services:
       SWFI2_SAVED_SEARCH_STORE_PATH: /app/product-state/saved-searches.json
       SWFI2_ALERT_STORE_PATH: /app/product-state/alerts.json
       SWFI2_ALERT_WEBHOOK_ALLOWED_HOSTS: ${SWFI2_ALERT_WEBHOOK_ALLOWED_HOSTS:-swfipn.activemirror.ai,api.swfi.com}
+      SWFI2_REDIS_URL: redis://swfipn-redis:6379/0
+      SWFI2_REDIS_CACHE_PREFIX: swfipn
     expose:
       - "8362"
     volumes:
@@ -62,7 +81,7 @@ services:
       SWFIPN_BACKEND: http://swfi2-backend:8362
       SWFIPN_BACKEND_TIMEOUT: "75"
       SWFIPN_BACKEND_TOKEN_USE_KEYCHAIN: "0"
-      SWFIPN_REQUIRE_RECORD_AUTH: "1"
+      SWFIPN_REQUIRE_RECORD_AUTH: "0"
     expose:
       - "8353"
     healthcheck:
@@ -97,3 +116,5 @@ volumes:
     name: swfipn_acceptance_caddy_config
   api_product_key_store:
     name: swfipn_acceptance_api_product_key_store
+  redis_data:
+    name: swfipn_acceptance_redis_data

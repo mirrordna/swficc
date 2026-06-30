@@ -10,6 +10,8 @@ Date: 2026-06-26
 
 Current verdict: `go_for_current_scope`.
 
+Full universe parity verdict: `UNPROVEN` until `output/swfipn-brd-contract-truth-gate-latest.json` passes. Full-universe mapping coverage is not a full parity claim.
+
 The public `/swficc` dashboard/terminal scope is deployed and receipt-backed for validation. The latest BRD Phase 2 matrix is `pass_with_deferred_scope`: 23 pass, 0 fail, 0 stale, 0 non-deferred gaps, and 1 explicit deferred P2 bucket across 24 tracked requirements.
 
 This does not claim full BRD Phase 2 productization. Admin API-key lifecycle UI, Admin Governance, Saved Searches backend/API, Saved Searches linked in-app alert delivery receipts, Saved Searches page UI API client, Alerts backend/API, Alerts page UI API client, alert in-app/webhook delivery receipts, and local SWFI session bridge mechanics are implemented and gated. Email delivery/SendGrid onboarding, target-runtime SWFI session bridge configuration, and `api.swfi.com` DNS cutover remain deferred until their public target receipts pass.
@@ -31,7 +33,8 @@ This does not claim full BRD Phase 2 productization. Admin API-key lifecycle UI,
 | People profiles | `pass` | `output/swfipn-people-profile-brd-gate-latest.json` |
 | Section visualizations | `pass` | `output/swfipn-section-visualization-brd-gate-latest.json` |
 | Backend contracts | `pass` | `output/swfipn-phase2-backend-acceptance-latest.json` |
-| Full-universe mapping | `pass` | `output/swfipn-full-universe-mapping-latest.json` |
+| Full-universe mapping coverage | `pass` | `output/swfipn-full-universe-mapping-latest.json` |
+| Full-universe parity | `UNPROVEN` | `output/swfipn-brd-contract-truth-gate-latest.json` |
 | Performance | `pass` | `output/swfipn-brd-performance-gate-latest.json` |
 | Entities Aggregates | `pass` | `output/swfipn-aggregates-brd-gate-latest.json` |
 | API Product Spine | `pass` | `output/swfipn-api-product-gate-latest.json` |
@@ -72,7 +75,7 @@ This does not claim full BRD Phase 2 productization. Admin API-key lifecycle UI,
 
 ## Full-Universe Data Impact
 
-Latest hardened run:
+Latest mapping run:
 
 - run id: `20260626171025`
 - status: `pass`
@@ -81,7 +84,15 @@ Latest hardened run:
 - rows failed: `0`
 - included families: entities, people, transactions, compass, news, and reports
 
-Receipt:
+This proves source-to-handoff mapping coverage. It does not prove every detail page, every field, every browser route, every visual baseline, and adversarial review across the full universe.
+
+Contract truth receipt:
+
+```bash
+output/swfipn-brd-contract-truth-gate-latest.json
+```
+
+Mapping receipt:
 
 ```bash
 output/swfipn-full-universe-mapping-latest.json

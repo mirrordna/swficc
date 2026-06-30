@@ -11,25 +11,29 @@ const resolveIp = process.env.SWFIPN_RESOLVE_IP || "";
 const originHost = new URL(origin).hostname;
 
 const REQUIRED_TEXT = [
-  "KPI CARDS",
-  "INSIGHTS",
-  "Top Active Allocators (Last 90 Days)",
-  "Top AUM & Sector Activity",
+  "TOTAL AUM ENGAGED",
+  "ACTIVE RELATIONSHIPS",
+  "PIPELINE VALUE",
+  "Global Capital Map",
   "Capital Flows",
   "AI Insights",
   "Pipeline Overview",
-  "Research",
+  "Top Institutional Relationships",
+  "Research & Analytics Hub",
+  "Market Intelligence",
   "Activity Feed",
   "Deal Intelligence",
   "Data source: SWFI records",
 ];
 
 const REQUIRED_VISUAL_SECTIONS = [
-  "Top AUM & Sector Activity",
+  "Global Capital Map",
   "Capital Flows & Allocation Trends",
   "AI Insights",
   "Pipeline Overview",
-  "Top Active Allocators (Last 90 Days)",
+  "Top Institutional Relationships",
+  "Research & Analytics Hub",
+  "Market Intelligence",
   "Deal Intelligence",
 ];
 
@@ -48,7 +52,6 @@ const REQUIRED_ANCHORS = [
   "/swficc/profiles/",
   "/swficc/deals/",
   "/swficc/mandates/",
-  "/swficc/comparisons/",
   "/swficc/intelligence/",
 ];
 
@@ -162,7 +165,7 @@ async function inspectViewport(browser, spec) {
           && hydratedSourceLinks >= 10;
       },
       REQUIRED_TEXT,
-      { timeout: 120_000 },
+      { timeout: 25_000 },
     );
     await page.waitForTimeout(1_500);
 
@@ -311,17 +314,17 @@ async function inspectViewport(browser, spec) {
     if (spec.mode === "top") {
       const expansion = await page.evaluate(() => {
         const button = Array.from(document.querySelectorAll("button"))
-          .find((candidate) => candidate.textContent?.includes("Top AUM & Sector Activity"));
-        const before = button?.textContent?.includes("+") || false;
+          .find((candidate) => candidate.getAttribute("aria-label") === "Expand Global Capital Map");
+        const before = button?.getAttribute("aria-expanded") === "false" || false;
         button?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
         return { before };
       });
       await page.waitForTimeout(250);
       const after = await page.evaluate(() => {
         const button = Array.from(document.querySelectorAll("button"))
-          .find((candidate) => candidate.textContent?.includes("Top AUM & Sector Activity"));
+          .find((candidate) => candidate.getAttribute("aria-label") === "Collapse Global Capital Map");
         const text = button?.textContent || "";
-        return { expanded: text.includes("−"), text };
+        return { expanded: button?.getAttribute("aria-expanded") === "true", text };
       });
       entry.check.expansion = { ...expansion, ...after };
       if (!entry.check.expansion.before || !entry.check.expansion.expanded) {
@@ -387,6 +390,9 @@ async function run() {
     origin,
     generated_at: new Date().toISOString(),
     status: failures.length ? "fail" : "pass",
+    visual_baseline: true,
+    baseline_mode: true,
+    baseline_claim: "BRD dashboard visual baseline: required visual sections, deterministic SVGs, expansion control, leakage scan, anchors, desktop screenshots, and mobile screenshot.",
     summary: {
       checks: checks.length,
       viewports: VIEWPORTS.length,
@@ -407,6 +413,9 @@ run().catch((error) => {
     origin,
     generated_at: new Date().toISOString(),
     status: "fail",
+    visual_baseline: true,
+    baseline_mode: true,
+    baseline_claim: "BRD dashboard visual baseline attempted but failed before checks completed.",
     summary: { checks: 0, viewports: VIEWPORTS.length, failures: 1 },
     failures: [{ id: "fatal", failures: [error.stack || error.message] }],
   };

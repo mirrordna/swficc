@@ -167,9 +167,10 @@ function classifyAnchor(anchor) {
     const parsed = new URL(anchor.href, origin);
     if (parsed.origin === originUrl.origin && parsed.pathname.startsWith(basePath || "/")) {
       const appPath = parsed.pathname.slice(basePath.length) || "/";
-      if (/^\/(profiles|transactions|mandates|people)\/detail\/?/i.test(appPath)) {
-        return { ...anchor, family: "bad_internal_detail", kind: "", redirect: "" };
-      }
+      if (/^\/profiles\/detail\/?/i.test(appPath)) return { ...anchor, family: "internal_detail", kind: "entities", redirect: `${appPath}${parsed.search}${parsed.hash}` };
+      if (/^\/transactions\/detail\/?/i.test(appPath)) return { ...anchor, family: "internal_detail", kind: "transactions", redirect: `${appPath}${parsed.search}${parsed.hash}` };
+      if (/^\/mandates\/detail\/?/i.test(appPath)) return { ...anchor, family: "internal_detail", kind: "compass", redirect: `${appPath}${parsed.search}${parsed.hash}` };
+      if (/^\/people\/detail\/?/i.test(appPath)) return { ...anchor, family: "internal_detail", kind: "people", redirect: `${appPath}${parsed.search}${parsed.hash}` };
       if (/^\/research\/detail\/?/i.test(appPath)) return { ...anchor, family: "research", kind: "research", redirect: appPath };
       return { ...anchor, family: "internal", kind: "", redirect: "" };
     }
@@ -188,8 +189,6 @@ function classifyAnchor(anchor) {
 
 function linkFailures(route, links) {
   const failures = [];
-  const protectedDetailLinks = links.filter((link) => link.family === "bad_internal_detail");
-  if (protectedDetailLinks.length) failures.push(`internal_detail_links:${protectedDetailLinks.slice(0, 6).map((link) => link.text || link.raw).join("|")}`);
   const rawRecords = links.filter((link) => link.family === "raw_swfi_record");
   if (rawRecords.length) failures.push(`raw_swfi_record_links:${rawRecords.slice(0, 6).map((link) => link.text || link.raw).join("|")}`);
   const legacy = links.filter((link) => link.family === "raw_legacy_article");
@@ -223,7 +222,7 @@ function linkFailures(route, links) {
   for (const [kind, count] of Object.entries(expected)) {
     if (kind === "exact") continue;
     const actual = links.filter((link) => link.kind === kind).length;
-    if (actual < count) failures.push(`${kind}_handoffs_${actual}_lt_${count}`);
+    if (actual < count) failures.push(`${kind}_record_links_${actual}_lt_${count}`);
   }
   for (const exact of expected.exact || []) {
     const match = links.find((link) => exact.text.test(link.text || "") && link.redirect === exact.redirect);
@@ -276,7 +275,7 @@ async function inspectRoute(browser, route) {
     const expectedKinds = expectedKindsForRoute(route);
     if (expectedKinds.length || expected.exact?.length) {
       const transactionHeavyRoute = /^\/(transactions|deals)\//i.test(route);
-      const readinessTimeoutMs = transactionHeavyRoute ? 90_000 : route.includes("profiles/?filter") ? 45_000 : 25_000;
+      const readinessTimeoutMs = transactionHeavyRoute ? 120_000 : route.includes("profiles/?filter") ? 120_000 : 90_000;
       await page.waitForFunction((expectation) => {
         const hrefs = [...document.querySelectorAll("a[href]")].map((anchor) => {
           try {
@@ -293,8 +292,22 @@ async function inspectRoute(browser, route) {
         });
         const hasKind = (kind) => {
           if (kind === "research") return hrefs.some((anchor) => /\/swficc\/research\/detail\/?\?/i.test(anchor.href) || /\/research\/detail\/?\?/i.test(anchor.href));
-          const recordPath = kind === "compass" ? "/v1/compass/" : `/v1/${kind}/`;
-          return hrefs.some((anchor) => /https:\/\/www\.swfi\.com\/v1\/signin\/?\?/i.test(anchor.href) && anchor.href.includes(recordPath));
+          const handoffPath = {
+            entities: "/v1/entities/",
+            transactions: "/v1/transactions/",
+            compass: "/v1/compass/",
+            people: "/v1/people/",
+          }[kind];
+          if (handoffPath && hrefs.some((anchor) => /https:\/\/www\.swfi\.com\/v1\/signin\/\?/i.test(anchor.href) && anchor.href.includes(handoffPath))) {
+            return true;
+          }
+          const recordPath = {
+            entities: "/profiles/detail/?id=",
+            transactions: "/transactions/detail/?id=",
+            compass: "/mandates/detail/?id=",
+            people: "/people/detail/?id=",
+          }[kind];
+          return recordPath ? hrefs.some((anchor) => anchor.href.includes(recordPath)) : false;
         };
         const hasExact = (exact) => hrefs.some((anchor) => {
           const pattern = new RegExp(exact.text, "i");
@@ -336,7 +349,7 @@ async function inspectRoute(browser, route) {
     }, {});
     result.samples = {
       swfi_record_handoffs: links.filter((link) => link.family === "swfi_record_handoff").slice(0, 12),
-      internal_details: links.filter((link) => link.family === "bad_internal_detail").slice(0, 12),
+      internal_details: links.filter((link) => link.family === "internal_detail").slice(0, 12),
       raw_swfi_records: links.filter((link) => link.family === "raw_swfi_record").slice(0, 12),
       research: links.filter((link) => link.family === "research").slice(0, 8),
     };

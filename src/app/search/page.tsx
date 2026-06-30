@@ -1,5 +1,5 @@
-import SourceListPage from "@/components/SourceListPage";
+import SearchResultsPage from "@/components/SearchResultsPage";
 
 export default function SearchPage() {
-  return <SourceListPage kind="search" />;
+  return <SearchResultsPage />;
 }

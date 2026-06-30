@@ -119,7 +119,18 @@ async function waitForDashboard(page) {
   let body = "";
   while (Date.now() - started < 120_000) {
     body = await page.locator("body").innerText().catch(() => "");
-    if (body.includes("KPI CARDS") && body.includes("INSIGHTS") && !/\bLoading\b/.test(body)) return body;
+    const linkKinds = await page.evaluate(() => {
+      const counts = { entity: 0, transaction: 0, compass: 0 };
+      for (const anchor of document.querySelectorAll('a[data-record-link="true"][href]')) {
+        const href = anchor.href || "";
+        if (href.includes("/swficc/profiles/detail/")) counts.entity += 1;
+        if (href.includes("/swficc/transactions/detail/")) counts.transaction += 1;
+        if (href.includes("/swficc/mandates/detail/")) counts.compass += 1;
+      }
+      return counts;
+    }).catch(() => ({ entity: 0, transaction: 0, compass: 0 }));
+    const linksReady = linkKinds.entity >= 4 && linkKinds.transaction >= 3 && linkKinds.compass >= 3;
+    if (/TOTAL AUM ENGAGED/i.test(body) && /AI\s+Insights/i.test(body) && linksReady && !/\bLoading\b/.test(body)) return body;
     await page.waitForTimeout(750);
   }
   return body;
@@ -175,12 +186,13 @@ async function dashboardCheck(browser) {
     const body = await waitForDashboard(page);
     result.first_usable_ms = Date.now() - start;
     if (!response || response.status() >= 400) result.failures.push(`http_${response?.status() || "missing"}`);
-    for (const text of ["SWFI", "KPI CARDS", "INSIGHTS", "Top Active Allocators (Last 90 Days)", "Data source: SWFI records"]) {
+    for (const text of ["SWFI", "TOTAL AUM ENGAGED", "AI Insights", "Pipeline Overview", "Data source: SWFI records"]) {
       if (!body.includes(text)) result.failures.push(`missing_text:${text}`);
     }
     const hits = forbiddenHits(body);
     if (hits.length) result.failures.push(`forbidden_text:${hits.join("|")}`);
     if (/\bLoading\b/.test(body)) result.failures.push("dashboard_still_loading");
+    await page.waitForSelector('a[data-record-link="true"]', { timeout: 30_000 }).catch(() => {});
     const links = await collectLinks(page);
     const recordLinks = links.filter((link) => link.record === "true" || swfiRecordKind(link.href));
     result.link_counts = recordLinks.reduce((acc, link) => {
@@ -270,13 +282,14 @@ async function listPageCheck(browser) {
   return result;
 }
 
-async function phase1SwfiRecordHandoffCheck(browser) {
+async function firstPartyRecordMirrorCheck(browser) {
   const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });
   const page = await context.newPage({ viewport: { width: 1440, height: 1100 } });
-  const result = { id: "phase1_swfi_record_links_handoff_to_swfi_auth", ok: true, failures: [], samples: [] };
+  const result = { id: "first_party_record_links_resolve_to_terminal_records", ok: true, failures: [], samples: [] };
   try {
     await page.goto(appUrl("/"), { waitUntil: "domcontentloaded", timeout: 90_000 });
     await waitForDashboard(page);
+    await page.waitForSelector('a[data-record-link="true"]', { timeout: 30_000 }).catch(() => {});
     const links = await collectLinks(page);
     const samples = ["entity", "transaction", "compass"].map((kind) => links.find((link) => swfiRecordKind(link.href) === kind)).filter(Boolean);
     for (const link of samples) {
@@ -287,12 +300,9 @@ async function phase1SwfiRecordHandoffCheck(browser) {
       const final = new URL(finalUrl);
       const row = { kind: swfiRecordKind(link.href), label: link.text, href: link.href, final_url: finalUrl, status: response.status(), ok: true, failures: [] };
       if (response.status() >= 400) row.failures.push(`http_${response.status()}`);
-      if (!final.hostname.endsWith("swfi.com")) row.failures.push(`not_swfi_destination:${finalUrl}`);
-      if (!(/\/v1\/signin\/?$/i.test(final.pathname) || final.pathname === parsed.pathname)) row.failures.push(`unexpected_swfi_destination:${finalUrl}`);
-      if (/\/v1\/signin\/?$/i.test(final.pathname)) {
-        const redirect = final.searchParams.get("redirect") || "";
-        if (!redirect.includes(parsed.pathname)) row.failures.push(`signin_redirect_not_record:${redirect || "missing"}`);
-      }
+      if (final.hostname !== originUrl.hostname) row.failures.push(`escaped_destination:${finalUrl}`);
+      if (final.pathname !== parsed.pathname) row.failures.push(`unexpected_terminal_destination:${finalUrl}`);
+      if (/\/v1\/signin\/?$/i.test(final.pathname)) row.failures.push(`unexpected_signin_destination:${finalUrl}`);
       if (body.trim().length < 200) row.failures.push("blank_or_tiny_swfi_response");
       const hits = forbiddenHits(body);
       if (hits.length) row.failures.push(`forbidden_text:${hits.join("|")}`);
@@ -400,7 +410,7 @@ async function run() {
     checks.push(await dashboardCheck(browser));
     checks.push(await apiCheck());
     checks.push(await listPageCheck(browser));
-    checks.push(await phase1SwfiRecordHandoffCheck(browser));
+    checks.push(await firstPartyRecordMirrorCheck(browser));
     checks.push(await staleSwficcV1PassthroughCheck(browser));
     checks.push(await credentialedSwfiReturnCheck(browser));
   } finally {
@@ -435,7 +445,7 @@ async function run() {
     matrixLine("Dashboard public, SWFI-like, no internal leakage", checks[0]),
     matrixLine("Data packets fact-backed and fresh", checks[1]),
     matrixLine("List pages count, filter, paginate, canonical-link", checks[2]),
-    matrixLine("Dashboard record links hand off to SWFI auth/profile pages", checks[3]),
+    matrixLine("Dashboard record links resolve to first-party mirrored record pages", checks[3]),
     matrixLine("Credentialed SWFI return-to-record", checks[5]),
     "",
   ].join("\n");

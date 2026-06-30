@@ -13,11 +13,13 @@ const origin = normalizeOrigin(process.env.SWFIPN_ORIGIN || "http://127.0.0.1:83
 const originUrl = new URL(origin);
 const basePath = originUrl.pathname.replace(/\/$/, "");
 const backendOrigin = (process.env.SWFIPN_BACKEND_ORIGIN || originUrl.origin).replace(/\/$/, "");
+const serviceToken = String(process.env.SWFIPN_BACKEND_TOKEN || process.env.SWFI2_API_TOKEN || "").trim();
 
 const MAX_LINKS = Number(process.env.SWFIPN_ROUTE_PARITY_MAX_LINKS || 500);
 const MOBILE_SAMPLE = Number(process.env.SWFIPN_ROUTE_PARITY_MOBILE_SAMPLE || 0);
 const PAGE_TIMEOUT_MS = 30_000;
-const OVERALL_TIMEOUT_MS = 20 * 60 * 1000;
+const DETAIL_READY_TIMEOUT_MS = Number(process.env.SWFIPN_ROUTE_PARITY_DETAIL_READY_TIMEOUT_MS || 5_000);
+const OVERALL_TIMEOUT_MS = Number(process.env.SWFIPN_ROUTE_PARITY_OVERALL_TIMEOUT_MS || 20 * 60 * 1000);
 const VIEWPORT_DESKTOP = { width: 1440, height: 960 };
 const VIEWPORT_MOBILE = { width: 375, height: 812 };
 const BROWSER_RESTART_EVERY = 40;
@@ -114,7 +116,11 @@ async function fetchJson(url, timeoutMs = 45_000) {
   try {
     const response = await fetch(url, {
       signal: controller.signal,
-      headers: { Accept: "application/json", "User-Agent": "SWFIPN-RouteParityGate/1.0" },
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "SWFIPN-RouteParityGate/1.0",
+        ...(serviceToken ? { Authorization: `Bearer ${serviceToken}`, "X-SWFIPN-Internal": "1" } : {}),
+      },
     });
     const text = await response.text();
     let json;
@@ -294,7 +300,7 @@ async function verifyDetailPage(page, link, viewport, screenshotCounter) {
       const h1Text = (h1.textContent || "").trim().toLowerCase();
       if (generics.includes(h1Text)) return false;
       return true;
-    }, genericSet, { timeout: 20_000 }).catch(() => null);
+    }, genericSet, { timeout: DETAIL_READY_TIMEOUT_MS }).catch(() => null);
 
     const bodyText = await page.locator("body").innerText({ timeout: 5_000 }).catch(() => "");
     const h1Text = await page.locator("h1").first().innerText({ timeout: 5_000 }).catch(() => "");
@@ -564,6 +570,12 @@ async function run() {
 
   // ── PHASE 4: Output ──
   const failedFindings = allFindings.filter((f) => f.status !== "PASS");
+  const expectedDesktopLinks = Math.min(crawlQueue.length, MAX_LINKS);
+  const expectedTotalLinks = expectedDesktopLinks + Math.min(crawlQueue.length, MOBILE_SAMPLE);
+  const incompleteFailures = [];
+  if (allFindings.length < expectedTotalLinks) {
+    incompleteFailures.push(`incomplete_visible_link_coverage:${allFindings.length}/${expectedTotalLinks}`);
+  }
   const passCount = allFindings.filter((f) => f.status === "PASS").length;
   const failCount = allFindings.filter((f) => f.status === "FAIL").length;
   const blockedCount = allFindings.filter((f) => f.status === "BLOCKED").length;
@@ -575,11 +587,13 @@ async function run() {
     site: origin,
     origin,
     backend_origin: backendOrigin,
-    status: failedFindings.length ? "fail" : "pass",
+    status: failedFindings.length || incompleteFailures.length ? "fail" : "pass",
     summary: {
       seed_routes_crawled: seedResults.length,
       detail_links_discovered: crawlQueue.length,
       links_tested: allFindings.length,
+      expected_links_to_test: expectedTotalLinks,
+      incomplete_failures: incompleteFailures,
       viewports_tested: ["1440x960", "375x812"],
       passed: passCount,
       failed: failCount,
@@ -587,7 +601,9 @@ async function run() {
       root_causes: Object.keys(rootCauses),
       overall_elapsed_ms: Date.now() - overallStart,
     },
-    deduplicated_root_causes: rootCauses,
+    deduplicated_root_causes: incompleteFailures.length
+      ? { ...rootCauses, [incompleteFailures[0]]: { count: 1, samples: [] } }
+      : rootCauses,
     seed_route_results: seedResults,
     findings: allFindings,
   };

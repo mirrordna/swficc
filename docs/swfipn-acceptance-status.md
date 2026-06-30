@@ -1,36 +1,39 @@
 # SWFI /swficc Acceptance Status
 
-Status: Ready for acceptance/demo review
+Status: In BRD hardening; not full-BRD complete
 
-Scope: current `/swficc` dashboard/terminal validation scope.
+Scope: current `/swficc` dashboard/terminal validation scope plus BRD v1.3 infra/productization receipts.
 
 This does not claim that full BRD Phase 2 productization is complete.
 
 Public URL: `https://swfipn.activemirror.ai/swficc/`
 
-Deployed release: `/opt/swfipn-acceptance/releases/20260627T013949Z`
+Deployed release: `/opt/swfipn-acceptance/releases/20260630T095954Z`
 
-Public asset version: `20260627T013949Z`
+Public asset version: `20260630T0954Z-redis-cache`
 
 ## Verdict
 
-Acceptance lock: `go_with_caveat`
+BRD truth matrix: `NOT_100_PERCENT_BRD_COMPLETE`
 
-Share gate: `pass`, `sendable: true`
+Infra blocker rollup: `open_external_inputs_required`, `3 open / 2 closed`
 
-BRD Phase 2 matrix: `pass_with_deferred_scope`, verdict `go_for_current_scope`
+Search SLA: `pass`, repeated public gate `5/5`
+
+Redis cache: `pass`, runtime Redis PONG proven on DO
+
+CDN/static assets: `pass`; remote CI run proof still missing
 
 Runtime staleness: `pass`, failures `0`
-
-API vhost readiness: `pass`, HTTP `308` -> `https://api.swfi.com/docs`
-
-API key lifecycle on acceptance host: `pass`
 
 Production API DNS cutover: `blocked`
 
 ## Blockers
 
-- None found within current acceptance scope.
+- Full BRD remains blocked on three receipt-backed external/productization items:
+  - Mongo indexes: apply reached Atlas, but the configured MongoDB user is not authorized for createIndexes on swfi.
+  - SendGrid: code/gate present, but target runtime lacks SWFI-specific API key/from-address.
+  - CDN/CI: Cloudflare/static assets and zero high/critical npm audit are proven, but current successful remote GitHub Actions run receipt is missing.
 
 ## Deferred / Blocked Outside Current Sendable Scope
 
@@ -44,18 +47,13 @@ Production API DNS cutover: `blocked`
 - Phase 2 runtime integrations remain blocked outside the current `/swficc` sendable scope.
   - sendgrid_target_runtime_missing_api_key
   - sendgrid_target_runtime_missing_from_email
-  - swfi_session_bridge_target_runtime_missing_secret
-  - swfi_session_bridge_login_not_enabled_on_target_runtime
-  - swfi_session_bridge_target_runtime_missing_issuer
-  - swfi_session_bridge_target_runtime_missing_audience
   - only_non_swfi_sendgrid_candidate_found_do_not_claim_sendgrid
-  - no_local_swfi_session_bridge_secret_available
 
 ## Latest Evidence
 
 | Gate | Result | Receipt |
 | --- | --- | --- |
-| Share/sendability gate | `pass` | `output/swfipn-share-gate-latest.json` |
+| Share/sendability gate | `fail` | `output/swfipn-share-gate-latest.json` |
 | Acceptance criteria gate | `pass` | `output/swfipn-acceptance-criteria-gate-latest.json` |
 | KP acceptance gate | `pass` | `output/swfipn-kp-acceptance-gate-latest.json` |
 | Route and leakage gates | `pass` | `output/swfipn-link-mapping-leakage-gate-latest.json, output/swfipn-visible-link-escape-gate-latest.json` |
@@ -71,6 +69,10 @@ Production API DNS cutover: `blocked`
 | Alerts page UI gate | `pass` | `output/swfipn-alerts-ui-brd-gate-latest.json` |
 | Alert delivery receipts gate | `pass` | `output/swfipn-alert-delivery-brd-gate-latest.json` |
 | SendGrid email delivery gate | `blocked` | `output/swfipn-sendgrid-email-brd-gate-latest.json` |
+| Search SLA repeated gate | `pass` | `output/swfipn-search-gate-repeated-latest.json` |
+| Redis cache runtime gate | `pass` | `output/swfipn-redis-cache-gate-latest.json` |
+| CDN static asset gate | `pass` | `output/swfipn-cdn-static-assets-gate-latest.json` |
+| BRD infra blocker rollup | `open_external_inputs_required` | `output/swfipn-brd-open-infra-blockers-latest.json` |
 | SWFI session bridge gate | `blocked` | `output/swfipn-swfi-session-bridge-brd-gate-latest.json` |
 | Phase 2 runtime preflight | `blocked` | `output/swfipn-phase2-runtime-preflight-latest.json` |
 | Phase 2 closure packet | `blocked_waiting_on_external_runtime_inputs` | `output/swfipn-phase2-closure-packet-latest.json` |
@@ -81,10 +83,10 @@ Production API DNS cutover: `blocked`
 
 - receipts: `9`
 - screenshots: `3`
-- failures: `0`
-- source_links: `26`
-- detail_links: `9`
-- mirror_record_links: `35`
+- failures: `6`
+- source_links: `46`
+- detail_links: `21`
+- mirror_record_links: `67`
 - external_swfi_links: `0`
 
 ## Data Quality Caveats
@@ -102,7 +104,7 @@ Production API DNS cutover: `blocked`
 
 ## Required wording
 
-Use: “The current `/swficc` dashboard/terminal scope is deployed, source-backed, and sendable for validation with receipts.”
+Use: “The current `/swficc` deployment is live on DO and has receipt-backed search, Redis, and CDN/static asset checks, but full BRD acceptance remains blocked on Mongo index apply, SendGrid runtime config, and remote CI proof.”
 
 Do not use: “Full BRD Phase 2 is complete.”
 
@@ -110,4 +112,4 @@ Do not use: “All SWFI.com pages are fully migrated.”
 
 ## Final acceptance sentence
 
-No blockers are open inside the current `/swficc` dashboard/terminal validation scope. Full BRD Phase 2 remains active because the explicit deferred productization bucket and production `api.swfi.com` DNS cutover are not complete.
+Do not call this full-BRD complete. The current deployment is live and improved, but full BRD acceptance remains open until the three blocker receipts pass.

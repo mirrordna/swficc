@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { Packet, Row } from "@/lib/sourcePackets";
 import { fetchPacket, isFact, money, packetData, packetReason, rows, SOURCE_GAP, text } from "@/lib/sourcePackets";
 import { personDetailHref, profileDetailHref, sourceRecordId, transactionDetailHref } from "@/lib/detailRoutes";
+import { verifiedPeopleLinks, type VerifiedPeopleLink } from "@/lib/peopleEnrichment";
 import { appHref, sourceDetailHref } from "@/lib/selfContainedLinks";
 import { HOME_PACKET_SNAPSHOT } from "@/lib/homeSourceSnapshot";
 import SwfiBrandHeader from "@/components/SwfiBrandHeader";
@@ -499,7 +500,14 @@ function MandateRecord({ record, sourceUrl }: { record: Row; sourceUrl: string }
 function PersonRecord({ record, sourceUrl }: { record: Row; sourceUrl: string }) {
   const email = personEmail(record);
   const linkedIn = personLinkedInHref(record);
+  const verifiedLinks = verifiedPeopleLinks(record, sourceUrl);
   const selfHref = personDetailHref(record, sourceUrl || sourceHref(record));
+  const personSections: Array<[string, string]> = [
+    ["Overview", "#overview"],
+    ["Contact", "#contact"],
+    ...(verifiedLinks.length ? [["Verified Links", "#verified-links"] as [string, string]] : []),
+    ["Source", "#source-record"],
+  ];
   const fields = [
     ["Name", text(record.name || record.title)],
     ["Title", personTitle(record)],
@@ -516,11 +524,7 @@ function PersonRecord({ record, sourceUrl }: { record: Row; sourceUrl: string })
   return (
     <section className="grid gap-4 rounded border border-[#DCE3EA] bg-white p-4">
       <nav className="flex flex-wrap gap-2 text-sm" aria-label="Person profile sections">
-        {[
-          ["Overview", "#overview"],
-          ["Contact", "#contact"],
-          ["Source", "#source-record"],
-        ].map(([label, href]) => (
+        {personSections.map(([label, href]) => (
           <a key={label} href={href} className="rounded border border-[#C7D2DD] bg-white px-2 py-1 text-[#16538C] underline">{label}</a>
         ))}
       </nav>
@@ -555,7 +559,29 @@ function PersonRecord({ record, sourceUrl }: { record: Row; sourceUrl: string })
         <DetailRow label="Email" value={email} />
         <DetailRow label="LinkedIn" value={linkedIn} returnRoute="/people/detail/" />
       </section>
+      {verifiedLinks.length ? <VerifiedPeopleLinks links={verifiedLinks} /> : null}
       <SourceRecordSection fields={sourceFields} sourceUrl={sourceUrl} returnRoute="/people/detail/" />
+    </section>
+  );
+}
+
+function VerifiedPeopleLinks({ links }: { links: VerifiedPeopleLink[] }) {
+  return (
+    <section id="verified-links" className="grid gap-2 rounded border border-[#DCE3EA] p-3">
+      <div className="text-[11px] font-bold uppercase tracking-[0.07em] text-[#7A8A9B]">Verified Public Links</div>
+      <div className="grid gap-2">
+        {links.map((link) => (
+          <div key={`${link.label}-${link.href}`} className="grid gap-1 border-b border-[#F2F5F8] pb-2 text-sm sm:grid-cols-[180px_minmax(0,1fr)]">
+            <div className="font-semibold text-[#11314F]">{link.label}</div>
+            <div className="break-words text-[#41566B]">
+              <a href={sourceMirrorHref(link.href, "/people/detail/")} data-source-state="on-file" className="text-[#16538C] underline">
+                {link.label === "SWFI source record" ? "SWFI record" : link.label}
+              </a>
+              <div className="mt-1 text-[12px] text-[#7A8A9B]">Verified by {link.source}</div>
+            </div>
+          </div>
+        ))}
+      </div>
     </section>
   );
 }

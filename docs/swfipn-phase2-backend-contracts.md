@@ -26,7 +26,7 @@ Backend origin used by the public surface: `https://swfipn.activemirror.ai`
 | Transactions / deals | `swfi.transactions` | Transaction, deal, sector-flow, and active-allocator source rows. |
 | Compass / RFPs / mandates | `swfi.compass` | Live RFP/opportunity rows and Compass detail records. |
 | News / intelligence | `swfi.news`, `swfi.cms_articles` | Intelligence feed and research detail source rows. |
-| Reports | Pending dedicated endpoint | Not accepted as Phase 2 backend-complete until source-backed report endpoint exists. |
+| Reports | `swfi.reports` | Source-backed report list, detail records, and report asset URLs. |
 
 ## Module Contracts
 
@@ -41,6 +41,7 @@ Backend origin used by the public surface: `https://swfipn.activemirror.ai`
 | Institution List | `/api/source-data/search/v1?collection=entities&limit=25&page=1` | `swfi.entities`, `swfi.entitiesAUM` | name/AUM/country/region/type where supported | `limit`, `page` | Packet `generated_at`, entity source URL. |
 | People List | `/api/source-data/search/v1?collection=people&limit=25&page=1` | `swfi.people` | name/institution/country/region where supported | `limit`, `page` | Packet `generated_at`, people source URL. |
 | News / Intelligence | `/api/source-intelligence/news/v1?limit=25&page=1` | `swfi.news`, `swfi.cms_articles` | `published_at desc`, `updated_at desc`, or source order | `limit`, `page` | Packet `generated_at`, legacy/source identifier. |
+| Reports | `/api/reports/v1?limit=25&page=1` | `swfi.reports` | `published_at desc`, `updated_at desc`, title/type where supported | `limit`, `page` | Packet `generated_at`, report key, and `assets.swfi.com/reports/*.pdf` asset URL. |
 
 ## Active Allocators Formula
 
@@ -78,6 +79,7 @@ KP comparison:
 | Transaction row | `/api/transactions/{id}/v1` | Returns factual transaction packet for the same SWFI transaction source URL. |
 | Compass/RFP row | `/api/compass/{id}/v1` | Returns factual Compass/RFP packet for the same SWFI Compass source URL. |
 | Intelligence row | `/api/source-intelligence/news/v1?legacy={legacy_post}&limit=1` | Returns factual article packet for the same legacy source identifier. |
+| Report row | `/api/reports/{report_key}/v1` | Returns factual report packet for the same report key and report asset URL. |
 
 ## Fail-Closed Rules
 

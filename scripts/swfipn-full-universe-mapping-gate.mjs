@@ -10,8 +10,9 @@ const latestReceiptPath = path.join(repoRoot, "output", "swfipn-full-universe-ma
 const origin = normalizeOrigin(process.env.SWFIPN_ORIGIN || "https://swfipn.activemirror.ai/swficc/");
 const originUrl = new URL(origin);
 const backendOrigin = (process.env.SWFIPN_BACKEND_ORIGIN || originUrl.origin).replace(/\/$/, "");
+const serviceToken = text(process.env.SWFIPN_BACKEND_TOKEN || process.env.SWFI2_API_TOKEN);
 const runId = process.env.SWFIPN_UNIVERSE_RUN_ID || timestampId();
-const pageLimit = clampNumber(process.env.SWFIPN_UNIVERSE_LIMIT, 1, 1000, 1000);
+const pageLimit = clampNumber(process.env.SWFIPN_UNIVERSE_LIMIT, 1, 5000, 1000);
 const maxPages = Number(process.env.SWFIPN_UNIVERSE_MAX_PAGES || 0);
 const maxRecords = Number(process.env.SWFIPN_UNIVERSE_MAX_RECORDS || 0);
 const shardCount = Math.max(1, Number(process.env.SWFIPN_UNIVERSE_SHARD_COUNT || 1));
@@ -19,6 +20,8 @@ const shardIndex = Math.max(0, Number(process.env.SWFIPN_UNIVERSE_SHARD_INDEX ||
 const probeLimit = Math.max(0, Number(process.env.SWFIPN_UNIVERSE_PROBE_LIMIT || 0));
 const probeAll = /^(1|true|yes)$/i.test(String(process.env.SWFIPN_UNIVERSE_PROBE_ALL || ""));
 const collections = envList("SWFIPN_UNIVERSE_COLLECTIONS", ["entities", "people", "transactions", "compass", "news", "reports"]);
+const scanTimeoutMs = clampNumber(process.env.SWFIPN_UNIVERSE_SCAN_TIMEOUT_MS, 5_000, 300_000, 120_000);
+const scanRetries = clampNumber(process.env.SWFIPN_UNIVERSE_SCAN_RETRIES, 0, 10, 3);
 const failOnUiTotalMismatch = !/^(0|false|no)$/i.test(String(process.env.SWFIPN_UNIVERSE_FAIL_ON_UI_TOTAL_MISMATCH || "1"));
 const allowPartial = /^(1|true|yes)$/i.test(String(process.env.SWFIPN_UNIVERSE_ALLOW_PARTIAL || ""));
 const allowPartialExit = /^(1|true|yes)$/i.test(String(process.env.SWFIPN_UNIVERSE_ALLOW_PARTIAL_EXIT || ""));
@@ -90,7 +93,7 @@ const families = [
     collection: "news",
     section: "news",
     uiRoute: "/research/",
-    sourcePattern: /^(?:https:\/\/(?:www\.|cms\.)?swfi\.com\/\?p=(\d+)|legacy_post:(\d+))$/i,
+    sourcePattern: /^(?:https:\/\/(?:www\.|cms\.)?swfi\.com\/\?p=(\d+)|https:\/\/www\.swfi\.com\/v1\/news\/(\d+)\/?|legacy_post:(\d+))$/i,
     expectedRedirect: (id) => `/swficc/research/detail/?legacy=${encodeURIComponent(id)}`,
     clickHref: (id) => appUrl(`/research/detail/?legacy=${encodeURIComponent(id)}`),
     label: (row) => text(row.title || row.name || ""),
@@ -126,6 +129,12 @@ function clampNumber(value, min, max, fallback) {
   const number = Number(value || fallback);
   if (!Number.isFinite(number)) return fallback;
   return Math.max(min, Math.min(max, number));
+}
+
+function collectionPageLimit(family) {
+  const envKey = `SWFIPN_UNIVERSE_LIMIT_${family.id.toUpperCase()}`;
+  const fallback = family.id === "transactions" ? Math.min(pageLimit, 500) : pageLimit;
+  return clampNumber(process.env[envKey], 1, 5000, fallback);
 }
 
 function timestampId() {
@@ -183,6 +192,7 @@ function sourceSection(value) {
     const parsed = new URL(text(value));
     if (parsed.hostname.toLowerCase() === "assets.swfi.com" && /^\/reports\/[^?#]+\.pdf$/i.test(parsed.pathname)) return "reports";
     if (!isSwfiHost(parsed.hostname)) return "";
+    if (/^\/v1\/news\/\d+\/?$/i.test(parsed.pathname)) return "news";
     const match = parsed.pathname.match(/^\/v1\/(entities|people|transactions|compass)\/[a-f0-9]{24}\/?$/i);
     if (match) return match[1].toLowerCase();
     if (parsed.searchParams.get("p")) return "news";
@@ -213,7 +223,11 @@ function scanUrl(collection, limit, after) {
   return `${backendOrigin}/api/source-data/scan/v1?${params.toString()}`;
 }
 
-async function fetchJson(url, timeoutMs = 45_000) {
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchJsonOnce(url, timeoutMs) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -221,6 +235,7 @@ async function fetchJson(url, timeoutMs = 45_000) {
       signal: controller.signal,
       headers: {
         Accept: "application/json",
+        ...(serviceToken ? { Authorization: `Bearer ${serviceToken}`, "X-SWFIPN-Internal": "1" } : {}),
         "User-Agent": "SWFIPN-FullUniverseMappingGate/1.0",
       },
     });
@@ -235,6 +250,22 @@ async function fetchJson(url, timeoutMs = 45_000) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function fetchJson(url, timeoutMs = scanTimeoutMs, retries = scanRetries) {
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await fetchJsonOnce(url, timeoutMs);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= retries) break;
+      const delayMs = Math.min(30_000, 1_000 * 2 ** attempt);
+      console.error(`[full-universe] fetch retry ${attempt + 1}/${retries} after ${error?.name || "error"}: ${url}`);
+      await sleep(delayMs);
+    }
+  }
+  throw lastError;
 }
 
 function rowsFromPacket(packet) {
@@ -323,9 +354,51 @@ function validateRecord(family, row, seen) {
     expected_redirect: expectedRedirect,
     click_href: clickHref,
     internal_route: family.section === "news" ? clickHref : "",
+    source_fields: sourceFieldsForParity(row),
     warnings,
     failures,
   };
+}
+
+function sourceFieldsForParity(row) {
+  const allowed = [
+    "id",
+    "source_record_id",
+    "entity_id",
+    "person_id",
+    "transaction_id",
+    "compass_id",
+    "source_url",
+    "swfi_url",
+    "name",
+    "title",
+    "type",
+    "country",
+    "region",
+    "assets",
+    "aum",
+    "industry",
+    "investment_type",
+    "strategy",
+    "asset_class_or_strategy",
+    "amount",
+    "capital",
+    "value",
+    "closed_at",
+    "activity_date",
+    "relevant_date",
+    "buyer_entity",
+    "institution",
+    "seller_entity",
+    "due_at",
+    "deadline",
+    "posted_at",
+  ];
+  return Object.fromEntries(
+    allowed
+      .filter((key) => row[key] !== undefined)
+      .map((key) => [key, row[key]]),
+  );
 }
 
 function parseSwfiSignin(href) {
@@ -416,6 +489,7 @@ async function enumerateFamily(family, globalSeen) {
   let terminalReason = "";
   let firstGeneratedAt = "";
   let lastGeneratedAt = "";
+  const familyPageLimit = collectionPageLimit(family);
 
   while (true) {
     if (maxPages && pages >= maxPages) {
@@ -423,7 +497,7 @@ async function enumerateFamily(family, globalSeen) {
       if (!allowPartial) failures.push(`page_cap_hit:${maxPages}`);
       break;
     }
-    const packet = await fetchJson(scanUrl(family.collection, pageLimit, after));
+    const packet = await fetchJson(scanUrl(family.collection, familyPageLimit, after));
     pages += 1;
     if (packet.status >= 400 || packet.body?.status !== "ok") {
       failures.push(`scan_packet_failed:${packet.status}:${packet.body?.status || "missing"}`);
@@ -498,6 +572,9 @@ async function enumerateFamily(family, globalSeen) {
       terminalReason = "missing_next_after";
       break;
     }
+    if (pages === 1 || pages % 10 === 0) {
+      console.error(`[full-universe] ${family.id}: page=${pages} rows=${rowsWritten}/${sourceTotal || "?"} after=${data.next_after}`);
+    }
     if (String(data.next_after) === after) {
       cursorLoop = true;
       failures.push(`cursor_not_advancing:${after}`);
@@ -508,7 +585,17 @@ async function enumerateFamily(family, globalSeen) {
   }
   await new Promise((resolve) => stream.end(resolve));
 
-  const ui = await visibleTotal(family.uiRoute);
+  const ui = failOnUiTotalMismatch
+    ? await visibleTotal(family.uiRoute)
+    : {
+        route: family.uiRoute,
+        ok: true,
+        skipped: true,
+        total: 0,
+        excerpt: "",
+        failures: [],
+        reason: "SWFIPN_UNIVERSE_FAIL_ON_UI_TOTAL_MISMATCH=0",
+      };
   const warnings = [];
   if (!sourceTotal) failures.push("missing_source_total");
   if (firstSourceTotal && latestSourceTotal && firstSourceTotal !== latestSourceTotal) {
@@ -528,7 +615,7 @@ async function enumerateFamily(family, globalSeen) {
     id: family.id,
     collection: family.collection,
     section: family.section,
-    endpoint: scanUrl(family.collection, pageLimit, ""),
+    endpoint: scanUrl(family.collection, familyPageLimit, ""),
     output: ndjsonPath,
     status: failures.length ? "fail" : "pass",
     generated_at_first: firstGeneratedAt,
@@ -537,6 +624,7 @@ async function enumerateFamily(family, globalSeen) {
     source_total_latest: latestSourceTotal,
     pages,
     page_limit: pageLimit,
+    family_page_limit: familyPageLimit,
     terminal_reason: terminalReason,
     source_total: sourceTotal,
     ui_total: ui,

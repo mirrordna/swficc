@@ -36,6 +36,7 @@ const ENDPOINTS = {
 
 const LOADING = "Loading";
 const DASHBOARD_EMPTY = "No SWFI rows available";
+const SEARCH_PREFETCH_CACHE_PREFIX = "swfipn.search.prefetch.v1:";
 const DASHBOARD_LOAD_ORDER: PacketKey[] = ["metrics", "sectorFlows", "allocators90", "rfps", "allocators30", "transactions30", "entities", "people", "top20", "news"];
 const insightNav = [
   ["Top Investors", "/allocators"],
@@ -43,6 +44,10 @@ const insightNav = [
   ["Market Activity", "/transactions"],
   ["News", "/intelligence"],
 ] as const;
+
+function searchPrefetchCacheKey(query: string): string {
+  return `${SEARCH_PREFETCH_CACHE_PREFIX}${query.trim().toLowerCase()}`;
+}
 
 type Packets = Record<keyof typeof ENDPOINTS, Packet | undefined>;
 type PacketKey = keyof typeof ENDPOINTS;
@@ -130,6 +135,7 @@ export default function DashboardPage() {
   const transactionRows = factRows(packets.transactions30).slice(0, 25);
   const rfpRows = factRows(packets.rfps).slice(0, 25);
   const newsRows = factRows(packets.news).slice(0, 25);
+  const allocatorRows = factRows(packets.allocators30).slice(0, 25);
   const sectorRows = sectorFacetRows(packets.sectorFlows).slice(0, 10);
   const topAumRows = factRows(packets.top20).slice(0, 25);
   const dashboardReady = useMemo(() => {
@@ -139,12 +145,12 @@ export default function DashboardPage() {
   const dataAsOfLabel = useMemo(() => dataAsOfLabelFor(packets.metrics), [packets.metrics]);
   const quickLinks = useMemo(() => brdQuickLinks(entityRows, transactionRows, rfpRows), [entityRows, transactionRows, rfpRows]);
   const unifiedRows = useMemo(() => unifiedIntelligenceRows({
-    topInvestors: entityRows,
+    topInvestors: allocatorRows,
     marketRows: transactionRows,
     fundraisingRows: rfpRows,
     newsRows,
     sectorRows,
-  }), [entityRows, transactionRows, rfpRows, newsRows, sectorRows]);
+  }), [allocatorRows, transactionRows, rfpRows, newsRows, sectorRows]);
   const searchGroups = useMemo(() => brdSearchGroups({
     query: searchQuery,
     entityRows,
@@ -156,8 +162,37 @@ export default function DashboardPage() {
   const searchItems = useMemo(() => searchGroups.flatMap((group) => group.items), [searchGroups]);
 
   useEffect(() => {
-    setActiveSearchIndex(0);
+    const timer = window.setTimeout(() => setActiveSearchIndex(0), 0);
+    return () => window.clearTimeout(timer);
   }, [searchQuery, searchOpen]);
+
+  useEffect(() => {
+    if (!searchOpen) return;
+    const clean = searchQuery.trim();
+    if (clean.length < 2) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void fetchPacket(`/api/v1/public/search?q=${encodeURIComponent(clean)}&limit=25`, 10_000, {
+        signal: controller.signal,
+        attempts: 1,
+      }).then((packet) => {
+        if (controller.signal.aborted || !isFact(packet)) return;
+        try {
+          window.sessionStorage.setItem(searchPrefetchCacheKey(clean), JSON.stringify({
+            query: clean,
+            stored_at: Date.now(),
+            packet,
+          }));
+        } catch {
+          // Session storage is an optimization only; search still fetches live.
+        }
+      });
+    }, 120);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [searchOpen, searchQuery]);
 
   function togglePanel(id: string) {
     setExpandedPanel((current) => current === id ? "" : id);
@@ -179,6 +214,7 @@ export default function DashboardPage() {
         packets={packets}
         topAumRows={topAumRows}
         entityRows={entityRows}
+        allocatorRows={allocatorRows}
         transactionRows={transactionRows}
         rfpRows={rfpRows}
         newsRows={newsRows}
@@ -309,6 +345,7 @@ function VisualExecutiveOverview({
   packets,
   topAumRows,
   entityRows,
+  allocatorRows,
   transactionRows,
   rfpRows,
   newsRows,
@@ -323,6 +360,7 @@ function VisualExecutiveOverview({
   packets: Packets;
   topAumRows: Record<string, unknown>[];
   entityRows: Record<string, unknown>[];
+  allocatorRows: Record<string, unknown>[];
   transactionRows: Record<string, unknown>[];
   rfpRows: Record<string, unknown>[];
   newsRows: Record<string, unknown>[];
@@ -349,10 +387,10 @@ function VisualExecutiveOverview({
           <ExpandablePanel
             id="capital-map"
             title="Global Capital Map"
-            href="/profiles"
+            href="#capital-map"
             expanded={expandedPanel === "capital-map"}
             onToggle={onTogglePanel}
-            detail={<ExpandedEntityRows rows={topRows} controls={controls} />}
+            detail={<TotalAumInsightDetail topRows={topRows} entityRows={entityRows} transactionRows={transactionRows} rfpRows={rfpRows} sectorRows={sectorRows} />}
             className="xl:row-span-2"
           >
             <GlobalCapitalMap topRows={topRows} sectorRows={sectorRows} />
@@ -375,7 +413,7 @@ function VisualExecutiveOverview({
             onToggle={onTogglePanel}
             detail={<ExpandedUnifiedInsightRows rows={unifiedRows} controls={controls} />}
           >
-            <AiInsightsPanel topInvestors={entityRows} marketRows={transactionRows} fundraisingRows={rfpRows} newsRows={newsRows} />
+            <AiInsightsPanel topInvestors={allocatorRows} marketRows={transactionRows} fundraisingRows={rfpRows} newsRows={newsRows} />
           </ExpandablePanel>
           <ExpandablePanel
             id="pipeline"
@@ -393,9 +431,9 @@ function VisualExecutiveOverview({
             href="/allocators"
             expanded={expandedPanel === "relationships"}
             onToggle={onTogglePanel}
-            detail={<ExpandedInvestorRows rows={entityRows} controls={controls} />}
+            detail={<ExpandedInvestorRows rows={allocatorRows} controls={controls} />}
           >
-            <RelationshipPanel rows={entityRows} />
+            <RelationshipPanel rows={allocatorRows} />
           </ExpandablePanel>
           <ExpandablePanel
             id="research-hub"
@@ -450,7 +488,7 @@ function VisualExecutiveOverview({
           </ExpandablePanel>
         </div>
         <DashboardControlStrip
-          totalRows={Math.max(topRows.length, entityRows.length, transactionRows.length, rfpRows.length, newsRows.length, sectorRows.length)}
+          totalRows={Math.max(topRows.length, entityRows.length, allocatorRows.length, transactionRows.length, rfpRows.length, newsRows.length, sectorRows.length)}
           rowLimit={controls.rowLimit}
           sortColumn={controls.sortColumn}
           sortDir={controls.sortDir}
@@ -642,7 +680,7 @@ function BrdSearchModal({
     }
     if (event.key === "Enter" && activeItem) {
       event.preventDefault();
-      window.location.href = dashboardResolvedHref(activeItem.href);
+      window.location.assign(dashboardResolvedHref(activeItem.href));
     }
   }
 
@@ -776,19 +814,19 @@ function brdQuickLinks(entityRows: Record<string, unknown>[], transactionRows: R
     ...entityRows.slice(0, 4).map((row) => ({
       label: brdText(row.name),
       detail: brdText(row.type || row.entity_type, "Entity"),
-      href: profileDetailHref(row, sourceHref(row)),
+      href: dashboardProfileHref(row),
       sourceHref: sourceHref(row),
     })),
     ...transactionRows.slice(0, 1).map((row) => ({
       label: brdText(row.buyer_entity || row.institution || row.name),
       detail: "Transaction",
-      href: transactionDetailHref(row, sourceHref(row)),
+      href: dashboardTransactionHref(row),
       sourceHref: sourceHref(row),
     })),
     ...rfpRows.slice(0, 1).map((row) => ({
       label: brdText(row.institution || row.name),
       detail: "Compass",
-      href: mandateDetailHref(row, sourceHref(row)),
+      href: dashboardMandateHref(row),
       sourceHref: sourceHref(row),
     })),
   ].filter((item) => item.label !== "Not disclosed").slice(0, 6);
@@ -812,19 +850,19 @@ function brdSearchGroups({ query, entityRows, peopleRows, transactionRows, rfpRo
     group("Entities", entityRows.filter(filter).map((row) => ({
       label: brdText(row.name),
       detail: [brdText(row.type || row.entity_type, "Entity"), brdText(row.country, "")].filter(Boolean).join(" · "),
-      href: profileDetailHref(row, sourceHref(row)),
+      href: dashboardProfileHref(row),
       sourceHref: sourceHref(row),
     }))),
     group("RFPs & Opportunities", rfpRows.filter(filter).map((row) => ({
       label: brdText(row.title || row.name),
       detail: [brdText(row.institution, ""), brdText(row.strategy || row.asset_class_or_strategy, "")].filter(Boolean).join(" · "),
-      href: mandateDetailHref(row, sourceHref(row)),
+      href: dashboardMandateHref(row),
       sourceHref: sourceHref(row),
     }))),
     group("Transactions", transactionRows.filter(filter).map((row) => ({
       label: brdText(row.title || row.name),
       detail: [brdText(row.buyer_entity || row.institution, ""), cleanMoney(row.amount_display || row.capital_display || row.amount)].filter(Boolean).join(" · "),
-      href: transactionDetailHref(row, sourceHref(row)),
+      href: dashboardTransactionHref(row),
       sourceHref: sourceHref(row),
     }))),
     group("News & Articles", newsRows.filter(filter).map((row) => ({
@@ -836,7 +874,7 @@ function brdSearchGroups({ query, entityRows, peopleRows, transactionRows, rfpRo
     group("People", peopleRows.filter(filter).map((row) => ({
       label: brdText(row.name),
       detail: [brdText(row.title, ""), brdText(row.institution, "")].filter(Boolean).join(" · "),
-      href: personDetailHref(row, sourceHref(row)),
+      href: dashboardPersonHref(row),
       sourceHref: sourceHref(row),
     }))),
   ].filter((searchGroup) => searchGroup.items.length);
@@ -968,14 +1006,14 @@ function cleanDisplayValue(value: string, fallback = "Not disclosed") {
 function buyerCell(row: Record<string, unknown>): Cell {
   const label = brdText(row.buyer_entity || row.institution, "Not disclosed");
   const source = brdText(row.buyer_entity_url || row.institution_url, "");
-  return source ? { label, href: profileDetailHref({ name: label, source_url: source }, source), sourceHref: source } : label;
+  return source ? { label, href: dashboardProfileHref({ name: label, source_url: source }), sourceHref: source } : label;
 }
 
 function personCell(row: Record<string, unknown>): Cell {
   const source = sourceHref(row);
   return {
     label: brdText(row.name),
-    href: personDetailHref(row, source),
+    href: dashboardPersonHref(row),
     sourceHref: source,
     citationText: "SWFI people source on file",
   };
@@ -1035,7 +1073,7 @@ function ConceptSidebar({ topRows }: { topRows: Record<string, unknown>[] }) {
         <div className="grid gap-2">
           {topRows.slice(0, 5).map((row) => (
             <div key={brdText(row.name)} className="border-t border-white/10 pt-2 first:border-t-0 first:pt-0">
-              <DataLink href={profileDetailHref(row, sourceHref(row))} sourceHref={sourceHref(row)} className="block truncate text-[11px] font-bold text-white underline">
+              <DataLink href={dashboardProfileHref(row)} sourceHref={sourceHref(row)} className="block truncate text-[11px] font-bold text-white underline">
               {brdText(row.name)}
               </DataLink>
               <div className="mt-0.5 text-[10px] text-white/55">{entityTypeCell(row)}</div>
@@ -1250,7 +1288,7 @@ function GlobalCapitalMap({ topRows, sectorRows }: { topRows: Record<string, unk
       </div>
       <div className="grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
         {topCapital.map((row) => (
-          <DataLink key={brdText(row.name)} href={profileDetailHref(row, sourceHref(row))} sourceHref={sourceHref(row)} className="rounded-[5px] border border-[#E1E8EF] px-2 py-2 text-[#405062] no-underline">
+          <DataLink key={brdText(row.name)} href={dashboardProfileHref(row)} sourceHref={sourceHref(row)} className="rounded-[5px] border border-[#E1E8EF] px-2 py-2 text-[#405062] no-underline">
             <span className="block truncate font-bold text-[#0A3A7A]">{brdText(row.name)}</span>
             <span className="mt-1 block text-[#7B8996]">{brdText(row.country)} · {aumDisplay(row)}</span>
           </DataLink>
@@ -1375,7 +1413,7 @@ function RelationshipPanel({ rows: sourceRows }: { rows: Record<string, unknown>
   return (
     <div className="grid gap-2">
       {visible.map((row, index) => (
-        <DataLink key={`${brdText(row.name)}-${index}`} href={profileDetailHref(row, sourceHref(row))} sourceHref={sourceHref(row)} className="grid grid-cols-[26px_minmax(0,1fr)_76px] items-center gap-2 rounded-[5px] px-2 py-1.5 text-[#405062] no-underline hover:bg-[#F5F8FB]">
+        <DataLink key={`${brdText(row.name)}-${index}`} href={dashboardProfileHref(row)} sourceHref={sourceHref(row)} className="grid grid-cols-[26px_minmax(0,1fr)_76px] items-center gap-2 rounded-[5px] px-2 py-1.5 text-[#405062] no-underline hover:bg-[#F5F8FB]">
           <span className="font-extrabold text-[#8A97A4]">{index + 1}</span>
           <span className="min-w-0">
             <span className="block truncate text-[12px] font-bold text-[#0A3A7A]">{brdText(row.name)}</span>
@@ -1410,7 +1448,7 @@ function EngagementCards({ rows: sourceRows }: { rows: Record<string, unknown>[]
   return (
     <div className="grid gap-2 sm:grid-cols-3">
       {sourceRows.slice(0, 3).map((row, index) => (
-        <DataLink key={`${brdText(row.title || row.name)}-${index}`} href={mandateDetailHref(row, sourceHref(row))} sourceHref={sourceHref(row)} className="overflow-hidden rounded-[6px] border border-[#E4EAF0] bg-[#F8FAFC] text-inherit no-underline">
+        <DataLink key={`${brdText(row.title || row.name)}-${index}`} href={dashboardMandateHref(row)} sourceHref={sourceHref(row)} className="overflow-hidden rounded-[6px] border border-[#E4EAF0] bg-[#F8FAFC] text-inherit no-underline">
           <img src={assetHref(`/swfi-assets/images/${images[index % images.length]}`)} alt="" className="h-16 w-full object-cover" />
           <span className="block p-2">
             <span className="block truncate text-[11px] font-extrabold text-[#0A3A7A]">{brdText(row.title || row.name)}</span>
@@ -1428,8 +1466,8 @@ function ActivityFeedPanel({ marketRows, newsRows, fundraisingRows }: {
   fundraisingRows: Record<string, unknown>[];
 }) {
   const items = [
-    ...marketRows.slice(0, 2).map((row) => ({ row, label: "Deal updated", href: transactionDetailHref(row, sourceHref(row)), detail: brdText(row.title || row.name) })),
-    ...fundraisingRows.slice(0, 2).map((row) => ({ row, label: "Mandate posted", href: mandateDetailHref(row, sourceHref(row)), detail: brdText(row.title || row.name) })),
+    ...marketRows.slice(0, 2).map((row) => ({ row, label: "Deal updated", href: dashboardTransactionHref(row), detail: brdText(row.title || row.name) })),
+    ...fundraisingRows.slice(0, 2).map((row) => ({ row, label: "Mandate posted", href: dashboardMandateHref(row), detail: brdText(row.title || row.name) })),
     ...newsRows.slice(0, 2).map((row) => ({ row, label: "Research published", href: researchRecordHref(row), detail: brdText(row.title || row.name) })),
   ].slice(0, 5);
   return (
@@ -1463,7 +1501,7 @@ function DealIntelligencePanel({ rows: sourceRows, sectorRows }: { rows: Record<
         </div>
       </div>
       {topDeal ? (
-        <DataLink href={transactionDetailHref(topDeal, sourceHref(topDeal))} sourceHref={sourceHref(topDeal)} className="rounded-[6px] bg-[#F8FAFC] p-3 text-inherit no-underline">
+        <DataLink href={dashboardTransactionHref(topDeal)} sourceHref={sourceHref(topDeal)} className="rounded-[6px] bg-[#F8FAFC] p-3 text-inherit no-underline">
           <span className="block text-[11px] font-bold text-[#0A3A7A]">{brdText(topDeal.title || topDeal.name)}</span>
           <span className="mt-1 block text-[18px] font-extrabold text-[#13283D]">{cleanMoney(topDeal.amount_display || topDeal.capital_display || topDeal.amount)}</span>
         </DataLink>
@@ -1473,7 +1511,7 @@ function DealIntelligencePanel({ rows: sourceRows, sectorRows }: { rows: Record<
           {topDeals.slice(1).map((row, index) => (
             <DataLink
               key={`${brdText(row.title || row.name)}-${index}`}
-              href={transactionDetailHref(row, sourceHref(row))}
+              href={dashboardTransactionHref(row)}
               sourceHref={sourceHref(row)}
               className="grid grid-cols-[minmax(0,1fr)_82px] gap-2 rounded-[5px] px-2 py-1.5 text-[11px] text-[#405062] no-underline hover:bg-[#F5F8FB]"
             >
@@ -1519,7 +1557,7 @@ function unifiedIntelligenceRows({
       label: "Allocator",
       title: brdText(allocator.name),
       detail: [allocatorMeta(allocator), dealCountLabel(deals)].filter(Boolean).join(" · "),
-      href: profileDetailHref(allocator, source),
+      href: dashboardProfileHref(allocator),
       sourceHref: source,
       metric: dealCountLabel(deals),
       value: deals || 1,
@@ -1534,7 +1572,7 @@ function unifiedIntelligenceRows({
       label: "Deal",
       title: brdText(deal.title || deal.name),
       detail: [brdText(deal.institution, ""), brdText(deal.sector || deal.industry || deal.category, "")].filter(Boolean).join(" · "),
-      href: transactionDetailHref(deal, source),
+      href: dashboardTransactionHref(deal),
       sourceHref: source,
       metric: amount ? compactMoney(amount) : cleanMoney(deal.amount_display || deal.capital_display || deal.amount),
       value: amount || 1,
@@ -1549,7 +1587,7 @@ function unifiedIntelligenceRows({
       label: "RFP",
       title: brdText(mandate.title || mandate.name),
       detail: [brdText(mandate.institution, ""), brdText(mandate.strategy || mandate.asset_class_or_strategy, ""), timelineDate(mandate)].filter(Boolean).join(" · "),
-      href: mandateDetailHref(mandate, source),
+      href: dashboardMandateHref(mandate),
       sourceHref: source,
       metric: timelineDate(mandate),
       value: score,
@@ -1664,8 +1702,8 @@ function dashboardMetricCards(packets: Packets, topAumRows: Record<string, unkno
     {
       label: "TOTAL AUM ENGAGED",
       value: totalAum ? compactMoney(totalAum) : metricCardWithFallback(packets.metrics, "institutions", packetCountNumber(packets.entities)),
-      note: "Top AUM ranking",
-      href: "/profiles",
+      note: "Capital visualization",
+      href: "#capital-map",
       series: seriesFromNumbers(topAumRows.map(aumValue)),
       color: "#0A66C2",
     },
@@ -1800,6 +1838,93 @@ function ExpandedEntityRows({ rows: sourceRows, controls }: { rows: Record<strin
       empty={DASHBOARD_EMPTY}
       controls={controls}
     />
+  );
+}
+
+function TotalAumInsightDetail({ topRows, entityRows, transactionRows, rfpRows, sectorRows }: {
+  topRows: Record<string, unknown>[];
+  entityRows: Record<string, unknown>[];
+  transactionRows: Record<string, unknown>[];
+  rfpRows: Record<string, unknown>[];
+  sectorRows: Record<string, unknown>[];
+}) {
+  const baseRows = entityRows.length ? entityRows : topRows;
+  const typeRows = groupedCountRows(baseRows, (row) => entityTypeCell(row)).slice(0, 6);
+  const regionRows = groupedAmountRows(topRows, (row) => brdText(row.region || row.country)).slice(0, 6);
+  const fundraisingRows = rfpRows.slice(0, 5);
+  const trendRows = sectorRows.slice(0, 6);
+  const maxTrend = Math.max(1, ...trendRows.map(sectorValue));
+  return (
+    <div className="grid gap-3 xl:grid-cols-2">
+      <VisualPanel title="Institutions by Entity Type" source={ENDPOINTS.entities} empty={DASHBOARD_EMPTY} hasRows={typeRows.length > 0}>
+        <div className="grid gap-2">
+          {typeRows.map((row) => (
+            <div key={row.label} className="grid gap-1">
+              <div className="flex items-center justify-between gap-2 text-[12px]">
+                <span className="truncate font-bold text-[#203448]">{row.label}</span>
+                <span className="font-extrabold text-[#0A3A7A]">{compactNumber(row.value)}</span>
+              </div>
+              <Bar value={row.value} max={typeRows[0]?.value || 1} />
+            </div>
+          ))}
+        </div>
+      </VisualPanel>
+      <VisualPanel title="Regional AUM Concentration" source={ENDPOINTS.top20} empty={DASHBOARD_EMPTY} hasRows={regionRows.length > 0}>
+        <div className="grid gap-2">
+          {regionRows.map((row) => (
+            <div key={row.label} className="grid gap-1">
+              <div className="flex items-center justify-between gap-2 text-[12px]">
+                <span className="truncate font-bold text-[#203448]">{row.label}</span>
+                <span className="font-extrabold text-[#0A3A7A]">{compactMoney(row.value)}</span>
+              </div>
+              <Bar value={row.value} max={regionRows[0]?.value || 1} />
+            </div>
+          ))}
+        </div>
+      </VisualPanel>
+      <VisualPanel title="Recently Fundraising Institutions" source={ENDPOINTS.rfps} empty={DASHBOARD_EMPTY} hasRows={fundraisingRows.length > 0}>
+        <div className="grid gap-2">
+          {fundraisingRows.map((row, index) => (
+            <DataLink key={`${brdText(row.title || row.name)}-${index}`} href={dashboardMandateHref(row)} sourceHref={sourceHref(row)} className="grid grid-cols-[minmax(0,1fr)_78px] gap-2 rounded-[5px] border border-[#E5EBF1] px-2 py-2 text-inherit no-underline">
+              <span className="min-w-0">
+                <span className="block truncate text-[12px] font-bold text-[#0A3A7A]">{brdText(row.institution || row.name)}</span>
+                <span className="block truncate text-[10.5px] text-[#7B8996]">{brdText(row.title || row.strategy || row.asset_class_or_strategy)}</span>
+              </span>
+              <span className="text-right text-[11px] font-extrabold text-[#41566B]">{timelineDate(row)}</span>
+            </DataLink>
+          ))}
+        </div>
+      </VisualPanel>
+      <VisualPanel title="Investment Trends by Industry / Category" source={ENDPOINTS.sectorFlows} empty={DASHBOARD_EMPTY} hasRows={trendRows.length > 0}>
+        <div className="grid gap-2">
+          {trendRows.map((row, index) => {
+            const value = sectorValue(row);
+            return (
+              <DataLink key={`${brdText(row.name || row.value)}-${index}`} href={`/deals/?filter=${encodeURIComponent(brdText(row.name || row.value, ""))}`} sourceHref={sourceHref(row)} className="grid gap-1 rounded-[5px] border border-[#E5EBF1] px-2 py-2 text-inherit no-underline">
+                <span className="flex items-center justify-between gap-2 text-[12px]">
+                  <span className="truncate font-bold text-[#0A3A7A]">{brdText(row.name || row.value)}</span>
+                  <span className="font-extrabold text-[#41566B]">{cleanMoney(row.capital_display || row.capital_deployed || row.capital)}</span>
+                </span>
+                <Bar value={value} max={maxTrend} />
+              </DataLink>
+            );
+          })}
+        </div>
+      </VisualPanel>
+      <VisualPanel title="Recent Capital Activity" source={ENDPOINTS.transactions30} empty={DASHBOARD_EMPTY} hasRows={transactionRows.length > 0}>
+        <div className="grid gap-2">
+          {transactionRows.slice(0, 5).map((row, index) => (
+            <DataLink key={`${brdText(row.title || row.name)}-${index}`} href={dashboardTransactionHref(row)} sourceHref={sourceHref(row)} className="grid grid-cols-[minmax(0,1fr)_90px] gap-2 rounded-[5px] border border-[#E5EBF1] px-2 py-2 text-inherit no-underline xl:col-span-2">
+              <span className="min-w-0">
+                <span className="block truncate text-[12px] font-bold text-[#0A3A7A]">{brdText(row.title || row.name)}</span>
+                <span className="block truncate text-[10.5px] text-[#7B8996]">{brdText(row.buyer_entity || row.institution)} · {brdText(row.sector || row.industry || row.category)}</span>
+              </span>
+              <span className="text-right text-[11px] font-extrabold text-[#41566B]">{cleanMoney(row.amount_display || row.capital_display || row.amount)}</span>
+            </DataLink>
+          ))}
+        </div>
+      </VisualPanel>
+    </div>
   );
 }
 
@@ -2538,11 +2663,47 @@ function entitySourceUrl(entityId: string): string {
   return entityId ? `https://www.swfi.com/v1/entities/${encodeURIComponent(entityId)}` : "";
 }
 
+function transactionSourceUrl(transactionId: string): string {
+  return transactionId ? `https://www.swfi.com/v1/transactions/${encodeURIComponent(transactionId)}` : "";
+}
+
+function mandateSourceUrl(mandateId: string): string {
+  return mandateId ? `https://www.swfi.com/v1/compass/${encodeURIComponent(mandateId)}` : "";
+}
+
+function personSourceUrl(personId: string): string {
+  return personId ? `https://www.swfi.com/v1/people/${encodeURIComponent(personId)}` : "";
+}
+
+function dashboardProfileHref(row: Record<string, unknown>): string {
+  const entityId = text(row.entity_id || row.entityID || row.source_record_id || row.id, "");
+  const source = sourceHref(row) || entitySourceUrl(entityId);
+  return profileDetailHref(row, source || undefined);
+}
+
+function dashboardTransactionHref(row: Record<string, unknown>): string {
+  const transactionId = text(row.transaction_id || row.transactionID || row.source_record_id || row.id, "");
+  const source = sourceHref(row) || transactionSourceUrl(transactionId);
+  return transactionDetailHref(row, source || undefined);
+}
+
+function dashboardMandateHref(row: Record<string, unknown>): string {
+  const mandateId = text(row.compass_id || row.mandate_id || row.rfp_id || row.source_record_id || row.id, "");
+  const source = sourceHref(row) || mandateSourceUrl(mandateId);
+  return mandateDetailHref(row, source || undefined);
+}
+
+function dashboardPersonHref(row: Record<string, unknown>): string {
+  const personId = text(row.person_id || row.personID || row.source_record_id || row.id, "");
+  const source = sourceHref(row) || personSourceUrl(personId);
+  return personDetailHref(row, source || undefined);
+}
+
 function dealCell(row: Record<string, unknown>): Cell {
   const source = sourceHref(row);
   return {
     label: brdText(row.title || row.name),
-    href: transactionDetailHref(row, source),
+    href: dashboardTransactionHref(row),
     sourceHref: source,
     citationText: "SWFI transaction source on file",
   };
@@ -2552,7 +2713,7 @@ function mandateCell(row: Record<string, unknown>): Cell {
   const source = sourceHref(row);
   return {
     label: brdText(row.title || row.name),
-    href: mandateDetailHref(row, source),
+    href: dashboardMandateHref(row),
     sourceHref: source,
     citationText: "SWFI Compass source on file",
   };
@@ -2562,7 +2723,7 @@ function researchCell(row: Record<string, unknown>): Cell {
   const source = sourceHref(row);
   return {
     label: brdText(row.title || row.name),
-    href: source || researchDetailHref(row, source),
+    href: researchDetailHref(row, source),
     sourceHref: source,
     citationText: "SWFI source on file",
   };
@@ -2570,7 +2731,25 @@ function researchCell(row: Record<string, unknown>): Cell {
 
 function sourceDetailCell(label: string, href?: string, fallback = "/research/"): Cell {
   const provenance = href ? sourceProvenanceHref(href) : undefined;
-  return provenance ? { label, href: provenance || fallback, sourceHref: provenance, citationText: "SWFI source on file" } : label;
+  return provenance ? { label, href: sourceRecordDetailHref(provenance, fallback), sourceHref: provenance, citationText: "SWFI source on file" } : label;
+}
+
+function sourceRecordDetailHref(provenance: string, fallback: string): string {
+  try {
+    const parsed = new URL(provenance);
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    const v1Index = parts.indexOf("v1");
+    const section = v1Index >= 0 ? parts[v1Index + 1] : parts[0];
+    const id = v1Index >= 0 ? parts[v1Index + 2] : parts[1];
+    if (!/^[a-f0-9]{24}$/i.test(id || "")) return fallback;
+    if (section === "entities") return profileDetailHref({}, provenance);
+    if (section === "people") return personDetailHref({}, provenance);
+    if (section === "transactions") return transactionDetailHref({}, provenance);
+    if (section === "compass") return mandateDetailHref({}, provenance);
+  } catch {
+    return fallback;
+  }
+  return fallback;
 }
 
 function cellText(cell: Cell): string {
@@ -2647,10 +2826,35 @@ function entityCell(row: Record<string, unknown>): Cell {
   const source = sourceHref(row) || entitySourceUrl(entityId);
   return {
     label: brdText(row.name),
-    href: profileDetailHref(row, source || undefined),
+    href: dashboardProfileHref(row),
     sourceHref: source || undefined,
     citationText: entityId ? "SWFI source on file" : "SWFI allocator activity source",
   };
+}
+
+function groupedCountRows(rows: Record<string, unknown>[], labelFor: (row: Record<string, unknown>) => string) {
+  const groups = new Map<string, number>();
+  for (const row of rows) {
+    const label = labelFor(row);
+    if (!label || label === "Not disclosed") continue;
+    groups.set(label, (groups.get(label) || 0) + 1);
+  }
+  return [...groups.entries()]
+    .map(([label, value]) => ({ label, value }))
+    .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
+}
+
+function groupedAmountRows(rows: Record<string, unknown>[], labelFor: (row: Record<string, unknown>) => string) {
+  const groups = new Map<string, number>();
+  for (const row of rows) {
+    const label = labelFor(row);
+    const value = aumValue(row);
+    if (!label || label === "Not disclosed" || value <= 0) continue;
+    groups.set(label, (groups.get(label) || 0) + value);
+  }
+  return [...groups.entries()]
+    .map(([label, value]) => ({ label, value }))
+    .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
 }
 
 function entityTypeCell(row: Record<string, unknown>): string {

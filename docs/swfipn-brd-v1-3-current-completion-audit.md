@@ -4,17 +4,21 @@ Source BRD: `/Users/mirror-pro/Downloads/SWFI_BRD_v1_3_june2026.docx`
 
 Public URL: `https://swfipn.activemirror.ai/swficc/`
 
-Deployed release: `/opt/swfipn-acceptance/releases/20260627T003833Z`
+Deployed release: `/opt/swfipn-acceptance/releases/20260630T095954Z`
 
-Current asset version: `20260627T003833Z`
+Current asset version: `20260630T0954Z-redis-cache`
 
-Audit timestamp: 2026-06-27 IST / 2026-06-26 UTC receipts.
+Audit timestamp: 2026-06-30 UTC receipts.
 
 ## Topline
 
-Current `/swficc` validation scope is sendable.
+Current `/swficc` deployment is live on DO and has receipt-backed search, Redis, and CDN/static asset checks.
 
 Full BRD Phase 2 productization is not complete.
+
+Full universe parity is `UNPROVEN` until the BRD contract truth gate passes. Mapping coverage alone is not a parity claim.
+
+Current full-BRD infra blocker rollup: `3 open / 2 closed`.
 
 ## Current Stack Result
 
@@ -35,6 +39,11 @@ Full BRD Phase 2 productization is not complete.
 | Alert delivery receipts | `pass` on acceptance host | `output/swfipn-alert-delivery-brd-gate-latest.json` |
 | SWFI session bridge mechanics | Local contract pass; public runtime blocked until bridge route/secret/return assertion are configured | `output/swfipn-swfi-session-bridge-brd-gate-latest.json` |
 | Production API DNS cutover | `blocked`; API vhost prepared on DO | `output/swfipn-api-dns-key-lifecycle-latest.json` |
+| Full universe parity | `UNPROVEN` | `output/swfipn-brd-contract-truth-gate-latest.json` |
+| Search SLA repeated public gate | `pass`, 5/5 | `output/swfipn-search-gate-repeated-latest.json` |
+| Redis cache runtime gate | `pass`, runtime Redis PONG proven | `output/swfipn-redis-cache-gate-latest.json` |
+| CDN static asset gate | `pass` | `output/swfipn-cdn-static-assets-gate-latest.json` |
+| BRD infra blocker rollup | `open_external_inputs_required`, 3 open / 2 closed | `output/swfipn-brd-open-infra-blockers-latest.json` |
 
 ## BRD Areas
 
@@ -49,7 +58,7 @@ Full BRD Phase 2 productization is not complete.
 | People list/profile workflow | Pass | `output/swfipn-people-profile-brd-gate-latest.json` |
 | Transactions/deals workflow | Pass for current scope | `output/swfipn-list-data-proof-latest.json`, `output/swfipn-section-visualization-brd-gate-latest.json` |
 | Compass/RFP workflow | Pass | `output/swfipn-compass-brd-gate-latest.json` |
-| Reports/news/intelligence workflow | Pass for current scope | `output/swfipn-full-universe-mapping-latest.json`, `output/swfipn-list-data-proof-latest.json` |
+| Reports/news/intelligence workflow | Pass for current scope; full-universe parity unproven | `output/swfipn-full-universe-mapping-latest.json`, `output/swfipn-list-data-proof-latest.json`, `output/swfipn-brd-contract-truth-gate-latest.json` |
 | Visualizations, chart exports, responsive checks | Pass | `output/swfipn-section-visualization-brd-gate-latest.json` |
 | Entities aggregates/AUM charts | Pass | `output/swfipn-aggregates-brd-gate-latest.json` |
 | Backend contract and list APIs | Pass | `output/swfipn-phase2-backend-acceptance-latest.json` |
@@ -62,6 +71,9 @@ Full BRD Phase 2 productization is not complete.
 | Alerts backend/API on acceptance host | Pass | `output/swfipn-alerts-brd-gate-latest.json` |
 | Alerts page UI API client on acceptance host | Pass | `output/swfipn-alerts-ui-brd-gate-latest.json` |
 | Alert in-app/webhook delivery receipts on acceptance host | Pass | `output/swfipn-alert-delivery-brd-gate-latest.json` |
+| Search performance SLA | Pass | `output/swfipn-search-gate-repeated-latest.json` |
+| Redis caching for dashboard KPI/search/aggregates | Pass | `output/swfipn-redis-cache-gate-latest.json` |
+| CDN static asset caching | Pass | `output/swfipn-cdn-static-assets-gate-latest.json` |
 | SendGrid email delivery on acceptance host | Blocked: provider not configured on target runtime | `output/swfipn-sendgrid-email-brd-gate-latest.json` |
 | Real SWFI auth/session bridge | Code/gate implemented; target runtime blocked until SWFI signed assertions and bridge return path are configured | `output/swfipn-swfi-session-bridge-brd-gate-latest.json` |
 | `api.swfi.com` production cutover | Blocked | `output/swfipn-api-dns-key-lifecycle-latest.json` |
@@ -70,11 +82,9 @@ Full BRD Phase 2 productization is not complete.
 
 ## Blocking Items For Full BRD Phase 2
 
-- `api.swfi.com` DNS is not cut over to the accepted API host.
-- `https://api.swfi.com/docs` returns `404` from nginx.
-- Production `api.swfi.com` keyed endpoint checks hit the old surface and do not reach the accepted API.
+- Mongo indexes are script/dry-run verified; apply reached Atlas but failed with createIndexes authorization denied.
 - SendGrid email delivery code and gate are deployed; target runtime is blocked on missing SendGrid provider configuration.
-- SWFI session bridge code and gate are implemented; target runtime is blocked until the bridge route, secret, sign-in return path, and SWFI signed assertion proof are configured.
+- CDN/static asset caching and zero high/critical npm audit are proven, but a current successful remote GitHub Actions run receipt is missing.
 
 ## Alerts Backend/API Progress
 

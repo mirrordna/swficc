@@ -28,6 +28,7 @@ type Cell = string | { label: string; href?: string; sourceHref?: string; citati
 const NOT_DISCLOSED = "Not disclosed";
 const LOADING = "Loading";
 const DEFAULT_SEARCH_QUERY = "";
+const SEARCH_PREFETCH_CACHE_PREFIX = "swfipn.search.prefetch.v1:";
 const pageLinks = [
   ["Dashboard", "/"],
   ["Institutions", "/profiles"],
@@ -54,6 +55,25 @@ const routeByKind: Record<Kind, string> = {
   intelligence: "/intelligence",
   search: "/search",
 };
+
+function searchPrefetchCacheKey(query: string): string {
+  return `${SEARCH_PREFETCH_CACHE_PREFIX}${query.trim().toLowerCase()}`;
+}
+
+function initialSearchPackets(kind: Kind, query: string): Record<string, Packet> {
+  if (kind !== "search" || typeof window === "undefined" || !query.trim()) return {};
+  try {
+    const raw = window.sessionStorage.getItem(searchPrefetchCacheKey(query));
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as { query?: string; stored_at?: number; packet?: Packet };
+    if (String(parsed.query || "").trim().toLowerCase() !== query.trim().toLowerCase()) return {};
+    if (!parsed.stored_at || Date.now() - parsed.stored_at > 60_000) return {};
+    if (!parsed.packet || !isFact(parsed.packet)) return {};
+    return { institutions: parsed.packet };
+  } catch {
+    return {};
+  }
+}
 
 const CONFIG: Record<Kind, { title: string; endpoint: string; columns: string[]; sources?: Record<string, string> }> = {
   profiles: {
@@ -260,17 +280,17 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
     if (!clean) return {};
     const encoded = encodeURIComponent(clean);
     return {
-      institutions: `/api/v1/public/search?q=${encoded}&limit=100`,
-      people: `/api/source-data/search/v1?collection=people&q=${encoded}&limit=100`,
-      strategy: `/api/transaction-drilldown/v1?field=sector&value=${encoded}&days=365&limit=100`,
+      institutions: `/api/v1/public/search?q=${encoded}&limit=${rowLimit}`,
     };
-  }, [allocatorSort, config.endpoint, config.sources, kind, selectedDealEntityTypes, serverFilterTerm, serverPageIndex, serverRowLimit, serverSortDir, submittedQuery]);
+  }, [allocatorSort, config.endpoint, config.sources, kind, rowLimit, selectedDealEntityTypes, serverFilterTerm, serverPageIndex, serverRowLimit, serverSortDir, submittedQuery]);
 
   useEffect(() => {
     let active = true;
     const controllers: AbortController[] = [];
     const resetTimer = globalThis.setTimeout(() => {
-      if (active) setPackets({});
+      if (active) {
+        setPackets((current) => (kind === "search" && current.institutions ? current : {}));
+      }
     }, 0);
     Object.entries(sources).forEach(([key, endpoint]) => {
       const controller = new AbortController();
@@ -291,12 +311,38 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
     if (kind !== "search" || typeof window === "undefined") return;
     const urlQuery = new URLSearchParams(window.location.search).get("q")?.trim() || DEFAULT_SEARCH_QUERY;
     if (!urlQuery) return;
-    const timeoutId = window.setTimeout(() => {
+    const cachedPackets = initialSearchPackets(kind, urlQuery);
+    const timer = window.setTimeout(() => {
       setQuery(urlQuery);
       setSubmittedQuery(urlQuery);
+      if (cachedPackets.institutions) {
+        setPackets((current) => ({ ...current, ...cachedPackets }));
+      }
     }, 0);
-    return () => window.clearTimeout(timeoutId);
+    return () => window.clearTimeout(timer);
   }, [kind]);
+
+  useEffect(() => {
+    if (kind !== "search") return;
+    const clean = submittedQuery.trim();
+    if (!clean || !packets.institutions || packets.people || packets.strategy) return;
+    let active = true;
+    const controller = new AbortController();
+    const encoded = encodeURIComponent(clean);
+    const secondarySources = {
+      people: `/api/source-data/search/v1?collection=people&q=${encoded}&limit=${rowLimit}`,
+      strategy: `/api/transaction-drilldown/v1?field=sector&value=${encoded}&days=365&limit=${rowLimit}`,
+    };
+    Object.entries(secondarySources).forEach(([key, endpoint]) => {
+      void fetchPacket(endpoint, 180_000, { signal: controller.signal, attempts: 2 }).then((packet) => {
+        if (active) setPackets((current) => ({ ...current, [key]: packet }));
+      });
+    });
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [kind, packets.institutions, packets.people, packets.strategy, rowLimit, submittedQuery]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -705,7 +751,7 @@ function displayCell(value?: Cell) {
           const target = productHref(link.href, "/");
           return (
             <span key={`${link.label}-${index}`} className="grid gap-1">
-              <a href={target} onClick={(event) => hardNavigateSameRouteFilter(event, target)} title={link.sourceHref ? "Source on file" : undefined} data-source-state={link.sourceHref ? "on-file" : undefined} className="text-[#16538C] underline">{link.label}</a>
+              <a href={target} onClick={(event) => hardNavigateSameRouteFilter(event, target)} title={link.sourceHref ? "Source on file" : undefined} data-record-link={isFirstPartyRecordHref(target) ? "true" : undefined} data-source-state={link.sourceHref ? "on-file" : undefined} className="text-[#16538C] underline">{link.label}</a>
             </span>
           );
         })}
@@ -719,11 +765,26 @@ function displayCell(value?: Cell) {
     const target = productHref(href, "/");
     return (
       <span className="grid gap-1">
-        <a href={target} onClick={(event) => hardNavigateSameRouteFilter(event, target)} title={sourceHref ? "Source on file" : undefined} data-source-state={sourceHref ? "on-file" : undefined} className="text-[#16538C] underline">{label}</a>
+        <a href={target} onClick={(event) => hardNavigateSameRouteFilter(event, target)} title={sourceHref ? "Source on file" : undefined} data-record-link={isFirstPartyRecordHref(target) ? "true" : undefined} data-source-state={sourceHref ? "on-file" : undefined} className="text-[#16538C] underline">{label}</a>
       </span>
     );
   }
   return label;
+}
+
+function isFirstPartyRecordHref(href: string): boolean {
+  try {
+    const parsed = new URL(href, "https://swfipn.local");
+    const path = parsed.pathname.replace(/^\/swficc/, "").replace(/\/?$/, "/");
+    if (path === "/profiles/detail/") return Boolean(parsed.searchParams.get("slug") || parsed.searchParams.get("name") || parsed.searchParams.get("id"));
+    if (path === "/people/detail/") return Boolean(parsed.searchParams.get("name") || parsed.searchParams.get("id"));
+    if (path === "/transactions/detail/") return Boolean(parsed.searchParams.get("title") || parsed.searchParams.get("id"));
+    if (path === "/mandates/detail/") return Boolean(parsed.searchParams.get("title") || parsed.searchParams.get("id"));
+    if (path === "/research/detail/") return Boolean(parsed.searchParams.get("legacy"));
+  } catch {
+    return false;
+  }
+  return false;
 }
 
 function hardNavigateSameRouteFilter(event: MouseEvent<HTMLAnchorElement>, target: string) {
@@ -901,7 +962,7 @@ function researchCell(row: Row): Cell {
 
 function profileCell(row: Row): Cell {
   const label = text(row.name || row.institution);
-  const provenance = sourceHref(row);
+  const provenance = sourceHref(row) || entitySourceUrl(comparisonRecordId(row));
   return label
     ? {
         label,
@@ -927,7 +988,7 @@ function allocatorProfileCell(row: Row): Cell {
 }
 
 function transactionCell(row: Row, label = text(row.title || row.name)): Cell {
-  const provenance = sourceHref(row);
+  const provenance = sourceHref(row) || transactionSourceUrl(recordIdFromRow(row, ["transaction_id", "transactionID", "source_record_id", "id"]));
   return {
     label,
     href: transactionDetailHref(row, provenance),
@@ -941,7 +1002,7 @@ function dealProfileCell(row: Row): Cell {
   if (!label) return NOT_DISCLOSED;
   const slug = text(row.slug || row.profile_slug, "");
   const source = sourceHref(row);
-  if (source) return { label, href: profileDetailHref({ name: label, slug }, source), sourceHref: source, citationText: "SWFI profile source on file" };
+  if (source) return { label, href: source, sourceHref: source, citationText: "SWFI profile source on file" };
   return { label, href: `/profiles/?filter=${encodeURIComponent(label)}`, citationText: "SWFI profile lookup" };
 }
 
@@ -955,12 +1016,12 @@ function dealTransactionCell(row: Row): Cell {
   const label = text(row.latest_transaction, "");
   if (!label) return NOT_DISCLOSED;
   const source = text(row.latest_transaction_source_url || row.transaction_source_url || row.source_url || row.swfi_url, "");
-  const href = source ? transactionDetailHref({ title: label }, source) : `/transactions/?filter=${encodeURIComponent(label)}`;
+  const href = source || `/transactions/?filter=${encodeURIComponent(label)}`;
   return { label, href, sourceHref: source || undefined };
 }
 
 function personCell(row: Row): Cell {
-  const provenance = sourceHref(row);
+  const provenance = sourceHref(row) || personSourceUrl(recordIdFromRow(row, ["person_id", "personID", "source_record_id", "id"]));
   return {
     label: text(row.name || row.title),
     href: personDetailHref(row, provenance),
@@ -971,7 +1032,7 @@ function personCell(row: Row): Cell {
 
 function transactionFactCell(row: Row, label: string): Cell {
   const clean = label && label !== SOURCE_GAP && label !== "Not disclosed" ? label : NOT_DISCLOSED;
-  const provenance = sourceHref(row);
+  const provenance = sourceHref(row) || transactionSourceUrl(recordIdFromRow(row, ["transaction_id", "transactionID", "source_record_id", "id"]));
   return {
     label: clean,
     href: transactionDetailHref(row, provenance),
@@ -1035,8 +1096,24 @@ function entitySourceUrl(entityId: string): string {
   return entityId ? `https://www.swfi.com/v1/entities/${encodeURIComponent(entityId)}` : "";
 }
 
+function transactionSourceUrl(transactionId: string): string {
+  return transactionId ? `https://www.swfi.com/v1/transactions/${encodeURIComponent(transactionId)}` : "";
+}
+
+function mandateSourceUrl(mandateId: string): string {
+  return mandateId ? `https://www.swfi.com/v1/compass/${encodeURIComponent(mandateId)}` : "";
+}
+
+function personSourceUrl(personId: string): string {
+  return personId ? `https://www.swfi.com/v1/people/${encodeURIComponent(personId)}` : "";
+}
+
+function recordIdFromRow(row: Row, keys: string[]): string {
+  return keys.map((key) => text(row[key], "")).find((value) => /^[a-f0-9]{24}$/i.test(value)) || "";
+}
+
 function mandateCell(row: Row): Cell {
-  const provenance = sourceHref(row);
+  const provenance = sourceHref(row) || mandateSourceUrl(recordIdFromRow(row, ["compass_id", "mandate_id", "rfp_id", "source_record_id", "id"]));
   return {
     label: text(row.title || row.name),
     href: mandateDetailHref(row, provenance),
@@ -1048,13 +1125,21 @@ function mandateCell(row: Row): Cell {
 function citation(href: string | undefined, fallback = "/"): Cell {
   const provenance = href ? sourceProvenanceHref(href) : undefined;
   if (!provenance) return NOT_DISCLOSED;
-  const internalLegacyHref = legacyPostId(provenance) ? researchDetailHref({}, provenance) : "";
+  const internalLegacyHref = legacyPostId(provenance) ? researchDetailHref({}, provenance) : firstPartyDetailHrefForSource(provenance, fallback);
   return {
     label: "Source on file",
-    href: internalLegacyHref || provenance || fallback,
+    href: internalLegacyHref || fallback,
     sourceHref: provenance,
     citationText: "Source on file",
   };
+}
+
+function firstPartyDetailHrefForSource(provenance: string, fallback: string): string {
+  if (sourceRecordIdFor(provenance, "entities")) return profileDetailHref({}, provenance);
+  if (sourceRecordIdFor(provenance, "people")) return personDetailHref({}, provenance);
+  if (sourceRecordIdFor(provenance, "transactions")) return transactionDetailHref({}, provenance);
+  if (sourceRecordIdFor(provenance, "compass")) return mandateDetailHref({}, provenance);
+  return productHref(provenance, fallback);
 }
 
 function cellText(value?: Cell): string {
@@ -1296,6 +1381,7 @@ function sectionRecordLabel(kind: Kind, row: Row): string {
 }
 
 function sectionRecordHref(kind: Kind, row: Row, source?: string): string {
+  if (source) return source;
   if (kind === "people") return personDetailHref(row, source);
   if (kind === "transactions" || kind === "deals") return transactionDetailHref(row, source);
   if (kind === "mandates") return mandateDetailHref(row, source);
@@ -1689,7 +1775,7 @@ function ComparisonWorkbench({ records, packets }: { records: Row[]; packets: Re
               <th className="w-[170px] border-b border-[#DCE3EA] px-3 py-2 text-[#41566B]">Metric</th>
               {hydrated.map((row) => {
                 const source = sourceHref(row);
-                const href = profileDetailHref(row, source);
+                const href = source || profileDetailHref(row, source);
                 return (
                   <th key={comparisonRecordId(row) || comparisonName(row)} className="border-b border-[#DCE3EA] px-3 py-2 text-[#11314F]">
                     <a href={productHref(href, "/profiles/")} data-source-state={source ? "on-file" : undefined} className="text-[#16538C] underline">
@@ -1707,7 +1793,7 @@ function ComparisonWorkbench({ records, packets }: { records: Row[]; packets: Re
                 {hydrated.map((row) => {
                   const value = valueForMetric(row);
                   const source = label === "Source" ? sourceHref(row) : "";
-                  const profileHref = profileDetailHref(row, source || undefined);
+                  const profileHref = source || profileDetailHref(row, source || undefined);
                   return (
                     <td key={`${comparisonRecordId(row) || comparisonName(row)}-${label}`} className="px-3 py-2 align-top text-[#41566B]">
                       {source ? (

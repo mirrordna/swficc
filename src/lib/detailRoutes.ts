@@ -1,5 +1,5 @@
 import { text } from "@/lib/sourcePackets";
-import { isAllowedSwfiHost, swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
+import { isAllowedSwfiHost } from "@/lib/selfContainedLinks";
 
 type Row = Record<string, unknown>;
 export type DashboardDetailType =
@@ -167,7 +167,13 @@ function researchDetailUrl(row: Row, options: DashboardDetailOptions): string {
 function swfiRecordHandoffUrl(section: SwfiSection, row: Row, options: DashboardDetailOptions, idKeys: string[]): string {
   const id = rowRecordId(section, row, options, idKeys);
   if (!id) return "";
-  return swfiAuthHandoffHref(`/v1/${section}/${id}`);
+  const routeBySection: Record<SwfiSection, string> = {
+    entities: "/profiles/detail/",
+    people: "/people/detail/",
+    transactions: "/transactions/detail/",
+    compass: "/mandates/detail/",
+  };
+  return `${routeBySection[section]}?${new URLSearchParams({ id }).toString()}`;
 }
 
 function rowRecordId(section: SwfiSection, row: Row, options: DashboardDetailOptions, idKeys: string[]): string {

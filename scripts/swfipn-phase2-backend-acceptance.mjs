@@ -147,6 +147,21 @@ const contracts = [
     pagination: true,
     search: "row-derived",
   },
+  {
+    id: "reports",
+    label: "Reports",
+    endpoint: "/api/reports/v1?limit=25&page=1",
+    source_collections: ["swfi.reports"],
+    allowed_fields: ["report_key", "title", "name", "type", "published_at", "updated_at", "thumbnail_url", "report_url"],
+    sort_fields: ["published_at", "updated_at", "title", "type"],
+    filter_fields: ["q", "type", "date_from", "date_to"],
+    pagination_fields: ["limit", "page"],
+    freshness_receipt: "generated_at and report asset source URL",
+    minimum_rows: 5,
+    validator: validateReports,
+    pagination: true,
+    search: "row-derived",
+  },
 ];
 
 const detailContracts = [
@@ -155,6 +170,7 @@ const detailContracts = [
   { id: "transaction_detail", list: "newest_transactions", detailTemplate: "/api/transactions/{id}/v1", sourcePattern: /^https:\/\/www\.swfi\.com\/v1\/transactions\/[a-f0-9]{24}$/i, dataKey: "record" },
   { id: "rfp_detail", list: "rfp_opportunities", detailTemplate: "/api/compass/{id}/v1", sourcePattern: /^https:\/\/www\.swfi\.com\/v1\/compass\/[a-f0-9]{24}$/i, dataKey: "record" },
   { id: "intelligence_detail", list: "intelligence", legacy: true, detailTemplate: "/api/source-intelligence/news/detail/v1?legacy_id={id}", sourcePattern: /^\d+$/i, dataKey: "record" },
+  { id: "report_detail", list: "reports", reportKey: true, detailTemplate: "/api/reports/{id}/v1", sourcePattern: /^[a-zA-Z0-9_-]{3,120}$/i, dataKey: "record" },
 ];
 
 const publicRoutes = [
@@ -167,6 +183,7 @@ const publicRoutes = [
   "/mandates/",
   "/research/",
   "/intelligence/",
+  "/reports/",
 ];
 
 const forbiddenUiPatterns = [
@@ -454,6 +471,22 @@ function validateNews(packet) {
   return failures;
 }
 
+function validateReports(packet) {
+  const failures = [];
+  rows(packet).forEach((row, index) => {
+    const label = cleanText(row.title || row.name || index);
+    if (!cleanText(row.title || row.name)) failures.push(`report_${index}_missing_title`);
+    if (!/^[a-zA-Z0-9_-]{3,120}$/i.test(cleanText(row.report_key || row.report_id || row.id))) failures.push(`report_${label}_missing_report_key`);
+    if (!cleanText(row.type)) failures.push(`report_${label}_missing_type`);
+    if (!cleanText(row.published_at || row.updated_at)) failures.push(`report_${label}_missing_published_or_updated_date`);
+    if (!/^https:\/\/assets\.swfi\.com\/reports\/[^?#]+\.pdf(?:[?#].*)?$/i.test(cleanText(row.report_url || row.source_url))) {
+      failures.push(`report_${label}_missing_or_bad_report_asset_url`);
+    }
+  });
+  compareDateDescending(rows(packet), ["published_at", "updated_at"], failures, "report");
+  return failures;
+}
+
 async function inspectContract(contract) {
   const result = {
     id: contract.id,
@@ -543,23 +576,28 @@ async function inspectPaginationAndSearch(contract, firstPacket) {
 async function inspectDetailResolution(detailContract, packetsByContract) {
   const listPacket = packetsByContract.get(detailContract.list);
   const sourceRow = rows(listPacket)[0] || {};
-  const source = detailContract.legacy ? cleanText(sourceRow.legacy_post) : cleanText(sourceRow.source_url || sourceRow.swfi_url);
+  const source = detailContract.legacy
+    ? cleanText(sourceRow.legacy_post)
+    : detailContract.reportKey
+      ? cleanText(sourceRow.report_key || sourceRow.report_id || sourceRow.id)
+      : cleanText(sourceRow.source_url || sourceRow.swfi_url);
   const sourceId = detailContract.legacy ? source : sourceRecordId(source);
-  const endpoint = detailContract.detailTemplate.replace("{id}", encodeURIComponent(sourceId));
+  const resolvedSourceId = detailContract.reportKey ? source : sourceId;
+  const endpoint = detailContract.detailTemplate.replace("{id}", encodeURIComponent(resolvedSourceId));
   const result = {
     id: detailContract.id,
     list_contract: detailContract.list,
     endpoint,
     url: backendUrl(endpoint),
-    source_id: sourceId,
+    source_id: resolvedSourceId,
     ok: false,
     failures: [],
     http_status: 0,
     source_label: cleanText(sourceRow.name || sourceRow.title),
     detail_label: "",
   };
-  if (!sourceId || !detailContract.sourcePattern.test(detailContract.legacy ? sourceId : source)) {
-    result.failures.push(`bad_source_reference:${source || sourceId || "missing"}`);
+  if (!resolvedSourceId || !detailContract.sourcePattern.test(detailContract.legacy || detailContract.reportKey ? resolvedSourceId : source)) {
+    result.failures.push(`bad_source_reference:${source || resolvedSourceId || "missing"}`);
     result.ok = false;
     return result;
   }
@@ -751,15 +789,9 @@ async function run() {
       transactions_deals: "swfi.transactions",
       compass_rfps: "swfi.compass",
       news_intelligence: "swfi.news + swfi.cms_articles",
-      reports: "not accepted in this gate until a dedicated source-backed reports endpoint is present",
+      reports: "swfi.reports via /api/reports/v1 and /api/reports/{report_key}/v1",
     },
-    blocked_items: [
-      {
-        id: "reports_source_contract",
-        status: "blocked",
-        reason: "A dedicated source-backed reports endpoint/collection contract was not present in the accepted backend surface. Reports are not counted as Phase 2 backend-complete.",
-      },
-    ],
+    blocked_items: [],
     non_negotiables: {
       fake_data: "blocked",
       inferred_fallback_values: "blocked",

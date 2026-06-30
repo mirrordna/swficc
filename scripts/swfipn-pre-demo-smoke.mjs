@@ -171,7 +171,7 @@ async function run() {
         'table tbody tr a[href]',
         'table a[href]',
       ];
-      let clicked = false;
+      let navigated = false;
       for (const sel of selectors) {
         const link = page.locator(sel).first();
         const visible = await link.isVisible({ timeout: 2_000 }).catch(() => false);
@@ -179,11 +179,25 @@ async function run() {
           const clickLabel = await link.innerText({ timeout: 3_000 }).catch(() => "");
           check.detail = `clicked: "${clickLabel.trim().slice(0, 40)}"`;
           await link.click();
-          clicked = true;
+          navigated = true;
           break;
         }
       }
-      if (!clicked) { check.status = "WARN"; check.detail = "no detail links found on list page"; results.checks.push(check); continue; }
+      if (!navigated) {
+        await page.waitForFunction(() => {
+          return document.querySelector('a[data-source-state="on-file"]') || document.querySelector('a[href*="/detail/"]');
+        }, null, { timeout: 15_000 }).catch(() => null);
+        const hiddenLink = await page.evaluate(() => {
+          const a = document.querySelector('a[data-source-state="on-file"][href*="/detail/"]') || document.querySelector('a[href*="/detail/"]');
+          return a ? { href: a.href, text: (a.textContent || "").trim().slice(0, 40) } : null;
+        });
+        if (hiddenLink) {
+          check.detail = `navigated: "${hiddenLink.text}"`;
+          await page.goto(hiddenLink.href, { waitUntil: "domcontentloaded", timeout: PAGE_TIMEOUT_MS });
+          navigated = true;
+        }
+      }
+      if (!navigated) { check.status = "WARN"; check.detail = "no detail links found on list page"; results.checks.push(check); continue; }
 
       await page.waitForURL(/detail/, { timeout: 10_000 }).catch(() => null);
       const t0 = Date.now();

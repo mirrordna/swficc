@@ -8,6 +8,7 @@ const receiptPath = path.join(outputDir, "swfipn-route-parity-statistical-latest
 const markdownPath = path.join(outputDir, "swfipn-route-parity-statistical-latest.md");
 
 const backendOrigin = (process.env.SWFIPN_BACKEND_ORIGIN || process.env.SWFIPN_ORIGIN || "http://127.0.0.1:8399").replace(/\/swficc\/?$/, "").replace(/\/$/, "");
+const serviceToken = String(process.env.SWFIPN_BACKEND_TOKEN || process.env.SWFI2_API_TOKEN || "").trim();
 const CONFIDENCE = 0.99;
 const Z = 2.576;
 const MARGIN = 0.03;
@@ -25,22 +26,38 @@ const COLLECTIONS = [
   { name: "reports", apiPath: null, nameFields: ["title", "name"] },
 ];
 
-async function fetchJson(url, timeoutMs = API_TIMEOUT_MS) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: { Accept: "application/json", "User-Agent": "SWFIPN-StatisticalGate/1.0" },
-    });
-    const text = await response.text();
-    let json;
-    try { json = JSON.parse(text); } catch { json = { raw: text.slice(0, 500) }; }
-    return { status: response.status, json };
-  } catch (error) {
-    return { status: 0, json: null, error: error.message };
-  } finally {
-    clearTimeout(timeout);
+async function fetchJson(url, timeoutMs = API_TIMEOUT_MS, retries = 3) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "SWFIPN-StatisticalGate/1.0",
+          ...(serviceToken ? { Authorization: `Bearer ${serviceToken}`, "X-SWFIPN-Internal": "1" } : {}),
+        },
+      });
+      if (response.status >= 500 && attempt < retries) {
+        clearTimeout(timeout);
+        await new Promise((r) => setTimeout(r, 2000 * attempt));
+        continue;
+      }
+      const text = await response.text();
+      let json;
+      try { json = JSON.parse(text); } catch { json = { raw: text.slice(0, 500) }; }
+      return { status: response.status, json };
+    } catch (error) {
+      clearTimeout(timeout);
+      if (attempt < retries) {
+        await new Promise((r) => setTimeout(r, 2000 * attempt));
+        continue;
+      }
+      return { status: 0, json: null, error: error.message };
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 }
 

@@ -42,6 +42,7 @@ HOP_BY_HOP = {
 SESSION_COOKIE_NAME = "__swfipn_session"
 SESSION_TTL_SECONDS = int(os.environ.get("SWFIPN_AUTH_SESSION_TTL_SECONDS", str(12 * 60 * 60)))
 PUBLIC_JSON_PATH_PREFIXES = ("/api/", "/v1/")
+PUBLIC_SEARCH_CACHE_TTL_SECONDS = int(os.environ.get("SWFIPN_PUBLIC_SEARCH_CACHE_TTL_SECONDS", "300"))
 PUBLIC_RESTRICTED_KEYS = {
     "_id",
     "id",
@@ -399,6 +400,9 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
             return
         if location := self.source_mirror_redirect(parsed):
             self.redirect(location)
+            return
+        if self.is_search_results_path(parsed):
+            self.serve_search_results(parsed)
             return
         if self.should_proxy_backend(parsed.path):
             self.proxy_backend(parsed)
@@ -990,11 +994,26 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
             backend_path = "/"
         elif backend_path.startswith("/swficc/"):
             backend_path = backend_path.removeprefix("/swficc")
+        backend_path, backend_query = self.backend_source_data_alias(backend_path, parsed.query)
         target = f"{backend}{backend_path}"
-        if parsed.query:
-            target = f"{target}?{parsed.query}"
+        if backend_query:
+            target = f"{target}?{backend_query}"
         try:
             request_method = method or ("HEAD" if head else "GET")
+            cache_key = self.public_search_cache_key(request_method, backend_path, backend_query)
+            if cache_key and not head:
+                cached = self.server.public_search_cache.get(cache_key)
+                if cached and time.time() - cached["stored_at"] <= PUBLIC_SEARCH_CACHE_TTL_SECONDS:
+                    body = cached["body"]
+                    self.send_response(HTTPStatus.OK)
+                    self.send_security_headers()
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "public, max-age=60, s-maxage=300, stale-while-revalidate=300")
+                    self.send_header("X-SWFIPN-Proxy-Cache", "HIT")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.write_body(body)
+                    return
             request_body = None
             if request_method in {"POST", "PUT", "PATCH"}:
                 content_length = int(self.headers.get("Content-Length") or 0)
@@ -1065,6 +1084,9 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
                 body = raw_body if internal_receipt_request or api_product_request else public_api_body(parsed.path, raw_body)
                 self.send_response(response.status)
                 self.copy_backend_headers(response.headers, len(body))
+                if cache_key and response.status == 200 and not internal_receipt_request and not api_product_request:
+                    self.server.public_search_cache[cache_key] = {"stored_at": time.time(), "body": body}
+                    self.send_header("X-SWFIPN-Proxy-Cache", "MISS")
                 self.end_headers()
                 if not head:
                     self.write_body(body)
@@ -1091,6 +1113,157 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
             self.end_headers()
             if not head:
                 self.write_body(body)
+
+    def public_search_cache_key(self, request_method, backend_path, backend_query):
+        if request_method != "GET" or backend_path != "/api/v1/public/search":
+            return ""
+        if str(self.headers.get("X-SWFIPN-Internal") or self.headers.get("X-SWFI-Internal") or "").lower() in {"1", "true", "yes"}:
+            return ""
+        params = urllib.parse.parse_qs(backend_query or "", keep_blank_values=False)
+        query = (params.get("q") or [""])[0].strip()[:120]
+        limit = (params.get("limit") or ["25"])[0].strip() or "25"
+        if not query:
+            return ""
+        return f"public-search:{query.casefold()}:{limit}"
+
+    def is_search_results_path(self, parsed):
+        normalized = parsed.path
+        if normalized == "/swficc/search" or normalized == "/swficc/search/":
+            query = (urllib.parse.parse_qs(parsed.query).get("q") or [""])[0].strip()
+            return bool(query)
+        return False
+
+    def serve_search_results(self, parsed, head=False):
+        query = (urllib.parse.parse_qs(parsed.query).get("q") or [""])[0].strip()[:120]
+        packet = self.public_search_packet(query, limit="25")
+        rows = []
+        if isinstance(packet, dict) and packet.get("fact") is True:
+            data = packet.get("data") if isinstance(packet.get("data"), dict) else {}
+            results = data.get("results") if isinstance(data.get("results"), list) else []
+            rows = [item for item in results if isinstance(item, dict)]
+        body = self.search_results_html(query, rows).encode("utf-8")
+        self.send_response(HTTPStatus.OK)
+        self.send_security_headers()
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "public, max-age=60, s-maxage=300, stale-while-revalidate=300")
+        self.send_header("X-SWFIPN-Search-Render", "server")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if not head:
+            self.write_body(body)
+
+    def public_search_packet(self, query, limit="25"):
+        cache_key = f"public-search:{query.casefold()}:{limit}"
+        cached = self.server.public_search_cache.get(cache_key)
+        if cached and time.time() - cached["stored_at"] <= PUBLIC_SEARCH_CACHE_TTL_SECONDS:
+            try:
+                return json.loads(cached["body"].decode("utf-8") or "{}")
+            except Exception:
+                pass
+        backend = self.server.backend.rstrip("/")
+        target = f"{backend}/api/v1/public/search?{urllib.parse.urlencode({'q': query, 'limit': limit})}"
+        request = urllib.request.Request(target, method="GET")
+        request.add_header("Accept", "application/json")
+        request.add_header("X-SWFIPN-Public", "1")
+        request.add_header("Connection", "close")
+        if self.server.backend_token:
+            request.add_header("Authorization", f"Bearer {self.server.backend_token}")
+        with urllib.request.urlopen(request, timeout=self.server.backend_timeout) as response:
+            raw_body = response.read()
+            body = public_api_body("/api/v1/public/search", raw_body)
+            if response.status == 200:
+                self.server.public_search_cache[cache_key] = {"stored_at": time.time(), "body": body}
+            return json.loads(body.decode("utf-8") or "{}")
+
+    def search_results_html(self, query, rows):
+        row_html = []
+        for row in rows[:25]:
+            name = escape_html(row.get("name") or "Not disclosed")
+            source = escape_html(row.get("source_url") or row.get("swfi_url") or row.get("url") or "")
+            detail = escape_html(" / ".join(str(part) for part in [row.get("type") or "", row.get("country") or row.get("region") or "", row.get("aum") or row.get("assets") or ""] if str(part or "").strip()))
+            href = source if source else "/swficc/profiles/"
+            row_html.append(f"""
+              <tr>
+                <td>Institution</td>
+                <td><a href="{href}">{name}</a></td>
+                <td>SWFI</td>
+                <td>{detail or "Not disclosed"}</td>
+                <td><a href="{href}">Open</a></td>
+              </tr>""")
+        if not row_html:
+            row_html.append('<tr><td colspan="5" class="empty">Not disclosed</td></tr>')
+        count = len(rows)
+        return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SWFI Search</title>
+  <style>
+    body{{margin:0;background:#f2f4f6;color:#1b2733;font-family:Arial,Helvetica,sans-serif}}
+    header{{background:#a61c20;color:#fff;border-bottom:1px solid #7e1417}}
+    .bar{{max-width:1188px;margin:0 auto;min-height:80px;display:flex;align-items:center;gap:24px;padding:0 22px}}
+    .brand{{color:#fff;text-decoration:none;font-weight:800;font-size:28px}}
+    .sub{{font-size:11px;display:block;letter-spacing:.04em}}
+    .searchbar{{background:#fff;padding:8px 22px;border-top:1px solid rgba(255,255,255,.18)}}
+    form{{max-width:1188px;margin:0 auto;display:flex;height:36px;align-items:center;border:1px solid #c8d1e5;background:#f8f9fa;padding:0 12px;color:#22272f}}
+    input{{flex:1;border:0;background:transparent;outline:0;color:#41566b;font-size:13px}}
+    main{{max-width:1188px;margin:0 auto;padding:20px 22px 30px;display:grid;gap:16px}}
+    section{{background:#fff;border:1px solid #dce3ea;border-radius:4px;padding:16px}}
+    h1{{margin:0;color:#11314f;font-size:19px}}
+    p{{margin:4px 0 0;color:#7a8a9b;font-size:12px}}
+    .count{{border:1px solid #dce3ea;padding:8px 12px;font-size:12px;color:#41566b}}
+    .top{{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}}
+    table{{width:100%;border-collapse:collapse;background:#fff;font-size:13px}}
+    th{{background:#f7f9fb;color:#5b6a78;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.04em}}
+    th,td{{border-bottom:1px solid #edf1f5;padding:9px 12px;vertical-align:top}}
+    a{{color:#16538c;text-decoration:underline;font-weight:600}}
+    .empty{{text-align:center;color:#6b7a89;padding:32px}}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="bar"><a class="brand" href="/swficc/">SWFI<span class="sub">SOVEREIGN WEALTH FUND INSTITUTE</span></a></div>
+    <div class="searchbar"><form action="/swficc/search/" method="get"><strong>Smart Search Bar&nbsp;-&nbsp;</strong><input name="q" type="search" value="{escape_html(query)}" placeholder="Institution, Person, Strategy"></form></div>
+  </header>
+  <main>
+    <section class="top"><div><h1>Smart Search Bar</h1><p>SWFI-backed rows only; record links open the corresponding SWFI record pages.</p></div><div class="count">Showing {count:,} of {count:,}</div></section>
+    <table><thead><tr><th>Type</th><th>Result</th><th>Source</th><th>Detail</th><th>Citation</th></tr></thead><tbody>{''.join(row_html)}</tbody></table>
+  </main>
+</body>
+</html>"""
+
+    def backend_source_data_alias(self, backend_path, query):
+        if backend_path != "/api/source-data/search/v1":
+            return backend_path, query
+        params = urllib.parse.parse_qs(query, keep_blank_values=True)
+        collection = str((params.get("collection") or [""])[0]).strip().lower()
+        alias_path = {
+            "transaction": "/api/transactions/v1",
+            "transactions": "/api/transactions/v1",
+            "deal": "/api/transactions/v1",
+            "deals": "/api/transactions/v1",
+            "rfp": "/api/live-opportunities/v1",
+            "rfps": "/api/live-opportunities/v1",
+            "mandate": "/api/live-opportunities/v1",
+            "mandates": "/api/live-opportunities/v1",
+            "opportunity": "/api/live-opportunities/v1",
+            "opportunities": "/api/live-opportunities/v1",
+            "news": "/api/source-intelligence/news/v1",
+            "intelligence": "/api/source-intelligence/news/v1",
+            "research": "/api/source-intelligence/news/v1",
+            "allocator": "/api/allocator-activity/v1",
+            "allocators": "/api/allocator-activity/v1",
+            "active_allocators": "/api/allocator-activity/v1",
+        }.get(collection)
+        if not alias_path:
+            return backend_path, query
+        params.pop("collection", None)
+        if alias_path == "/api/allocator-activity/v1":
+            params.setdefault("days", ["90"])
+            params.setdefault("sort", ["deal_count"])
+            params.setdefault("direction", ["desc"])
+        return alias_path, urllib.parse.urlencode(params, doseq=True)
 
     def write_body(self, body):
         try:
@@ -1124,6 +1297,8 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(size))
         if self.is_versioned_static_asset(parsed.path, file_path):
             self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+        elif self.is_static_html_shell(file_path):
+            self.send_header("Cache-Control", "public, max-age=60, s-maxage=300, stale-while-revalidate=300")
         else:
             self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
             self.send_header("Pragma", "no-cache")
@@ -1139,6 +1314,9 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
         elif normalized.startswith("/swficc/"):
             normalized = normalized.removeprefix("/swficc")
         return normalized.startswith("/_next/static/") and file_path.name != "index.html"
+
+    def is_static_html_shell(self, file_path):
+        return file_path.suffix.lower() == ".html"
 
     def static_path(self, request_path):
         unquoted = urllib.parse.unquote(request_path)
@@ -1194,6 +1372,7 @@ class StaticProxyServer(ThreadingHTTPServer):
         self.backend = backend
         self.backend_timeout = backend_timeout
         self.backend_token = backend_token
+        self.public_search_cache = {}
         self.auth_username = load_secret(
             "SWFIPN_AUTH_USERNAME",
             "SWFIPN_AUTH_USERNAME_KEYCHAIN_SERVICE",

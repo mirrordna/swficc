@@ -250,9 +250,15 @@ function swfiSigninHandoffUrl(value, expectedTarget) {
     if (!redirect) return false;
     const redirectUrl = new URL(redirect, new URL(origin).origin);
     const expectedUrl = new URL(expectedTarget, new URL(origin).origin);
-    return redirectUrl.origin === expectedUrl.origin
+    const direct = redirectUrl.origin === expectedUrl.origin
       && redirectUrl.pathname.replace(/\/?$/, "/") === expectedUrl.pathname.replace(/\/?$/, "/")
       && redirectUrl.search === expectedUrl.search;
+    if (direct) return true;
+    const root = new URL(origin);
+    const bridgePath = `${root.pathname.replace(/\/$/, "")}/auth/bridge/`;
+    return redirectUrl.origin === root.origin
+      && redirectUrl.pathname.replace(/\/?$/, "/") === bridgePath
+      && (redirectUrl.searchParams.get("next") || "") === appTarget(expectedTarget);
   } catch {
     return false;
   }

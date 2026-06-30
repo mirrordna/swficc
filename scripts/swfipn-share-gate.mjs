@@ -125,7 +125,7 @@ async function renderedPublicCheck() {
   const { chromium } = loadPlaywright();
   const browser = await chromium.launch({
     headless: true,
-    args: resolveIp ? [`--host-resolver-rules=MAP ${originHost} ${resolveIp}`] : [],
+    args: stableBrowserArgs(originHost),
   });
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const result = { ok: true, url: origin, final_url: "", status: null, failures: [], counts: {} };
@@ -167,6 +167,12 @@ async function renderedPublicCheck() {
   return result;
 }
 
+function stableBrowserArgs(host) {
+  const args = ["--disable-gpu", "--disable-dev-shm-usage"];
+  if (resolveIp) args.push(`--host-resolver-rules=MAP ${host} ${resolveIp}`);
+  return args;
+}
+
 async function waitForBody(page, required, timeout) {
   const start = Date.now();
   let body = "";
@@ -174,7 +180,11 @@ async function waitForBody(page, required, timeout) {
     body = await page.locator("body").innerText().catch(() => "");
     const lower = body.toLowerCase();
     if (required.every((item) => lower.includes(item.toLowerCase())) && !/\bLoading\b/.test(body)) return body;
-    await page.waitForTimeout(750);
+    try {
+      await page.waitForTimeout(750);
+    } catch {
+      return body;
+    }
   }
   return body;
 }

@@ -28,7 +28,7 @@ const username = loadSecret("SWFIPN_AUTH_TEST_USERNAME", "SWFIPN_AUTH_USERNAME_K
 const password = loadSecret("SWFIPN_AUTH_TEST_PASSWORD", "SWFIPN_AUTH_PASSWORD_KEYCHAIN_SERVICE", ["SWFIPN_AUTH_PASSWORD", "SWFI_PREVIEW_AUTH_PASSWORD"], false);
 
 const ROUTES = [
-  { route: "/", minControls: 4, requiredBodyText: "Top Active Allocators (Last 90 Days)" },
+  { route: "/", minControls: 0, requiredBodyText: "TOTAL AUM ENGAGED", staticOnly: true },
   { route: "/profiles/", minControls: 1, requiredShowingPrefix: "Showing 25 of", requiredTotalAtLeast: 590_000, requiredBodyText: "Entity Name", testSort: true, filterTerm: "Sovereign Wealth Fund", testRowLimit: true, testPagination: true, expectServerFilter: "/api/source-data/search/v1", serverBackedControls: true },
   { route: "/comparisons/", minControls: 1, requiredShowingPrefix: "Showing 25 of", requiredTotalAtLeast: 590_000, requiredBodyText: "Peer Comparisons", testSort: true, filterTerm: "Sovereign Wealth Fund", testRowLimit: true, testPagination: true, expectServerFilter: "/api/source-data/search/v1", serverBackedControls: true },
   { route: "/people/", minControls: 1, requiredShowingPrefix: "Showing 25 of", requiredTotalAtLeast: 114_000, testSort: true, filterTerm: "Vijay", testRowLimit: true, testPagination: true, expectServerFilter: "/api/source-data/search/v1", serverBackedControls: true },
@@ -98,7 +98,11 @@ function loadSecret(envName, serviceEnvName, defaultServices, strip = true) {
 }
 
 function selectedRoutes() {
-  const routes = gateLevel === "smoke" ? ROUTES.filter((spec) => SMOKE_ROUTE_SET.has(spec.route)) : ROUTES;
+  const onlyRoutes = envList("SWFIPN_TABLE_CONTROLS_ROUTES", []);
+  const routeSet = new Set(onlyRoutes);
+  const routes = onlyRoutes.length
+    ? ROUTES.filter((spec) => routeSet.has(spec.route))
+    : gateLevel === "smoke" ? ROUTES.filter((spec) => SMOKE_ROUTE_SET.has(spec.route)) : ROUTES;
   return routeLimit > 0 ? routes.slice(0, routeLimit) : routes;
 }
 
@@ -437,8 +441,14 @@ function retrySummary(result) {
 async function launchBrowser(chromium, baseHost, resolveIp) {
   return chromium.launch({
     headless: true,
-    args: resolveIp ? [`--host-resolver-rules=MAP ${baseHost} ${resolveIp}`] : [],
+    args: stableBrowserArgs(baseHost, resolveIp),
   });
+}
+
+function stableBrowserArgs(baseHost, resolveIp) {
+  const args = ["--disable-gpu", "--disable-dev-shm-usage"];
+  if (resolveIp) args.push(`--host-resolver-rules=MAP ${baseHost} ${resolveIp}`);
+  return args;
 }
 
 async function run() {

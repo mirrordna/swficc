@@ -760,6 +760,7 @@ async function run() {
       if (publicBody.includes(term)) noLeakFailures.push(`body:${term}`);
     }
     const leakedLinks = receipt.links.filter((link) => {
+      if (isCanonicalSwfiSigninHandoff(link.href) || isCanonicalSwfiSigninHandoff(link.raw)) return false;
       const joined = [link.href, link.raw, link.dashboardTarget].filter(Boolean).join(" ");
       return sourceQueryPattern.test(joined) || objectIdTextPattern.test(cleanText(link.text));
     });

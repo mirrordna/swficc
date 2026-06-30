@@ -78,6 +78,14 @@ Family results:
 - news: `17,663 / 17,663` pass
 - reports: `78 / 78` pass
 
-Current blockers: none.
+Current mapping blockers: none for this mapping receipt.
 
-This gate proves backend record mapping coverage. It is not a substitute for rendering and clicking all record detail pages in a browser.
+This gate proves backend record mapping coverage only. It is not full universe parity and is not a substitute for:
+
+- exhaustive detail/API route rendering,
+- exhaustive required-field parity,
+- exhaustive browser route/link parity,
+- current visual baseline,
+- adversarial review.
+
+Full universe parity remains `UNPROVEN` unless `output/swfipn-brd-contract-truth-gate-latest.json` passes.

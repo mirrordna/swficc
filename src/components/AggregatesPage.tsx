@@ -43,12 +43,15 @@ export default function AggregatesPage() {
   useEffect(() => {
     let active = true;
     const endpoint = `/api/entities/aggregates/v1?entity_class=${encodeURIComponent(entityClass)}&region=${encodeURIComponent(region)}&smoothing=${encodeURIComponent(smoothing)}&start_year=1971`;
-    setPacket(undefined);
+    const resetTimer = window.setTimeout(() => {
+      if (active) setPacket(undefined);
+    }, 0);
     void fetchPacket(endpoint, 60_000, { attempts: 1 }).then((next) => {
       if (active) setPacket(next);
     });
     return () => {
       active = false;
+      window.clearTimeout(resetTimer);
     };
   }, [entityClass, region, smoothing]);
 
