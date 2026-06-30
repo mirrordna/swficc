@@ -1179,9 +1179,9 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
         row_html = []
         for row in rows[:25]:
             name = escape_html(row.get("name") or "Not disclosed")
-            source = escape_html(row.get("source_url") or row.get("swfi_url") or row.get("url") or "")
+            source = str(row.get("source_url") or row.get("swfi_url") or row.get("url") or "")
             detail = escape_html(" / ".join(str(part) for part in [row.get("type") or "", row.get("country") or row.get("region") or "", row.get("aum") or row.get("assets") or ""] if str(part or "").strip()))
-            href = source if source else "/swficc/profiles/"
+            href = escape_html(self.swficc_record_href_from_source(source) or "/swficc/profiles/")
             row_html.append(f"""
               <tr>
                 <td>Institution</td>
@@ -1232,6 +1232,31 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
   </main>
 </body>
 </html>"""
+
+    def swficc_record_href_from_source(self, source):
+        raw = str(source or "").strip()
+        if not raw:
+            return ""
+        try:
+            parsed = urllib.parse.urlsplit(raw)
+        except ValueError:
+            return ""
+        host = (parsed.hostname or "").lower()
+        if host not in {"www.swfi.com", "swfi.com", "cms.swfi.com"}:
+            return ""
+        match = re.fullmatch(r"/v1/(entities|people|transactions|compass)/([a-fA-F0-9]{24})", parsed.path.rstrip("/"))
+        if not match:
+            legacy = urllib.parse.parse_qs(parsed.query).get("p", [""])[0]
+            if legacy.isdigit():
+                return f"/swficc/research/detail/?{urllib.parse.urlencode({'legacy': legacy})}"
+            return ""
+        route_by_section = {
+            "entities": "/swficc/profiles/detail/",
+            "people": "/swficc/people/detail/",
+            "transactions": "/swficc/transactions/detail/",
+            "compass": "/swficc/mandates/detail/",
+        }
+        return f"{route_by_section[match.group(1)]}?{urllib.parse.urlencode({'id': match.group(2)})}"
 
     def backend_source_data_alias(self, backend_path, query):
         if backend_path != "/api/source-data/search/v1":
