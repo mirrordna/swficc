@@ -90,7 +90,7 @@ export default function SwfiBrandHeader({
           method="get"
           className="mx-auto flex h-9 max-w-[1296px] items-center overflow-hidden border border-[#C8D1E5] bg-[#F8F9FA] px-3 text-[13px] text-[#444D5F]"
         >
-          <label htmlFor={searchId} className="shrink-0 font-semibold text-[#22272F]">Smart Search Bar</label>
+          <label htmlFor={searchId} className="shrink-0 font-semibold text-[#22272F]">Smart Search</label>
           <span className="shrink-0 text-[#70798B]">&nbsp;-&nbsp;</span>
           <input
             id={searchId}

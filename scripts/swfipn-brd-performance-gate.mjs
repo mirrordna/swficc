@@ -51,7 +51,7 @@ async function main() {
   const domContentLoadedMs = Date.now() - started;
   await page.waitForSelector("text=Discover", { timeout: 120_000 });
   const discoverMs = Date.now() - started;
-  await page.waitForSelector("text=Newest Data", { timeout: 120_000 });
+  await page.waitForSelector("text=Recent Activity", { timeout: 120_000 });
   const newestDataMs = Date.now() - started;
   await page.waitForSelector("text=Top 10", { timeout: 120_000 });
   const topTenMs = Date.now() - started;
@@ -59,7 +59,7 @@ async function main() {
     const text = document.body.innerText || "";
     const sourceBackedLink = document.querySelector('a[data-source-state="on-file"], a[data-record-link="true"]');
     return /Latest Intelligence|Most Referenced|Topics/.test(text)
-      && /Newest Data/.test(text)
+      && /Recent Activity/.test(text)
       && /Top 10/.test(text)
       && Boolean(sourceBackedLink);
   }, null, { timeout: 120_000 });

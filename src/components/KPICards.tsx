@@ -15,7 +15,7 @@ export default function KPICards({ kpis }: { kpis: SnapshotKPI[] }) {
           key={kpi.label}
           href={selfContainedHref(kpi.href, "/")}
           data-source-state={provenance ? "on-file" : undefined}
-          title={provenance ? "Source on file" : undefined}
+          title={provenance ? "View details" : undefined}
           className="flex flex-col gap-1 border-r border-gray-300 px-3 py-2 text-inherit no-underline last:border-r-0 hover:bg-gray-50"
         >
           <span className="text-sm text-black">

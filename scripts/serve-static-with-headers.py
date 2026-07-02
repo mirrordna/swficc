@@ -1230,11 +1230,11 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
 <body>
   <header>
     <div class="bar"><a class="brand" href="/swficc/">SWFI<span class="sub">SOVEREIGN WEALTH FUND INSTITUTE</span></a></div>
-    <div class="searchbar"><form action="/swficc/search/" method="get"><strong>Smart Search Bar&nbsp;-&nbsp;</strong><input name="q" type="search" value="{escape_html(query)}" placeholder="Institution, Person, Strategy"></form></div>
+    <div class="searchbar"><form action="/swficc/search/" method="get"><strong>Smart Search&nbsp;-&nbsp;</strong><input name="q" type="search" value="{escape_html(query)}" placeholder="Institution, Person, Strategy"></form></div>
   </header>
   <main>
-    <section class="top"><div><h1>Smart Search Bar</h1><p>SWFI-backed rows only; record links open the corresponding SWFI record pages.</p></div><div class="count">Showing {count:,} of {count:,}</div></section>
-    <table><thead><tr><th>Type</th><th>Result</th><th>Source</th><th>Detail</th><th>Citation</th></tr></thead><tbody>{''.join(row_html)}</tbody></table>
+    <section class="top"><div><h1>Smart Search</h1><p>Results are ranked for institutional relevance. Select any row to continue.</p></div><div class="count">Showing {count:,} of {count:,}</div></section>
+    <table><thead><tr><th>Type</th><th>Result</th><th>Source</th><th>Detail</th><th>Record</th></tr></thead><tbody>{''.join(row_html)}</tbody></table>
   </main>
 </body>
 </html>"""

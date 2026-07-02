@@ -19,6 +19,7 @@ This pack explains what the dashboard is, how to use it, how releases should be 
 | `RELEASE_VALIDATION_SCRIPT.md` | Demo/release script for telling testers exactly what changed and what to validate. |
 | `RECEIPT_INDEX.md` | Receipt map for operators who need to prove a claim before sending it externally. |
 | `KNOWN_CAVEATS_AND_OWNERS.md` | Current caveats, blockers, and ownership buckets. |
+| `FEEDBACK_OBJECTIVE_RESPONSE.md` | Response matrix for the latest dashboard feedback objective and the specific validation scenarios to test. |
 
 ## Current Product Position
 

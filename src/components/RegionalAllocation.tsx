@@ -29,7 +29,7 @@ export default function RegionalAllocation({ regions }: { regions: RegionalItem[
                   <a
                     href={selfContainedHref(r.href, "/transactions/")}
                     data-source-state={provenance ? "on-file" : undefined}
-                    title={provenance ? "Source on file" : undefined}
+                    title={provenance ? "View details" : undefined}
                     className="text-black no-underline hover:underline"
                   >
                     {r.region}

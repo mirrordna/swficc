@@ -41,7 +41,7 @@ async function main() {
     await page.waitForLoadState("networkidle", { timeout: 120_000 }).catch(() => null);
     await page.waitForTimeout(1500);
     const initialText = await page.locator("body").innerText();
-    for (const required of ["Smart Search Bar", "Saved Search Workspace", "Save filters", "Load Saved"]) {
+    for (const required of ["Smart Search", "Saved Search Workspace", "Save filters", "Load Saved"]) {
       if (!initialText.includes(required)) failures.push(`missing_initial_text_${slug(required)}`);
     }
 

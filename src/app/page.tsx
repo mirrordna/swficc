@@ -72,14 +72,13 @@ type BrdSearchGroup = {
 
 const navMain = [
   ["Dashboard", "/"],
+  ["News", "/intelligence"],
   ["Institutions", "/profiles"],
   ["People", "/people"],
-  ["Deals", "/deals"],
-  ["Active Allocators", "/allocators"],
-  ["Comparisons", "/comparisons"],
+  ["Transactions", "/transactions"],
+  ["Compass", "/compass"],
   ["RFPs", "/mandates"],
   ["Reports", "/reports"],
-  ["Intelligence", "/intelligence"],
 ] as const;
 
 const navIntel = [
@@ -98,7 +97,7 @@ export default function DashboardPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeSearchIndex, setActiveSearchIndex] = useState(0);
   const [newsTab, setNewsTab] = useState<"latest" | "referenced" | "topics">("latest");
-  const [newestTab, setNewestTab] = useState<"transactions" | "rfps" | "opportunities" | "people">("transactions");
+  const [recentTab, setRecentTab] = useState<"transactions" | "rfps" | "opportunities" | "people">("transactions");
   const [topTab, setTopTab] = useState<"compass" | "sector">("compass");
   const [expandedPanel, setExpandedPanel] = useState("institution-overview");
   const visualControls = useMemo<DashboardTableControls>(() => ({ rowLimit: 5, sortColumn: 0, sortDir: "asc" }), []);
@@ -221,9 +220,9 @@ export default function DashboardPage() {
       <main className="mx-auto grid max-w-[1440px] gap-x-14 gap-y-8 px-4 py-8 sm:px-8 xl:grid-cols-[minmax(0,1fr)_304px]">
         <BrdNewsFeed rows={newsRows} tab={newsTab} onTabChange={setNewsTab} />
         <BrdRightRail sectorRows={sectorRows} />
-        <BrdNewestData
-          tab={newestTab}
-          onTabChange={setNewestTab}
+        <BrdRecentActivity
+          tab={recentTab}
+          onTabChange={setRecentTab}
           transactionRows={transactionRows}
           rfpRows={rfpRows}
           peopleRows={peopleRows}
@@ -255,8 +254,6 @@ function BrdTopNavigation({ onSearchOpen }: { onSearchOpen: () => void }) {
     ["Deals", "/transactions"],
     ["Compass", "/mandates"],
     ["RFPs", "/mandates"],
-    ["Active Allocators", "/allocators"],
-    ["Deals & Transactions", "/deals"],
     ["Reports", "/reports"],
   ] as const;
   return (
@@ -316,7 +313,7 @@ function BrdDiscoverBar({ quickLinks, dataAsOfLabel, onSearchOpen }: {
           className="flex min-h-[44px] min-w-0 items-center justify-between gap-3 bg-white px-4 text-left text-[13px] text-[#758092] shadow-sm"
           aria-label="Open Global Search"
         >
-          <span className="truncate">Search For Entities, People, Transactions, News, opportunities...</span>
+          <span className="truncate">Search entities, people, transactions, news, and opportunities...</span>
           <kbd className="shrink-0 border border-[#DEE2E7] bg-[#F4F5F7] px-1.5 py-0.5 font-mono text-[11px] font-bold text-[#2D3446]">Ctrl/⌘ + K</kbd>
         </button>
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-[#7A8190]">
@@ -580,7 +577,7 @@ function BrdRightRail({ sectorRows }: { sectorRows: Record<string, unknown>[] })
   );
 }
 
-function BrdNewestData({ tab, onTabChange, transactionRows, rfpRows, peopleRows }: {
+function BrdRecentActivity({ tab, onTabChange, transactionRows, rfpRows, peopleRows }: {
   tab: "transactions" | "rfps" | "opportunities" | "people";
   onTabChange: (tab: "transactions" | "rfps" | "opportunities" | "people") => void;
   transactionRows: Record<string, unknown>[];
@@ -590,7 +587,7 @@ function BrdNewestData({ tab, onTabChange, transactionRows, rfpRows, peopleRows 
   const rowsToUse = brdNewestRows(tab, transactionRows, rfpRows, peopleRows);
   return (
     <section data-gsap-reveal className="min-w-0">
-      <h2 className="font-serif text-[28px] leading-none text-[#22293C]">Newest Data</h2>
+      <h2 className="font-serif text-[28px] leading-none text-[#22293C]">Recent Activity</h2>
       <BrdTabs
         className="mt-5"
         tabs={[
@@ -603,7 +600,7 @@ function BrdNewestData({ tab, onTabChange, transactionRows, rfpRows, peopleRows 
         onChange={(value) => onTabChange(value as "transactions" | "rfps" | "opportunities" | "people")}
       />
       <DashboardSectionNote>
-        Recent activity by category. Open any item to continue into the matching SWFI workflow.
+        Five current items by category, with dates where available. Select an item to review the matching record.
       </DashboardSectionNote>
       <BrdActivityCards headers={rowsToUse.headers} rows={rowsToUse.rows} empty={DASHBOARD_EMPTY} />
     </section>
@@ -630,7 +627,7 @@ function BrdTopTen({ tab, onTabChange, rfpRows, sectorRows }: {
         onChange={(value) => onTabChange(value as "compass" | "sector")}
       />
       <DashboardSectionNote>
-        A compact ranking of current dashboard activity. Open any item to continue into the matching view.
+        A compact ranking of current dashboard activity. Select any item to continue into the matching view.
       </DashboardSectionNote>
       <BrdRankingVisual headers={["Inv Type", "Amount (USD)", "Count"]} rows={rowsToUse} empty={DASHBOARD_EMPTY} />
     </section>
@@ -780,7 +777,7 @@ function DashboardSectionNote({ children }: { children: ReactNode }) {
 }
 
 function BrdActivityCards({ headers, rows: sourceRows, empty }: { headers: string[]; rows: Cell[][]; empty: string }) {
-  const visible = sourceRows.slice(0, 6);
+  const visible = sourceRows.slice(0, 5);
   return (
     <div className="mt-5 grid gap-3 md:grid-cols-2">
       {visible.length ? visible.map((row, index) => (
@@ -802,7 +799,7 @@ function BrdActivityCards({ headers, rows: sourceRows, empty }: { headers: strin
         <div className="border border-[#D8DEE8] bg-white px-3 py-4 text-[13px] text-[#606A7C] md:col-span-2">{empty}</div>
       )}
       {sourceRows.length > visible.length ? (
-        <div className="text-[11px] font-semibold text-[#667386] md:col-span-2">Top dashboard signals shown</div>
+        <div className="text-[11px] font-semibold text-[#667386] md:col-span-2">Showing top 5 dashboard signals</div>
       ) : null}
     </div>
   );
@@ -876,37 +873,64 @@ function brdSearchGroups({ query, entityRows, peopleRows, transactionRows, rfpRo
   };
   const group = (label: string, items: BrdSearchItem[]): BrdSearchGroup => ({ label, items: items.slice(0, 5) });
   return [
-    group("Entities", entityRows.filter(filter).map((row) => ({
+    group("Entities", rankRecordsForQuery(entityRows.filter(filter), query, "entity").map((row) => ({
       label: brdText(row.name),
       detail: [brdText(row.type || row.entity_type, "Entity"), brdText(row.country, "")].filter(Boolean).join(" · "),
       href: dashboardProfileHref(row),
       sourceHref: sourceHref(row),
     }))),
-    group("RFPs & Opportunities", rfpRows.filter(filter).map((row) => ({
+    group("RFPs & Opportunities", rankRecordsForQuery(rfpRows.filter(filter), query, "rfp").map((row) => ({
       label: brdText(row.title || row.name),
       detail: [brdText(row.institution, ""), brdText(row.strategy || row.asset_class_or_strategy, "")].filter(Boolean).join(" · "),
       href: dashboardMandateHref(row),
       sourceHref: sourceHref(row),
     }))),
-    group("Transactions", transactionRows.filter(filter).map((row) => ({
+    group("Transactions", rankRecordsForQuery(transactionRows.filter(filter), query, "transaction").map((row) => ({
       label: brdText(row.title || row.name),
       detail: [brdText(row.buyer_entity || row.institution, ""), cleanMoney(row.amount_display || row.capital_display || row.amount)].filter(Boolean).join(" · "),
       href: dashboardTransactionHref(row),
       sourceHref: sourceHref(row),
     }))),
-    group("News & Articles", newsRows.filter(filter).map((row) => ({
+    group("News & Articles", rankRecordsForQuery(newsRows.filter(filter), query, "news").map((row) => ({
       label: brdText(row.title || row.name),
       detail: [brdReadTime(row), brdText(row.source, "")].filter(Boolean).join(" · "),
       href: researchRecordHref(row),
       sourceHref: sourceHref(row),
     }))),
-    group("People", peopleRows.filter(filter).map((row) => ({
+    group("People", rankRecordsForQuery(peopleRows.filter(filter), query, "person").map((row) => ({
       label: brdText(row.name),
       detail: [brdText(row.title, ""), brdText(row.institution, "")].filter(Boolean).join(" · "),
       href: dashboardPersonHref(row),
       sourceHref: sourceHref(row),
     }))),
   ].filter((searchGroup) => searchGroup.items.length);
+}
+
+function rankRecordsForQuery(rowsToUse: Record<string, unknown>[], query: string, kind: "entity" | "person" | "transaction" | "rfp" | "news") {
+  const cleanQuery = query.trim();
+  if (!cleanQuery) return rowsToUse;
+  return [...rowsToUse].sort((a, b) => searchRelevanceScore(b, cleanQuery, kind) - searchRelevanceScore(a, cleanQuery, kind));
+}
+
+function searchRelevanceScore(row: Record<string, unknown>, query: string, kind: "entity" | "person" | "transaction" | "rfp" | "news") {
+  const clean = query.trim().toLowerCase();
+  const name = brdText(row.name || row.title || row.institution || row.buyer_entity, "").toLowerCase();
+  const type = brdText(row.type || row.entity_type || row.asset_class_or_strategy || row.strategy, "").toLowerCase();
+  const country = brdText(row.country || row.region, "").toLowerCase();
+  const all = Object.values(row).filter((value) => typeof value === "string").join(" ").toLowerCase();
+  const terms = clean.split(/\s+/).filter(Boolean);
+  let score = 0;
+  if (name === clean) score += 1000;
+  if (name.startsWith(clean)) score += 700;
+  if (name.includes(clean)) score += 520;
+  if (terms.length && terms.every((term) => name.includes(term))) score += 320;
+  if (terms.length && terms.every((term) => all.includes(term))) score += 180;
+  if (country.includes(clean)) score += 60;
+  if (/sovereign wealth fund|central bank|public pension|pension|investment authority|asset owner/i.test(type)) score += kind === "entity" ? 180 : 45;
+  if (/\b(adia|abu dhabi investment authority)\b/i.test(name) && /abu|dhabi|adia/.test(clean)) score += 500;
+  if (/\b(mubadala|adia|adq|abu dhabi)\b/i.test(name) && /abu|dhabi|uae|united arab emirates/.test(clean)) score += 180;
+  score += Math.min(80, Math.log10((aumValue(row) || amountValue(row) || 0) + 1) * 8);
+  return score;
 }
 
 function brdNewestRows(
@@ -917,21 +941,23 @@ function brdNewestRows(
 ): { headers: string[]; rows: Cell[][] } {
   if (tab === "transactions") {
     return {
-      headers: ["Name", "Buyer Entity", "Amount (USD)"],
+      headers: ["Name", "Buyer Entity", "Amount (USD)", "Date"],
       rows: transactionRows.map((row) => [
         dealCell(row),
         buyerCell(row),
         cleanMoney(row.amount_display || row.capital_display || row.amount),
+        recordDate(row),
       ]),
     };
   }
   if (tab === "people") {
     return {
-      headers: ["Name", "Title", "Institution"],
+      headers: ["Name", "Title", "Institution", "Updated"],
       rows: peopleRows.map((row) => [
         personCell(row),
         brdText(row.title),
         brdText(row.institution),
+        recordDate(row),
       ]),
     };
   }
@@ -940,11 +966,12 @@ function brdNewestRows(
     : rfpRows.filter((row) => !/opportun/i.test(brdText(row.type, "")));
   const rowsToUse = visibleRfps.length ? visibleRfps : rfpRows;
   return {
-    headers: ["Name", "Institution", "Deadline"],
+    headers: ["Name", "Institution", "Deadline", "Action"],
     rows: rowsToUse.map((row) => [
       mandateCell(row),
       brdText(row.institution),
       timelineDate(row),
+      "Review mandate",
     ]),
   };
 }
@@ -1051,7 +1078,7 @@ function personCell(row: Record<string, unknown>): Cell {
     label: brdText(row.name),
     href: dashboardPersonHref(row),
     sourceHref: source,
-    citationText: "SWFI people source on file",
+    citationText: "View details",
   };
 }
 
@@ -1084,7 +1111,7 @@ function ConceptSidebar({ topRows }: { topRows: Record<string, unknown>[] }) {
             className={`mb-1 flex min-h-9 items-center gap-2 border-l-4 px-3 text-[12px] font-semibold no-underline ${index === 0 ? "border-[#D51E29] bg-white/12 text-white" : "border-transparent text-white/70 hover:border-[#D51E29]/70 hover:bg-white/8 hover:text-white"}`}
           >
             <MiniIcon index={index} />
-            <span>{label === "Deals" ? "Deals & Transactions" : label}</span>
+            <span>{label}</span>
           </DashboardLink>
         ))}
         <div className="mb-2 mt-4 px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-white/45">Analytics</div>
@@ -1099,7 +1126,7 @@ function ConceptSidebar({ topRows }: { topRows: Record<string, unknown>[] }) {
           {["SWF", "Pensions", "Real Estate"].map((label) => (
             <DashboardLink key={label} href={`/profiles/?filter=${encodeURIComponent(label)}`} className="flex items-center justify-between border-t border-white/10 py-2 text-[11px] font-semibold text-white/70 no-underline first:border-t-0 hover:text-white">
               <span>{label}</span>
-              <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-white/45">Open</span>
+              <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-white/45">View</span>
             </DashboardLink>
           ))}
         </div>
@@ -1771,7 +1798,7 @@ function UnifiedIntelligencePanel({ rows: insights }: { rows: UnifiedInsight[] }
         ))}
       </div>
       {!visible.length ? <div className="text-[12px] text-[#405062]">{DASHBOARD_EMPTY}</div> : null}
-      <div className="text-[10px] font-semibold text-[#7B8996]">Combined from available SWFI data.</div>
+      <div className="text-[10px] font-semibold text-[#7B8996]">Combines allocator activity, deals, mandates, sectors, and intelligence.</div>
     </div>
   );
 }
@@ -2054,7 +2081,7 @@ function ExpandedNewsRows({ rows: sourceRows, controls }: { rows: Record<string,
   return (
     <MiniRecordTable
       headers={["Headline", "Publisher", "Published", "Open"]}
-      rows={sourceRows.map((row) => [researchCell(row), brdText(row.source), brdText(row.published_at || row.date, "Not disclosed"), sourceDetailCell("Open in SWFI", sourceHref(row) || researchSourceUrl(row))])}
+      rows={sourceRows.map((row) => [researchCell(row), brdText(row.source), brdText(row.published_at || row.date, "Not disclosed"), sourceDetailCell("View details", sourceHref(row) || researchSourceUrl(row))])}
       empty={DASHBOARD_EMPTY}
       controls={controls}
     />
@@ -2078,7 +2105,7 @@ function ExpandedUnifiedInsightRows({ rows: insights, controls }: { rows: Unifie
       headers={["Signal", "Record", "Metric", "Context"]}
       rows={insights.map((insight) => [
         insight.label,
-        { label: insight.title, href: insight.href, sourceHref: insight.sourceHref, citationText: "Open in SWFI" },
+        { label: insight.title, href: insight.href, sourceHref: insight.sourceHref, citationText: "View details" },
         insight.metric,
         insight.detail,
       ])}
@@ -2616,6 +2643,13 @@ function timelineDate(row: Record<string, unknown>) {
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit" }).format(new Date(parsed));
 }
 
+function recordDate(row: Record<string, unknown>) {
+  const value = text(row.closed_at || row.announced_at || row.deadline || row.due_at || row.published_at || row.updated_at || row.last_updated || row.created_at || row.date, "");
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) return brdText(value, "Not disclosed");
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit", year: "numeric" }).format(new Date(parsed));
+}
+
 function mandateUrgencyScore(row: Record<string, unknown>) {
   const parsed = deadlineTime(row);
   if (!Number.isFinite(parsed) || parsed === Number.MAX_SAFE_INTEGER) return 1;
@@ -2726,7 +2760,7 @@ function dealCell(row: Record<string, unknown>): Cell {
     label: brdText(row.title || row.name),
     href: dashboardTransactionHref(row),
     sourceHref: source,
-    citationText: "Open in SWFI",
+    citationText: "View details",
   };
 }
 
@@ -2736,7 +2770,7 @@ function mandateCell(row: Record<string, unknown>): Cell {
     label: brdText(row.title || row.name),
     href: dashboardMandateHref(row),
     sourceHref: source,
-    citationText: "Open in SWFI",
+    citationText: "View details",
   };
 }
 
@@ -2746,13 +2780,16 @@ function researchCell(row: Record<string, unknown>): Cell {
     label: brdText(row.title || row.name),
     href: researchRecordHref(row),
     sourceHref: source,
-    citationText: "Open in SWFI",
+    citationText: "View details",
   };
 }
 
 function sourceDetailCell(label: string, href?: string): Cell {
   const provenance = href ? sourceProvenanceHref(href) : undefined;
-  return provenance ? { label, href: provenance, sourceHref: provenance, citationText: "Open in SWFI" } : label;
+  if (!provenance) return label;
+  const legacy = legacyPostFromSource(provenance);
+  const target = legacy ? `/research/detail/?${new URLSearchParams({ legacy }).toString()}` : provenance;
+  return { label, href: target, sourceHref: provenance, citationText: "View details" };
 }
 
 function cellText(cell: Cell): string {
@@ -2784,7 +2821,7 @@ function displayCell(cell: Cell) {
   return (
     <span className="grid gap-1">
       <DataLink href={cell.href || "#"} sourceHref={cell.sourceHref} className="text-[#16538C] underline">{label}</DataLink>
-      {hasSource ? <span className="text-[10.5px] leading-tight text-[#7A8A9B]">Open in SWFI</span> : null}
+      {hasSource ? <span className="text-[10.5px] leading-tight text-[#7A8A9B]">{cell.citationText || "View details"}</span> : null}
     </span>
   );
 }
@@ -2793,7 +2830,7 @@ function DataLink({ href, sourceHref, className, style, children }: { href: stri
   const target = href;
   const provenance = sourceHref || sourceProvenanceHref(href);
   const recordLink = isCanonicalSwfiRecordHref(href);
-  return <DashboardLink href={target} title={provenance ? "Open in SWFI" : undefined} data-record-link={recordLink ? "true" : undefined} data-source-state={provenance ? "on-file" : undefined} className={className} style={style}>{children}</DashboardLink>;
+  return <DashboardLink href={target} title={provenance ? "View details" : undefined} data-record-link={recordLink ? "true" : undefined} data-source-state={provenance ? "on-file" : undefined} className={className} style={style}>{children}</DashboardLink>;
 }
 
 function isCanonicalSwfiRecordHref(href: string | undefined): boolean {
@@ -2832,7 +2869,7 @@ function entityCell(row: Record<string, unknown>): Cell {
     label: brdText(row.name),
     href: dashboardProfileHref(row),
     sourceHref: source || undefined,
-    citationText: entityId ? "Open in SWFI" : "Allocator activity",
+    citationText: entityId ? "View details" : "Allocator activity",
   };
 }
 

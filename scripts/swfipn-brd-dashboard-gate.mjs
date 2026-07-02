@@ -34,7 +34,7 @@ const requiredText = [
   "Topics",
   "Upcoming Events",
   "Market Focus",
-  "Newest Data",
+  "Recent Activity",
   "Top 10",
   "Compass Investment Types",
   "SWF Buys by Sector",

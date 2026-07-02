@@ -127,9 +127,9 @@ const CONFIG: Record<Kind, { title: string; endpoint: string; columns: string[];
     columns: ["Title", "Source", "Published", "Citation"],
   },
   search: {
-    title: "Smart Search Bar",
+    title: "Smart Search",
     endpoint: "",
-    columns: ["Type", "Result", "Source", "Detail", "Citation"],
+    columns: ["Type", "Result", "Source", "Detail", "Record"],
   },
 };
 
@@ -471,7 +471,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h1 className="m-0 text-[19px] font-bold text-[#11314F]">{config.title}</h1>
-                  <p className="m-0 mt-1 text-[12px] text-[#7A8A9B]">SWFI-backed rows only; record links open the corresponding SWFI record pages.</p>
+	                  <p className="m-0 mt-1 text-[12px] text-[#7A8A9B]">Use filters, sorting, and row links to move from dashboard insight into the matching record view.</p>
                 </div>
                 <div className="rounded border border-[#DCE3EA] px-3 py-2 text-[12px] text-[#41566B]">
                   {waitingForSearch
@@ -505,7 +505,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               className="min-h-10 rounded border border-[#C7D2DD] px-3 text-base outline-none"
-              placeholder="Search SWFI.com"
+              placeholder="Search institutions, people, strategies"
             />
             <button type="submit" className="min-h-10 rounded border border-[#C7D2DD] bg-white px-3 text-base text-[#16538C]">Search</button>
           </form>
@@ -559,8 +559,8 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
         ) : null}
 
         <section data-gsap-reveal className="rounded border border-[#DCE3EA] bg-white px-4 py-3 text-sm text-[#41566B]">
-          <strong className="text-[#11314F]">Updated from SWFI.</strong>
-          <span className="mt-1 block text-[#7A8A9B]">Open any row to view the corresponding SWFI record.</span>
+	          <strong className="text-[#11314F]">Current platform records.</strong>
+	          <span className="mt-1 block text-[#7A8A9B]">Select any row to view details, compare activity, or continue analysis.</span>
         </section>
 
         <section data-gsap-reveal className={`grid gap-2 rounded border border-[#DCE3EA] bg-white px-4 py-3 text-sm sm:items-center ${kind === "allocators" ? "sm:grid-cols-[minmax(0,1fr)_180px_150px_190px]" : kind === "deals" ? "sm:grid-cols-[minmax(0,1fr)_180px_210px_150px]" : "sm:grid-cols-[minmax(0,1fr)_180px_150px]"}`}>
@@ -751,7 +751,7 @@ function displayCell(value?: Cell) {
           const target = productHref(link.href, "/");
           return (
             <span key={`${link.label}-${index}`} className="grid gap-1">
-              <a href={target} onClick={(event) => hardNavigateSameRouteFilter(event, target)} title={link.sourceHref ? "Source on file" : undefined} data-record-link={isFirstPartyRecordHref(target) ? "true" : undefined} data-source-state={link.sourceHref ? "on-file" : undefined} className="text-[#16538C] underline">{link.label}</a>
+              <a href={target} onClick={(event) => hardNavigateSameRouteFilter(event, target)} title={link.sourceHref ? "View details" : undefined} data-record-link={isFirstPartyRecordHref(target) ? "true" : undefined} data-source-state={link.sourceHref ? "on-file" : undefined} className="text-[#16538C] underline">{link.label}</a>
             </span>
           );
         })}
@@ -765,7 +765,7 @@ function displayCell(value?: Cell) {
     const target = productHref(href, "/");
     return (
       <span className="grid gap-1">
-        <a href={target} onClick={(event) => hardNavigateSameRouteFilter(event, target)} title={sourceHref ? "Source on file" : undefined} data-record-link={isFirstPartyRecordHref(target) ? "true" : undefined} data-source-state={sourceHref ? "on-file" : undefined} className="text-[#16538C] underline">{label}</a>
+        <a href={target} onClick={(event) => hardNavigateSameRouteFilter(event, target)} title={sourceHref ? "View details" : undefined} data-record-link={isFirstPartyRecordHref(target) ? "true" : undefined} data-source-state={sourceHref ? "on-file" : undefined} className="text-[#16538C] underline">{label}</a>
       </span>
     );
   }
@@ -982,7 +982,7 @@ function allocatorProfileCell(row: Row): Cell {
         label,
         href: profileDetailHref(row, source || undefined),
         sourceHref: source || undefined,
-        citationText: entityId ? "Source on file" : undefined,
+        citationText: entityId ? "View details" : undefined,
       }
     : NOT_DISCLOSED;
 }
@@ -1127,10 +1127,10 @@ function citation(href: string | undefined, fallback = "/"): Cell {
   if (!provenance) return NOT_DISCLOSED;
   const internalLegacyHref = legacyPostId(provenance) ? researchDetailHref({}, provenance) : firstPartyDetailHrefForSource(provenance, fallback);
   return {
-    label: "Source on file",
+    label: "View details",
     href: internalLegacyHref || fallback,
     sourceHref: provenance,
-    citationText: "Source on file",
+    citationText: "View details",
   };
 }
 
@@ -1754,7 +1754,7 @@ function ComparisonWorkbench({ records, packets }: { records: Row[]; packets: Re
     ["AUM Date", (row: Row) => businessText(row.aum_date)],
     ["Managed Assets", (row: Row) => disclosedMoney(row.managed_assets)],
     ["Peer Group", (row: Row) => businessText(row.type || row.entity_type)],
-    ["Source", (row: Row) => sourceHref(row) ? "Source on file" : NOT_DISCLOSED],
+    ["Source", (row: Row) => sourceHref(row) ? "View details" : NOT_DISCLOSED],
   ] as const;
 
   return (

@@ -21,7 +21,7 @@ export default function DynamicRankings({ rankings }: { rankings: RankingGroup[]
                 <a
                   href={selfContainedHref(group.href, "/profiles/")}
                   data-source-state={groupProvenance ? "on-file" : undefined}
-                  title={groupProvenance ? "Source on file" : undefined}
+                  title={groupProvenance ? "View details" : undefined}
                   className="text-black text-xs no-underline hover:underline"
                 >
                   Open
@@ -39,7 +39,7 @@ export default function DynamicRankings({ rankings }: { rankings: RankingGroup[]
                       <a
                         href={selfContainedHref(item.profile_url, "/profiles/")}
                         data-source-state={provenance ? "on-file" : undefined}
-                        title={provenance ? "Source on file" : undefined}
+                        title={provenance ? "View details" : undefined}
                         className="text-black font-semibold text-sm no-underline hover:underline"
                       >
                         {item.name || item.title || "Institution"}

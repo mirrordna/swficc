@@ -220,7 +220,7 @@ async function waitForDashboard(page, timeout = 90_000) {
         && body.includes("INSIGHTS")
         && body.includes("TOP AUM RANKING");
       const brdDashboard = body.includes("Discover")
-        && body.includes("Newest Data")
+        && body.includes("Recent Activity")
         && body.includes("Top 10")
         && body.includes("MARKET FOCUS");
       return (legacyDashboard || brdDashboard) && !body.includes("Loading");
@@ -792,7 +792,7 @@ async function run() {
     const mobileFailures = [];
     const mobileHasLegacyData = mobileBody.includes("KPI CARDS") && mobileBody.includes("INSIGHTS");
     const mobileHasBrdData = mobileBody.includes("Discover")
-      && mobileBody.includes("Newest Data")
+      && mobileBody.includes("Recent Activity")
       && mobileBody.includes("MARKET FOCUS");
     if (!mobileHasLegacyData && !mobileHasBrdData) mobileFailures.push("missing_mobile_top_level_data");
     if (mobileMetrics.searchCount < 1) mobileFailures.push("missing_mobile_search");
@@ -800,7 +800,7 @@ async function run() {
     const uxFailures = [];
     const missingTextLinks = receipt.links.filter((link) => !cleanText(link.text));
     if (missingTextLinks.length) uxFailures.push(`missing_link_text:${missingTextLinks.length}`);
-    if (!/search/i.test(publicBody) || !/(Newest Data|Name\s+Buyer Entity|Top 10|Count)/i.test(publicBody)) uxFailures.push("missing_table_controls");
+    if (!/search/i.test(publicBody) || !/(Recent Activity|Name\s+Buyer Entity|Top 10|Count)/i.test(publicBody)) uxFailures.push("missing_table_controls");
     if (!/(Top 10|Count|showing|show\s+\d+)/i.test(publicBody)) uxFailures.push("missing_table_counts");
     const performanceFailures = [];
     if (firstUsableMs > usableTargetMs) performanceFailures.push(`first_usable_${firstUsableMs}_gt_${usableTargetMs}`);

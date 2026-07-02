@@ -515,7 +515,7 @@ async function dashboardCheck(browser) {
   try {
     const response = await page.goto(appUrl("/"), { waitUntil: "domcontentloaded", timeout: 45_000 });
     if (!response || response.status() >= 400) result.failures.push(`http_${response?.status() || "missing"}`);
-    const body = await hydratedBody(page, ["SWFI", "SOVEREIGN WEALTH FUND INSTITUTE", "TOTAL AUM ENGAGED", "Top Active Investors", "Newest Data"]);
+    const body = await hydratedBody(page, ["SWFI", "SOVEREIGN WEALTH FUND INSTITUTE", "TOTAL AUM ENGAGED", "Top Active Investors", "Recent Activity"]);
     result.failures.push(...bodyFailures(body));
     const brand = await page.evaluate(() => {
       const header = document.querySelector("header");

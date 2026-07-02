@@ -69,7 +69,10 @@ export default function SearchResultsPage() {
     };
   }, []);
 
-  const resultRows = useMemo(() => packet && isFact(packet) ? rows(packet, "results") : [], [packet]);
+  const resultRows = useMemo(() => {
+    const packetRows = packet && isFact(packet) ? rows(packet, "results") : [];
+    return rankSearchRows(packetRows, query);
+  }, [packet, query]);
   const count = resultRows.length;
   const showingText = query
     ? `Showing ${count.toLocaleString("en-US")} of ${count.toLocaleString("en-US")}`
@@ -82,8 +85,8 @@ export default function SearchResultsPage() {
         <section className="rounded border border-[#DCE3EA] bg-white p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h1 className="m-0 text-[19px] font-bold text-[#11314F]">Smart Search Bar</h1>
-              <p className="m-0 mt-1 text-[12px] text-[#7A8A9B]">SWFI-backed rows only; record links open the corresponding SWFIPN record pages.</p>
+              <h1 className="m-0 text-[19px] font-bold text-[#11314F]">Smart Search</h1>
+              <p className="m-0 mt-1 text-[12px] text-[#7A8A9B]">Results are ranked for institutional relevance. Select any row to continue.</p>
             </div>
             <div className="rounded border border-[#DCE3EA] px-3 py-2 text-[12px] text-[#41566B]">
               {loading && !packet ? "Loading" : showingText}
@@ -99,7 +102,7 @@ export default function SearchResultsPage() {
                 <th className="border-b border-[#DCE3EA] px-3 py-2">Result</th>
                 <th className="border-b border-[#DCE3EA] px-3 py-2">Source</th>
                 <th className="border-b border-[#DCE3EA] px-3 py-2">Detail</th>
-                <th className="border-b border-[#DCE3EA] px-3 py-2">Citation</th>
+                <th className="border-b border-[#DCE3EA] px-3 py-2">Record</th>
               </tr>
             </thead>
             <tbody>
@@ -114,7 +117,7 @@ export default function SearchResultsPage() {
                     <td className="border-b border-[#EDF1F5] px-3 py-2">SWFI</td>
                     <td className="border-b border-[#EDF1F5] px-3 py-2">{[text(row.type, ""), text(row.country || row.region, ""), money(row.aum || row.assets)].filter(Boolean).join(" / ")}</td>
                     <td className="border-b border-[#EDF1F5] px-3 py-2">
-                      {source ? <a href={productHref(source, "/profiles/")} className="text-[#16538C] underline">Open</a> : "Not disclosed"}
+                      {source ? <a href={productHref(source, "/profiles/")} className="text-[#16538C] underline">View details</a> : "Not disclosed"}
                     </td>
                   </tr>
                 );
@@ -133,6 +136,32 @@ export default function SearchResultsPage() {
 
 function sourceHref(row: Record<string, unknown>): string {
   return text(row.source_url || row.swfi_url || row.url || row.href, "");
+}
+
+function rankSearchRows(sourceRows: Record<string, unknown>[], query: string) {
+  const clean = query.trim();
+  if (!clean) return sourceRows;
+  return [...sourceRows].sort((a, b) => searchScore(b, clean) - searchScore(a, clean));
+}
+
+function searchScore(row: Record<string, unknown>, query: string) {
+  const clean = query.trim().toLowerCase();
+  const name = text(row.name || row.title || row.institution, "").toLowerCase();
+  const type = text(row.type || row.entity_type, "").toLowerCase();
+  const country = text(row.country || row.region, "").toLowerCase();
+  const all = Object.values(row).filter((value) => typeof value === "string").join(" ").toLowerCase();
+  const terms = clean.split(/\s+/).filter(Boolean);
+  let score = 0;
+  if (name === clean) score += 1000;
+  if (name.startsWith(clean)) score += 700;
+  if (name.includes(clean)) score += 520;
+  if (terms.length && terms.every((term) => name.includes(term))) score += 320;
+  if (terms.length && terms.every((term) => all.includes(term))) score += 180;
+  if (country.includes(clean)) score += 60;
+  if (/sovereign wealth fund|central bank|public pension|pension|investment authority|asset owner/i.test(type)) score += 180;
+  if (/\b(adia|abu dhabi investment authority)\b/i.test(name) && /abu|dhabi|adia/.test(clean)) score += 500;
+  if (/\b(mubadala|adia|adq|abu dhabi)\b/i.test(name) && /abu|dhabi|uae|united arab emirates/.test(clean)) score += 180;
+  return score;
 }
 
 function productHref(href: string | undefined, fallback = "/"): string {

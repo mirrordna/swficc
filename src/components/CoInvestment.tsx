@@ -25,7 +25,7 @@ export default function CoInvestment({ data }: { data: CoInvestmentTracking }) {
             key={k.label}
             href={selfContainedHref(k.href, "/transactions/")}
             data-source-state={provenance ? "on-file" : undefined}
-            title={provenance ? "Source on file" : undefined}
+            title={provenance ? "View details" : undefined}
             className="flex min-w-[120px] flex-col gap-1 border border-gray-300 px-3 py-2 no-underline text-inherit"
           >
             <span className="text-gray-500 text-xs uppercase">{k.label}</span>
@@ -39,7 +39,7 @@ export default function CoInvestment({ data }: { data: CoInvestmentTracking }) {
         <a
           href={selfContainedHref(data.network.href, "/search/")}
           data-source-state={sourceProvenanceHref(data.network.href) ? "on-file" : undefined}
-          title={sourceProvenanceHref(data.network.href) ? "Source on file" : undefined}
+          title={sourceProvenanceHref(data.network.href) ? "View details" : undefined}
           className="block border border-gray-300 p-3 no-underline text-inherit mb-3"
         >
           <strong className="block text-gray-900 mb-1">{data.network.title}</strong>
@@ -64,7 +64,7 @@ export default function CoInvestment({ data }: { data: CoInvestmentTracking }) {
                 key={i}
                 href={selfContainedHref(row.href, "/transactions/")}
                 data-source-state={provenance ? "on-file" : undefined}
-                title={provenance ? "Source on file" : undefined}
+                title={provenance ? "View details" : undefined}
                 className="grid no-underline text-inherit hover:bg-gray-50"
                 style={{ gridTemplateColumns: "1fr 1fr 0.8fr 1fr 0.8fr" }}
               >

@@ -67,13 +67,13 @@ const requiredHeaderLinks = ["Dashboard", "News", "Entities", "People", "Transac
 const requiredDashboardText = [
   "SWFI",
   "Discover",
-  "Newest Data",
+  "Recent Activity",
   "Transactions",
   "Market Focus",
   "Compass Investment Types",
   "SWF Buys by Sector",
 ];
-const requiredDashboardHydrationText = ["Discover", "Newest Data", "Top 10"];
+const requiredDashboardHydrationText = ["Discover", "Recent Activity", "Top 10"];
 const leakPattern = /(?:[?&]source=|%3Fsource%3D|%26source%3D|source_gap|source_filter|schema_version|result_qualifier|backend|active mirror)/i;
 const dashboardPlaceholderPattern = /\b(Source gap|source_gap|Loading|No source selected|No internal record mapping|citation-only)\b/i;
 

@@ -108,7 +108,7 @@ async function inspectRoute(context, spec) {
           title: anchor.getAttribute("title") || "",
           recordLink: anchor.getAttribute("data-record-link") || "",
         }))
-        .filter((anchor) => anchor.sourceState === "on-file" || anchor.title === "Source on file" || anchor.recordLink === "true" || (sourceRecordPattern ? sourceRecordPattern.test(anchor.href) : false))
+        .filter((anchor) => anchor.sourceState === "on-file" || anchor.title === "View details" || anchor.recordLink === "true" || (sourceRecordPattern ? sourceRecordPattern.test(anchor.href) : false))
         .length;
       return { bodyText, showing, links, internalRecordLinks, authHandoffLinks, sourceBackedLinks };
     }, { recordHrefPattern: spec.recordHrefPattern, handoffPattern: spec.handoffPattern || "", sourcePattern: spec.sourcePattern || "" });

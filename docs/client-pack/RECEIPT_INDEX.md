@@ -22,6 +22,7 @@ This index is for operators. Do not paste raw receipt internals into client-faci
 | Adversarial review | `output/swfipn-adversarial-review-latest.json` |
 | Acceptance lock | `output/swfipn-acceptance-lock-latest.json` |
 | Loop collapse | `output/swfipn-loop-collapse-latest.json` |
+| Latest dashboard feedback objective | `output/swfipn-feedback-objective-gate-latest.json` |
 
 ## Rule
 
@@ -40,3 +41,5 @@ Common screenshot files:
 - `output/swfipn-section-visualization-compass.png`
 - `output/swfipn-section-visualization-people.png`
 - `output/swfipn-section-visualization-reports.png`
+- `output/swfipn-feedback-objective-dashboard.png`
+- `output/swfipn-feedback-objective-mobile.png`

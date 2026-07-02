@@ -25,7 +25,7 @@ const routes = [
   { path: "/transactions/", required: ["Transactions"] },
   { path: "/mandates/", required: ["RFPs"] },
   { path: "/reports/", required: ["Reports Intelligence", "AUM Rankings"] },
-  { path: "/search/", required: ["Smart Search Bar"] },
+  { path: "/search/", required: ["Smart Search"] },
   { path: "/research/", required: ["Research / News", "Data source", "Citation"] },
 ];
 

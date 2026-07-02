@@ -22,7 +22,7 @@ const forbiddenText = [
 const pdfRequired = [
   "Key Enhancements (High Impact)",
   "1 Dashboard",
-  "Smart Search Bar",
+  "Smart Search",
   "Main Dashboard Area",
   "KPI CARDS",
   "INSIGHTS",
@@ -39,7 +39,7 @@ const routes = [
     required: [
       "SWFI",
       "Discover",
-      "Newest Data",
+      "Recent Activity",
       "Transactions",
       "MARKET FOCUS",
       "Compass Investment Types",
@@ -51,7 +51,7 @@ const routes = [
   { path: "/transactions/", mode: "public", required: ["Transactions", "Data source:", "SWFI records"] },
   { path: "/mandates/", mode: "public", required: ["RFPs / Mandates", "Data source:", "SWFI records"] },
   { path: "/reports/", mode: "public", required: ["Reports Intelligence", "AUM Rankings"] },
-  { path: "/search/", mode: "public", required: ["Smart Search Bar", "Institution, Person, Strategy"] },
+  { path: "/search/", mode: "public", required: ["Smart Search", "Institution, Person, Strategy"] },
   { path: "/research/", mode: "public", required: ["Research / News", "Data source:", "SWFI records"] },
 ];
 
@@ -225,7 +225,7 @@ async function collectViewport(page, base, viewport, receipt) {
     const bodyText = document.body.innerText;
     const primaryText = [
       "Discover",
-      "Newest Data",
+      "Recent Activity",
       "Transactions",
       "MARKET FOCUS",
       "Compass Investment Types",

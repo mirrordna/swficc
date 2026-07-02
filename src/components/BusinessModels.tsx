@@ -33,7 +33,7 @@ export default function BusinessModels({ models }: { models: BusinessModelItem[]
                     <a
                       href={selfContainedHref(m.href, "/transactions/")}
                       data-source-state={provenance ? "on-file" : undefined}
-                      title={provenance ? "Source on file" : undefined}
+                      title={provenance ? "View details" : undefined}
                       className="text-black no-underline hover:underline"
                     >
                       {m.sector}

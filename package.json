@@ -163,7 +163,9 @@
     "brd:contract-truth:gate": "node scripts/swfipn-brd-contract-truth-gate.mjs",
     "brd:contract-truth:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ SWFIPN_BACKEND_ORIGIN=https://swfipn.activemirror.ai node scripts/swfipn-brd-contract-truth-gate.mjs",
     "demo:smoke": "node scripts/swfipn-pre-demo-smoke.mjs",
-    "demo:smoke:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ SWFIPN_BACKEND_ORIGIN=https://swfipn.activemirror.ai node scripts/swfipn-pre-demo-smoke.mjs"
+    "demo:smoke:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ SWFIPN_BACKEND_ORIGIN=https://swfipn.activemirror.ai node scripts/swfipn-pre-demo-smoke.mjs",
+    "feedback:objective:gate": "node scripts/swfipn-feedback-objective-gate.mjs",
+    "feedback:objective:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ node scripts/swfipn-feedback-objective-gate.mjs"
   },
   "dependencies": {
     "gsap": "^3.15.0",

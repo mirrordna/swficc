@@ -13,7 +13,7 @@ const pdfPath = process.env.SWFIPN_PDF_PATH || "/Users/mirror-pro/Downloads/Key 
 
 const REQUIRED_FEATURES = [
   "Dashboard",
-  "Smart Search Bar",
+  "Smart Search",
   "Main Dashboard Area",
   "KPI CARDS",
   "INSIGHTS",

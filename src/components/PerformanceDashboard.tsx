@@ -34,7 +34,7 @@ export default function PerformanceDashboard({ data }: { data: HistoricalPerform
             <a
               href={selfContainedHref(selectedEntity.profile_url, "/profiles/")}
               data-source-state={profileProvenance ? "on-file" : undefined}
-              title={profileProvenance ? "Source on file" : undefined}
+              title={profileProvenance ? "View details" : undefined}
               className="border border-gray-300 px-3 py-1.5 text-sm text-black no-underline hover:bg-gray-50"
             >
               View Profile
