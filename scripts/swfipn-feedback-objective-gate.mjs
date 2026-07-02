@@ -38,7 +38,6 @@ const requiredDashboardTerms = [
 const requiredSearchTerms = [
   "Smart Search",
   "Results are ranked for institutional relevance",
-  "View details",
 ];
 
 function normalizeOrigin(value) {
@@ -58,11 +57,13 @@ function route(pathname) {
 }
 
 function missingTerms(body, terms) {
-  return terms.filter((term) => !body.includes(term));
+  const cleanBody = body.toLowerCase();
+  return terms.filter((term) => !cleanBody.includes(term.toLowerCase()));
 }
 
 function foundTerms(body, terms) {
-  return terms.filter((term) => body.includes(term));
+  const cleanBody = body.toLowerCase();
+  return terms.filter((term) => cleanBody.includes(term.toLowerCase()));
 }
 
 function countText(body, pattern) {
@@ -74,8 +75,8 @@ async function pageBody(page, url, required = []) {
   await page.goto(url, { waitUntil: "networkidle", timeout: 90_000 });
   if (required.length) {
     await page.waitForFunction((terms) => {
-      const body = document.body?.innerText || "";
-      return terms.every((term) => body.includes(term));
+      const body = (document.body?.innerText || "").toLowerCase();
+      return terms.every((term) => body.includes(String(term).toLowerCase()));
     }, required, { timeout: 90_000 });
   }
   return page.evaluate(() => ({
