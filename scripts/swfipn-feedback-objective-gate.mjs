@@ -146,11 +146,12 @@ async function main() {
     await mobile.screenshot({ path: mobileScreenshot, fullPage: false });
     screenshots.push(path.basename(mobileScreenshot));
     const mobileLeaks = foundTerms(`${mobileDashboard.body}\n${mobileDashboard.html}`, forbiddenDashboardTerms);
+    const mobileBody = mobileDashboard.body.toLowerCase();
     results.push({
       id: "mobile_dashboard_clean_entry",
       url: mobileDashboard.url,
       expected: "Mobile dashboard keeps the same clean entry copy without internal terms.",
-      ok: mobileDashboard.body.includes("Total AUM Engaged") && mobileDashboard.body.includes("Recent Activity") && mobileLeaks.length === 0,
+      ok: mobileBody.includes("total aum engaged") && mobileBody.includes("recent activity") && mobileLeaks.length === 0,
       forbidden_terms: mobileLeaks,
       body_excerpt: mobileDashboard.body.split("\n").filter(Boolean).slice(0, 30),
     });
