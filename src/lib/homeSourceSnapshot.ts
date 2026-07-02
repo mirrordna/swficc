@@ -6,7 +6,7 @@ export const HOME_PACKET_SNAPSHOT = {
   "metrics": {
     "status": "ok",
     "fact": true,
-    "generated_at": "2026-07-02T14:29:49.976000Z",
+    "generated_at": "2026-07-02T14:33:20.647608Z",
     "data": {
       "cards": {
         "institutions": {
@@ -50,10 +50,104 @@ export const HOME_PACKET_SNAPSHOT = {
       }
     }
   },
+  "institutionTypes": {
+    "status": "ok",
+    "fact": true,
+    "generated_at": "2026-07-02T14:33:17.815196Z",
+    "data": {
+      "rows": [
+        {
+          "name": "Company",
+          "type": "Company",
+          "count": 505138
+        },
+        {
+          "name": "Investor",
+          "type": "Investor",
+          "count": 36159
+        },
+        {
+          "name": "Advisor",
+          "type": "Advisor",
+          "count": 25476
+        },
+        {
+          "name": "Asset Manager",
+          "type": "Asset Manager",
+          "count": 4955
+        },
+        {
+          "name": "Venture Capital Firm",
+          "type": "Venture Capital Firm",
+          "count": 2357
+        },
+        {
+          "name": "Real Estate Company",
+          "type": "Real Estate Company",
+          "count": 1654
+        },
+        {
+          "name": "Information Technology Company",
+          "type": "Information Technology Company",
+          "count": 1601
+        },
+        {
+          "name": "Bank",
+          "type": "Bank",
+          "count": 1124
+        }
+      ],
+      "results": [
+        {
+          "name": "Company",
+          "type": "Company",
+          "count": 505138
+        },
+        {
+          "name": "Investor",
+          "type": "Investor",
+          "count": 36159
+        },
+        {
+          "name": "Advisor",
+          "type": "Advisor",
+          "count": 25476
+        },
+        {
+          "name": "Asset Manager",
+          "type": "Asset Manager",
+          "count": 4955
+        },
+        {
+          "name": "Venture Capital Firm",
+          "type": "Venture Capital Firm",
+          "count": 2357
+        },
+        {
+          "name": "Real Estate Company",
+          "type": "Real Estate Company",
+          "count": 1654
+        },
+        {
+          "name": "Information Technology Company",
+          "type": "Information Technology Company",
+          "count": 1601
+        },
+        {
+          "name": "Bank",
+          "type": "Bank",
+          "count": 1124
+        }
+      ],
+      "count": 8,
+      "source_total": 595105,
+      "requested_limit": 8
+    }
+  },
   "allocators30": {
     "status": "ok",
     "fact": true,
-    "generated_at": "2026-07-02T14:29:49.189589Z",
+    "generated_at": "2026-07-02T14:33:19.637111Z",
     "data": {
       "rows": [
         {
@@ -780,7 +874,7 @@ export const HOME_PACKET_SNAPSHOT = {
   "allocators90": {
     "status": "ok",
     "fact": true,
-    "generated_at": "2026-07-02T14:29:47.097775Z",
+    "generated_at": "2026-07-02T14:33:17.394282Z",
     "data": {
       "rows": [],
       "count": 2412,
@@ -798,7 +892,7 @@ export const HOME_PACKET_SNAPSHOT = {
   "rfps": {
     "status": "ok",
     "fact": true,
-    "generated_at": "2026-07-02T14:29:45.696699Z",
+    "generated_at": "2026-07-02T14:33:16.050352Z",
     "data": {
       "rows": [
         {
@@ -2208,7 +2302,7 @@ export const HOME_PACKET_SNAPSHOT = {
   "transactions30": {
     "status": "ok",
     "fact": true,
-    "generated_at": "2026-07-02T14:29:46.947165Z",
+    "generated_at": "2026-07-02T14:33:16.704302Z",
     "data": {
       "rows": [
         {
@@ -3975,7 +4069,7 @@ export const HOME_PACKET_SNAPSHOT = {
   "entities": {
     "status": "ok",
     "fact": true,
-    "generated_at": "2026-07-02T14:29:48.051483Z",
+    "generated_at": "2026-07-02T14:33:17.854985Z",
     "data": {
       "rows": [
         {
@@ -4642,7 +4736,7 @@ export const HOME_PACKET_SNAPSHOT = {
   "people": {
     "status": "ok",
     "fact": true,
-    "generated_at": "2026-07-02T14:29:46.540569Z",
+    "generated_at": "2026-07-02T14:33:16.571293Z",
     "data": {
       "rows": [
         {
@@ -5098,7 +5192,7 @@ export const HOME_PACKET_SNAPSHOT = {
           "swfi_url": "https://www.swfi.com/v1/people/65e9661c8e778e67eff149e1"
         }
       ],
-      "count": 132782,
+      "count": 132783,
       "requested_limit": 25,
       "page": 1,
       "has_more": true,
@@ -5108,7 +5202,7 @@ export const HOME_PACKET_SNAPSHOT = {
   "top20": {
     "status": "ok",
     "fact": true,
-    "generated_at": "2026-07-02T14:29:46.315167Z",
+    "generated_at": "2026-07-02T14:33:20.809272Z",
     "data": {
       "rows": [
         {
@@ -5186,7 +5280,7 @@ export const HOME_PACKET_SNAPSHOT = {
   "news": {
     "status": "ok",
     "fact": true,
-    "generated_at": "2026-07-02T14:29:45.826259Z",
+    "generated_at": "2026-07-02T14:33:16.166548Z",
     "data": {
       "rows": [
         {
@@ -5449,7 +5543,7 @@ export const HOME_PACKET_SNAPSHOT = {
   "sectorFlows": {
     "status": "ok",
     "fact": true,
-    "generated_at": "2026-07-02T14:29:46.276380Z",
+    "generated_at": "2026-07-02T14:33:16.951635Z",
     "data": {
       "rows": [
         {
