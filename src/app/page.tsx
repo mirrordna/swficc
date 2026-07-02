@@ -22,7 +22,8 @@ import { appHref, assetHref, isSwfiPlatformRecordHref, sourceProvenanceHref, swf
 
 const ENDPOINTS = {
   metrics: "/api/swfi/dashboard-metrics/v1",
-  allocators30: "/api/allocator-activity/v1?days=90&limit=25",
+  institutionTypes: "/api/institution-types/v1?limit=8",
+  allocators30: "/api/allocator-activity/v1?days=30&limit=25&page=1&sort=deal_count&direction=desc",
   allocators90: "/api/allocator-activity/v1?days=90&limit=1&count_only=1",
   rfps: "/api/live-opportunities/v1?limit=25&page=1",
   transactions30: "/api/recent-transactions/v1?days=30&limit=25&page=1",
@@ -36,7 +37,7 @@ const ENDPOINTS = {
 const LOADING = "Loading";
 const DASHBOARD_EMPTY = "No records to show for this view";
 const SEARCH_PREFETCH_CACHE_PREFIX = "swfipn.search.prefetch.v1:";
-const DASHBOARD_LOAD_ORDER: PacketKey[] = ["metrics", "sectorFlows", "allocators90", "rfps", "allocators30", "transactions30", "entities", "people", "top20", "news"];
+const DASHBOARD_LOAD_ORDER: PacketKey[] = ["metrics", "institutionTypes", "sectorFlows", "allocators90", "rfps", "allocators30", "transactions30", "entities", "people", "top20", "news"];
 const insightNav = [
   ["Top Investors", "/allocators"],
   ["Fundraising", "/mandates"],
@@ -99,7 +100,7 @@ export default function DashboardPage() {
   const [newsTab, setNewsTab] = useState<"latest" | "referenced" | "topics">("latest");
   const [newestTab, setNewestTab] = useState<"transactions" | "rfps" | "opportunities" | "people">("transactions");
   const [topTab, setTopTab] = useState<"compass" | "sector">("compass");
-  const [expandedPanel, setExpandedPanel] = useState("capital-flows");
+  const [expandedPanel, setExpandedPanel] = useState("institution-overview");
   const visualControls = useMemo<DashboardTableControls>(() => ({ rowLimit: 5, sortColumn: 0, sortDir: "asc" }), []);
 
   useEffect(() => {
@@ -135,10 +136,11 @@ export default function DashboardPage() {
   const rfpRows = factRows(packets.rfps).slice(0, 25);
   const newsRows = factRows(packets.news).slice(0, 25);
   const allocatorRows = factRows(packets.allocators30).slice(0, 25);
+  const institutionTypeRows = institutionTypeFacetRows(packets.institutionTypes).slice(0, 8);
   const sectorRows = sectorFacetRows(packets.sectorFlows).slice(0, 10);
   const topAumRows = factRows(packets.top20).slice(0, 25);
   const dashboardReady = useMemo(() => {
-    return ["metrics", "sectorFlows", "allocators30", "rfps", "transactions30", "entities", "top20", "news"]
+    return ["metrics", "institutionTypes", "sectorFlows", "allocators30", "rfps", "transactions30", "entities", "top20", "news"]
       .every((key) => isFact(packets[key as PacketKey]));
   }, [packets]);
   const dataAsOfLabel = useMemo(() => dataAsOfLabelFor(packets.metrics), [packets.metrics]);
@@ -205,6 +207,7 @@ export default function DashboardPage() {
         packets={packets}
         topAumRows={topAumRows}
         entityRows={entityRows}
+        institutionTypeRows={institutionTypeRows}
         allocatorRows={allocatorRows}
         transactionRows={transactionRows}
         rfpRows={rfpRows}
@@ -334,6 +337,7 @@ function VisualExecutiveOverview({
   packets,
   topAumRows,
   entityRows,
+  institutionTypeRows,
   allocatorRows,
   transactionRows,
   rfpRows,
@@ -347,6 +351,7 @@ function VisualExecutiveOverview({
   packets: Packets;
   topAumRows: Record<string, unknown>[];
   entityRows: Record<string, unknown>[];
+  institutionTypeRows: Record<string, unknown>[];
   allocatorRows: Record<string, unknown>[];
   transactionRows: Record<string, unknown>[];
   rfpRows: Record<string, unknown>[];
@@ -370,15 +375,21 @@ function VisualExecutiveOverview({
         </div>
         <div className="grid gap-3 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_340px]">
           <ExpandablePanel
-            id="capital-map"
-            title="Disclosed AUM & Market Activity"
-            href="#capital-map"
-            expanded={expandedPanel === "capital-map"}
+            id="institution-overview"
+            title="Institution Intelligence Overview"
+            href="/profiles"
+            expanded={expandedPanel === "institution-overview"}
             onToggle={onTogglePanel}
-            detail={<TotalAumInsightDetail topRows={topRows} entityRows={entityRows} transactionRows={transactionRows} rfpRows={rfpRows} sectorRows={sectorRows} />}
+            detail={<TotalAumInsightDetail topRows={topRows} institutionTypeRows={institutionTypeRows} transactionRows={transactionRows} rfpRows={rfpRows} sectorRows={sectorRows} />}
             className="xl:row-span-2"
           >
-            <GlobalCapitalMap topRows={topRows} sectorRows={sectorRows} />
+            <InstitutionIntelligenceOverview
+              packets={packets}
+              institutionTypeRows={institutionTypeRows}
+              allocatorRows={allocatorRows}
+              rfpRows={rfpRows}
+              sectorRows={sectorRows}
+            />
           </ExpandablePanel>
           <ExpandablePanel
             id="capital-flows"
@@ -1281,6 +1292,106 @@ function GlobalCapitalMap({ topRows, sectorRows }: { topRows: Record<string, unk
   );
 }
 
+function InstitutionIntelligenceOverview({
+  packets,
+  institutionTypeRows,
+  allocatorRows,
+  rfpRows,
+  sectorRows,
+}: {
+  packets: Packets;
+  institutionTypeRows: Record<string, unknown>[];
+  allocatorRows: Record<string, unknown>[];
+  rfpRows: Record<string, unknown>[];
+  sectorRows: Record<string, unknown>[];
+}) {
+  const totalInstitutions = metricNumber(packets.metrics, "institutions");
+  const typeMax = Math.max(1, ...institutionTypeRows.map((row) => numericSortValue(text(row.count, "")) ?? 0));
+  const investorRows = allocatorRows.slice(0, 5);
+  const investorMax = Math.max(1, ...investorRows.map(activityCountValue));
+  const fundraisingRows = [...rfpRows].sort((a, b) => deadlineTime(a) - deadlineTime(b)).slice(0, 4);
+  const trendRows = sectorRows.slice(0, 8);
+  const trendMax = Math.max(1, ...trendRows.map(sectorValue));
+  return (
+    <div className="grid gap-3">
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+        <VisualPanel title="Total Institutions Tracked by Entity Type" source={ENDPOINTS.institutionTypes} empty={DASHBOARD_EMPTY} hasRows={institutionTypeRows.length > 0}>
+          <div className="mb-3 flex items-end justify-between gap-3">
+            <div className="text-[28px] font-extrabold leading-none text-[#11314F]">{totalInstitutions ? compactNumber(totalInstitutions) : "Not disclosed"}</div>
+            <DashboardLink href="/profiles" className="text-[11px] font-extrabold text-[#0A3A7A] underline">Institutions</DashboardLink>
+          </div>
+          <div className="grid gap-2">
+            {institutionTypeRows.slice(0, 6).map((row) => {
+              const value = numericSortValue(text(row.count, "")) ?? 0;
+              const label = brdText(row.name || row.type);
+              return (
+                <DashboardLink key={label} href={`/profiles/?filter=${encodeURIComponent(label)}`} className="grid gap-1 text-inherit no-underline">
+                  <span className="flex items-center justify-between gap-2 text-[12px]">
+                    <span className="truncate font-bold text-[#203448]">{label}</span>
+                    <span className="font-extrabold text-[#0A3A7A]">{compactNumber(value)}</span>
+                  </span>
+                  <Bar value={value} max={typeMax} />
+                </DashboardLink>
+              );
+            })}
+          </div>
+        </VisualPanel>
+        <VisualPanel title="Top Active Investors (Last 30 Days)" source={ENDPOINTS.allocators30} empty={DASHBOARD_EMPTY} hasRows={investorRows.length > 0}>
+          <div className="grid gap-2">
+            {investorRows.map((row, index) => {
+              const value = activityCountValue(row);
+              return (
+                <DataLink key={`${brdText(row.name)}-${index}`} href={dashboardProfileHref(row)} sourceHref={sourceHref(row)} className="grid gap-1 rounded-[5px] border border-[#E5EBF1] px-2 py-2 text-inherit no-underline">
+                  <span className="flex items-center justify-between gap-2 text-[12px]">
+                    <span className="truncate font-bold text-[#0A3A7A]">{index + 1}. {brdText(row.name)}</span>
+                    <span className="font-extrabold text-[#1A9A68]">{dealCountLabel(value)}</span>
+                  </span>
+                  <Bar value={value} max={investorMax} />
+                  <span className="truncate text-[10.5px] text-[#7B8996]">{allocatorMeta(row)} · {cleanMoney(row.total_deal_value_display || row.total_deal_value)}</span>
+                </DataLink>
+              );
+            })}
+          </div>
+        </VisualPanel>
+      </div>
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+        <VisualPanel title="Recently Fundraising Institutions" source={ENDPOINTS.rfps} empty={DASHBOARD_EMPTY} hasRows={fundraisingRows.length > 0}>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {fundraisingRows.map((row, index) => (
+              <DataLink key={`${brdText(row.title || row.name)}-${index}`} href={dashboardMandateHref(row)} sourceHref={sourceHref(row)} className="grid gap-1 rounded-[5px] border border-[#E5EBF1] bg-[#F8FAFC] px-2.5 py-2 text-inherit no-underline">
+                <span className="text-[10px] font-extrabold uppercase tracking-[0.1em] text-[#B90D12]">{timelineDate(row)}</span>
+                <span className="truncate text-[12px] font-bold text-[#0A3A7A]">{brdText(row.institution || row.name)}</span>
+                <span className="truncate text-[10.5px] text-[#7B8996]">{brdText(row.title || row.strategy || row.asset_class_or_strategy)}</span>
+              </DataLink>
+            ))}
+          </div>
+        </VisualPanel>
+        <VisualPanel title="Investment Trends by Industry / Category" source={ENDPOINTS.sectorFlows} empty={DASHBOARD_EMPTY} hasRows={trendRows.length > 0}>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {trendRows.map((row, index) => {
+              const value = sectorValue(row);
+              const intensity = Math.max(0.16, Math.min(0.92, value / trendMax));
+              const label = brdText(row.name || row.value);
+              return (
+                <DashboardLink
+                  key={`${label}-${index}`}
+                  href={`/deals/?filter=${encodeURIComponent(label)}`}
+                  className="min-h-[78px] rounded-[5px] border border-[#DCE5EE] p-2 text-inherit no-underline"
+                  style={{ backgroundColor: `rgba(10, 102, 194, ${intensity})` }}
+                >
+                  <span className="block truncate text-[11px] font-extrabold text-white">{label}</span>
+                  <span className="mt-2 block text-[15px] font-extrabold text-white">{capitalOrCountDisplay(row)}</span>
+                  <span className="mt-1 block text-[10px] font-semibold text-white/85">{brdText(row.count)} deals</span>
+                </DashboardLink>
+              );
+            })}
+          </div>
+        </VisualPanel>
+      </div>
+    </div>
+  );
+}
+
 function CapitalFlowPanel({ rows: sourceRows }: { rows: Record<string, unknown>[] }) {
   const chartRows = sourceRows.slice(0, 6);
   return (
@@ -1683,19 +1794,19 @@ function dashboardMetricCards(packets: Packets, topAumRows: Record<string, unkno
   const research = metricNumber(packets.metrics, "news") || packetCountNumber(packets.news) || 0;
   return [
     {
-      label: "TOTAL AUM ENGAGED",
+      label: "TOP AUM RANKING",
       value: totalAumDisplay(packets.top20, topAumRows),
-      note: "Top AUM ranking",
-      href: "#capital-map",
+      note: "Disclosed AUM",
+      href: "/profiles",
       series: seriesFromNumbers(topAumRows.map(aumValue)),
       color: "#0A66C2",
-      statusLabel: totalAum ? "Current ranking" : "Not disclosed",
+      statusLabel: totalAum ? "Current" : "Not disclosed",
       sourceLabel: "SWFI records",
     },
     {
       label: "ACTIVE ALLOCATORS",
       value: activeAllocators ? compactNumber(activeAllocators) : packetCount(packets.allocators90, "count"),
-      note: "90-day buyers",
+      note: "Last 90 days",
       href: "/allocators",
       series: seriesFromNumbers([activeAllocators]),
       color: "#1A9A68",
@@ -1814,30 +1925,29 @@ function ExpandedEntityRows({ rows: sourceRows, controls }: { rows: Record<strin
   );
 }
 
-function TotalAumInsightDetail({ topRows, entityRows, transactionRows, rfpRows, sectorRows }: {
+function TotalAumInsightDetail({ topRows, institutionTypeRows, transactionRows, rfpRows, sectorRows }: {
   topRows: Record<string, unknown>[];
-  entityRows: Record<string, unknown>[];
+  institutionTypeRows: Record<string, unknown>[];
   transactionRows: Record<string, unknown>[];
   rfpRows: Record<string, unknown>[];
   sectorRows: Record<string, unknown>[];
 }) {
-  const baseRows = entityRows.length ? entityRows : topRows;
-  const typeRows = groupedCountRows(baseRows, (row) => entityTypeCell(row)).slice(0, 6);
+  const typeRows = institutionTypeRows.slice(0, 6);
   const regionRows = groupedAmountRows(topRows, (row) => brdText(row.region || row.country)).slice(0, 6);
   const fundraisingRows = rfpRows.slice(0, 5);
   const trendRows = sectorRows.slice(0, 6);
   const maxTrend = Math.max(1, ...trendRows.map(sectorValue));
   return (
     <div className="grid gap-3 xl:grid-cols-2">
-      <VisualPanel title="Institutions by Entity Type" source={ENDPOINTS.entities} empty={DASHBOARD_EMPTY} hasRows={typeRows.length > 0}>
+      <VisualPanel title="Institutions by Entity Type" source={ENDPOINTS.institutionTypes} empty={DASHBOARD_EMPTY} hasRows={typeRows.length > 0}>
         <div className="grid gap-2">
           {typeRows.map((row) => (
-            <div key={row.label} className="grid gap-1">
+            <div key={brdText(row.name || row.type)} className="grid gap-1">
               <div className="flex items-center justify-between gap-2 text-[12px]">
-                <span className="truncate font-bold text-[#203448]">{row.label}</span>
-                <span className="font-extrabold text-[#0A3A7A]">{compactNumber(row.value)}</span>
+                <span className="truncate font-bold text-[#203448]">{brdText(row.name || row.type)}</span>
+                <span className="font-extrabold text-[#0A3A7A]">{compactNumber(numericSortValue(text(row.count, "")) ?? 0)}</span>
               </div>
-              <Bar value={row.value} max={typeRows[0]?.value || 1} />
+              <Bar value={numericSortValue(text(row.count, "")) ?? 0} max={numericSortValue(text(typeRows[0]?.count, "")) || 1} />
             </div>
           ))}
         </div>
@@ -2270,6 +2380,21 @@ function sectorFacetRows(packet?: Packet) {
     ? (packet.data as { facets?: { sectors?: unknown } }).facets
     : undefined;
   return Array.isArray(facets?.sectors) ? facets.sectors as Record<string, unknown>[] : [];
+}
+
+function institutionTypeFacetRows(packet?: Packet) {
+  return factRows(packet)
+    .map((row) => {
+      const label = brdText(row.name || row.type || row.entity_type, "");
+      const value = numericSortValue(text(row.count, "")) ?? 0;
+      return {
+        ...row,
+        name: label,
+        type: label,
+        count: value,
+      };
+    })
+    .filter((row) => row.name && row.count > 0);
 }
 
 function dataAsOfLabelFor(packet?: Packet) {

@@ -40,7 +40,9 @@ Dashboard metric formulas are defined in `docs/SWFIPN_DASHBOARD_METRIC_DEFINITIO
 | Module | Endpoint | Source Collection(s) | Sort | Pagination | Required Freshness Receipt |
 | --- | --- | --- | --- | --- | --- |
 | Dashboard Metrics | `/api/swfi/dashboard-metrics/v1` | `swfi.entities`, `swfi.transactions`, `swfi.compass` | None | None | Packet `generated_at`; card values must be factual. |
-| Top Active Allocators | `/api/allocator-activity/v1?days=90&limit=25&page=1&sort=deal_count&direction=desc` | `swfi.transactions`, `swfi.entities`, `swfi.entitiesAUM` | `deal_count desc`, `total_deal_value desc`, `latest_transaction_date desc` | `limit`, `page` | Packet `generated_at`, allocator source URL, sampled deal source URLs. |
+| Institution Type Coverage | `/api/institution-types/v1?limit=8` | `swfi.entities` | count desc | None | Packet `generated_at`, grouped type counts, total source entity count. |
+| Top Active Investors | `/api/allocator-activity/v1?days=30&limit=25&page=1&sort=deal_count&direction=desc` | `swfi.transactions`, `swfi.entities`, `swfi.entitiesAUM` | `deal_count desc`, `total_deal_value desc`, `latest_transaction_date desc` | `limit`, `page` | Packet `generated_at`, allocator source URL, sampled deal source URLs. |
+| Active Allocators Count | `/api/allocator-activity/v1?days=90&limit=1&count_only=1` | `swfi.transactions`, `swfi.entities`, `swfi.entitiesAUM` | count only | None | Packet `generated_at`, 90-day count basis. |
 | Newest Transactions | `/api/recent-transactions/v1?days=90&limit=25&page=1` | `swfi.transactions` | transaction activity date descending | `limit`, `page` | Packet `generated_at`, transaction source URL. |
 | Recent Deals | `/api/recent-transactions/v1?days=30&limit=25&page=1` | `swfi.transactions` | transaction activity date descending | `limit`, `page` | Packet `generated_at`, transaction source URL. |
 | RFP Opportunities | `/api/live-opportunities/v1?limit=25&page=1` | `swfi.compass` | `deadline asc`, then `posted_at desc` | `limit`, `page` | Packet `generated_at`, Compass source URL. |

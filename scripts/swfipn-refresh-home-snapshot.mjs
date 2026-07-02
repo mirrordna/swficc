@@ -8,7 +8,8 @@ const origin = normalizeOrigin(process.env.SWFIPN_BACKEND_ORIGIN || process.env.
 
 const endpoints = {
   metrics: "/api/swfi/dashboard-metrics/v1",
-  allocators30: "/api/allocator-activity/v1?days=90&limit=25",
+  institutionTypes: "/api/institution-types/v1?limit=8",
+  allocators30: "/api/allocator-activity/v1?days=30&limit=25&page=1&sort=deal_count&direction=desc",
   allocators90: "/api/allocator-activity/v1?days=90&limit=1&count_only=1",
   rfps: "/api/live-opportunities/v1?limit=25&page=1",
   transactions30: "/api/recent-transactions/v1?days=30&limit=25&page=1",
