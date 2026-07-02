@@ -136,7 +136,7 @@ function TabContent({ tabKey, insight }: { tabKey: TabKey; insight: QuickInsight
           <ItemCard key={i} item={item} />
         ))}
         {!items.length && (
-          <SourceGap message="This tab requires approved SWFI rows. No fallback rows are shown." />
+          <SourceGap message="No approved items are available for this tab." />
         )}
       </div>
       {insight?.href && (

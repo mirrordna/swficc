@@ -21,6 +21,8 @@ DEFAULT_RECEIPTS=[
     'output/swfipn-alerts-brd-gate-latest.json',
     'output/swfipn-alerts-ui-brd-gate-latest.json',
     'output/swfipn-alert-delivery-brd-gate-latest.json',
+    'output/swfipn-record-field-parity-full-latest.json',
+    'output/swfipn-brd-contract-truth-gate-latest.json',
     'output/swfipn-share-gate-latest.json',
     'output/swfipn-source-truth-gate-latest.json',
     'output/swfipn-source-url-coverage-latest.json',
@@ -66,12 +68,45 @@ def find_key_values(obj,wanted):
     return vals
 def receipt_passed(obj):
     if obj is None or (isinstance(obj,dict) and '_parse_error' in obj): return False
+    if isinstance(obj,dict):
+        top_status=str(obj.get('status') or obj.get('result') or obj.get('verdict') or obj.get('gate_status') or obj.get('final_verdict') or '').lower()
+        if top_status in {'fail','failed','blocked','no_go','error'}: return False
+        if top_status in {'pass','pass_with_quarantine','passed','ok','green','success','go','go_with_caveat'}:
+            if obj.get('sendable') is False: return False
+            return True
     for v in find_key_values(obj,{'status','result','verdict','gate_status'}):
         if isinstance(v,str) and v.lower() in {'pass','pass_with_quarantine','passed','ok','green','success'}: return True
     if any(v is True for v in find_key_values(obj,{'pass','passed','success','sendable'})): return True
     flat=json.dumps(obj).lower()
     if '"fail"' in flat or '"failed"' in flat or '"no_go"' in flat: return False
     return False
+def receipt_blocker_summary(rel:str,obj:Any)->str:
+    label=rel.replace('output/','').replace('-latest.json','')
+    if obj is None:
+        return f'{label}: missing receipt'
+    if isinstance(obj,dict) and '_parse_error' in obj:
+        return f'{label}: parse error {obj.get("_parse_error")}'
+    if not isinstance(obj,dict):
+        return f'{label}: not passing'
+    parts=[]
+    for key in ('status','final_verdict','verdict'):
+        if obj.get(key) is not None:
+            parts.append(f'{key}={obj.get(key)}')
+    if obj.get('sendable') is False:
+        parts.append('sendable=false')
+    failures=obj.get('failures')
+    blockers=obj.get('blockers')
+    bad_news=obj.get('bad_news_first')
+    if isinstance(failures,list) and failures:
+        parts.append('failures=' + ','.join(str(item.get('id') or item.get('type') or item) for item in failures[:3]))
+    if isinstance(blockers,list) and blockers:
+        parts.append('blockers=' + ','.join(str(item.get('id') if isinstance(item,dict) else item) for item in blockers[:3]))
+    if isinstance(bad_news,list) and bad_news:
+        parts.append('bad_news=' + ','.join(str(item.get('id') or item) for item in bad_news[:3]))
+    summary=_summary(obj)
+    if isinstance(summary.get('blockers'),list) and summary.get('blockers'):
+        parts.append('summary_blockers=' + ','.join(str(item) for item in summary.get('blockers')[:3]))
+    return f'{label}: ' + ('; '.join(parts) if parts else 'not passing')
 def get_route_counts(obj):
     if obj is None: return None,None,[]
     samples=[v for v in find_key_values(obj,{'route_sample_count','live_route_samples','route_samples','live_routes'}) if isinstance(v,int)]
@@ -112,6 +147,13 @@ def write_status_doc(repo,verdict,blockers,phase2,data_quality_caveats=None):
     docs=repo/'docs'; docs.mkdir(exist_ok=True)
     ready='Ready for acceptance/demo review' if verdict in {'go','go_with_caveat'} else 'Not ready'
     share=load_json(repo/'output/swfipn-share-gate-latest.json') or {}
+    full_universe=load_json(repo/'output/swfipn-full-universe-mapping-latest.json') or {}
+    source_destination=load_json(repo/'output/swfipn-source-destination-manifest-latest.json') or {}
+    detail_batch=load_json(repo/'output/swfipn-detail-batch-parity-latest.json') or {}
+    route_parity=load_json(repo/'output/swfipn-route-parity-full-latest.json') or {}
+    field_parity=load_json(repo/'output/swfipn-record-field-parity-full-latest.json') or {}
+    adversarial=load_json(repo/'output/swfipn-adversarial-review-latest.json') or {}
+    brd_contract=load_json(repo/'output/swfipn-brd-contract-truth-gate-latest.json') or {}
     brd=load_json(repo/'output/swfipn-brd-phase2-acceptance-latest.json') or {}
     runtime=load_json(repo/'output/swfipn-runtime-staleness-gate-latest.json') or {}
     api_dns=load_json(repo/'output/swfipn-api-dns-key-lifecycle-latest.json') or {}
@@ -147,6 +189,8 @@ def write_status_doc(repo,verdict,blockers,phase2,data_quality_caveats=None):
         '',
         f'Share gate: `{_status(share)}`, `sendable: {str(bool(share.get("sendable"))).lower()}`',
         '',
+        f'BRD contract truth: `{_status(brd_contract)}`, full-universe parity `{brd_contract.get("full_universe_parity_status") or "unknown"}`',
+        '',
         f'BRD Phase 2 matrix: `{_status(brd)}`, verdict `{brd.get("verdict") or "unknown"}`',
         '',
         f'Runtime staleness: `{_status(runtime)}`, failures `{runtime_summary.get("failures", 0)}`',
@@ -178,6 +222,13 @@ def write_status_doc(repo,verdict,blockers,phase2,data_quality_caveats=None):
     lines += ['', '## Latest Evidence','']
     evidence_rows=[
         ('Share/sendability gate',_status(share),'output/swfipn-share-gate-latest.json'),
+        ('Full-universe mapping gate',_status(full_universe),'output/swfipn-full-universe-mapping-latest.json'),
+        ('Source/destination manifest gate',_status(source_destination),'output/swfipn-source-destination-manifest-latest.json'),
+        ('Detail-batch parity gate',_status(detail_batch),'output/swfipn-detail-batch-parity-latest.json'),
+        ('Full route parity gate',_status(route_parity),'output/swfipn-route-parity-full-latest.json'),
+        ('Record field parity gate',_status(field_parity),'output/swfipn-record-field-parity-full-latest.json'),
+        ('Adversarial review gate',_status(adversarial),'output/swfipn-adversarial-review-latest.json'),
+        ('BRD contract truth gate',_status(brd_contract),'output/swfipn-brd-contract-truth-gate-latest.json'),
         ('Acceptance criteria gate',_status(load_json(repo/'output/swfipn-acceptance-criteria-gate-latest.json')),'output/swfipn-acceptance-criteria-gate-latest.json'),
         ('KP acceptance gate',_status(load_json(repo/'output/swfipn-kp-acceptance-gate-latest.json')),'output/swfipn-kp-acceptance-gate-latest.json'),
         ('Route and leakage gates','pass','output/swfipn-link-mapping-leakage-gate-latest.json, output/swfipn-visible-link-escape-gate-latest.json'),
@@ -214,20 +265,28 @@ def write_status_doc(repo,verdict,blockers,phase2,data_quality_caveats=None):
         lines.append('- None found.')
     lines += ['', '## Phase 2 / Change Requests','']
     lines += [f'- {p}' for p in phase2] if phase2 else ['- None recorded.']
-    lines += ['', '## Required wording','', 'Use: “The current `/swficc` dashboard/terminal scope is deployed, source-backed, and sendable for validation with receipts.”','', 'Do not use: “Full BRD Phase 2 is complete.”','', 'Do not use: “All SWFI.com pages are fully migrated.”','', '## Final acceptance sentence','', 'No blockers are open inside the current `/swficc` dashboard/terminal validation scope. Full BRD Phase 2 remains active because the explicit deferred productization bucket and production `api.swfi.com` DNS cutover are not complete.']
+    if verdict == 'no_go':
+        required_sentence = 'The current `/swficc` dashboard/terminal scope is deployed, but it is not sendable until the failing or blocked acceptance receipts pass.'
+        final_sentence = 'Blockers remain within the current `/swficc` dashboard/terminal validation scope. Do not call this ready or sendable until the required receipts pass.'
+    else:
+        required_sentence = 'The current `/swficc` dashboard/terminal scope is deployed, source-backed, and sendable for validation with receipts.'
+        final_sentence = 'No blockers are open inside the current `/swficc` dashboard/terminal validation scope. Full BRD Phase 2 remains active because the explicit deferred productization bucket and production `api.swfi.com` DNS cutover are not complete.'
+    lines += ['', '## Required wording','', f'Use: “{required_sentence}”','', 'Use: “corresponding SWFI record/profile page within `/swficc` where an internal record exists.”','', 'Do not use: “Full BRD Phase 2 is complete.”','', 'Do not use: “All SWFI.com pages are fully migrated.”','', '## Final acceptance sentence','', final_sentence]
     (docs/'swfipn-acceptance-status.md').write_text('\n'.join(lines)+'\n',encoding='utf-8')
 def main():
     ap=argparse.ArgumentParser(); ap.add_argument('--repo',default='.'); ap.add_argument('--out',default='output/swfipn-acceptance-lock-latest.json'); ap.add_argument('--receipt',action='append',default=[]); args=ap.parse_args()
     repo=Path(args.repo).resolve(); receipt_paths=args.receipt or DEFAULT_RECEIPTS
-    req=[]; all_pass=True; route_count=None; hidden_count=None; hidden_details=[]; data_quality_caveats=[]
+    req=[]; all_pass=True; route_count=None; hidden_count=None; hidden_details=[]; data_quality_caveats=[]; failed_receipts=[]
     for rel in receipt_paths:
         obj=load_json(repo/rel); passed=receipt_passed(obj); all_pass=all_pass and passed
         if 'route-ledger' in rel: route_count,hidden_count,hidden_details=get_route_counts(obj)
         if caveat:=manifest_caveat(obj): data_quality_caveats.append(caveat)
+        if not passed:
+            failed_receipts.append(receipt_blocker_summary(rel,obj))
         req.append({'path':rel,'exists':(repo/rel).exists(),'passed':passed,'parse_error':obj.get('_parse_error') if isinstance(obj,dict) and '_parse_error' in obj else None})
     leakage=scan_internal_leakage(repo)
     blockers=[]
-    if not all_pass: blockers.append('One or more required gate receipts are missing or not passing.')
+    if not all_pass: blockers.extend(failed_receipts)
     if leakage['status']!='pass' and leakage['hit_count']>0: blockers.append('Internal-leakage scan found terms requiring review.')
     phase2=['Admin API-key lifecycle UI and Admin Governance pass on the accepted public host; real SWFI auth/session integration remains deferred P2 until the SWFI session bridge gate passes against the target runtime.','Alerts backend/API, Alerts page UI API client, and alert in-app/webhook delivery receipts pass on the accepted public host. SendGrid email delivery code and gate are deployed, but public email delivery remains blocked until the target runtime has a configured SendGrid key/from-address and the SendGrid email gate passes.','Saved Searches backend/API, page UI API client, and linked in-app alert delivery receipts pass on the accepted public host; local SWFI session bridge mechanics are receipt-backed, but real SWFI auth/session integration remains blocked until SWFI supplies signed assertions and the bridge is configured on the target runtime.','SWFI session bridge code and gate are implemented; public runtime remains blocked until `output/swfipn-swfi-session-bridge-brd-gate-latest.json` passes with the SWFI assertion secret/return path configured.','SendGrid onboarding remains deferred P2 until `output/swfipn-sendgrid-email-brd-gate-latest.json` passes against the target runtime.','api.swfi.com DNS cutover remains blocked/deferred until the DNS/key lifecycle gate passes. The cutover controller found the `api` A record and rollback data, but the available DigitalOcean token lacks DNS write permission. API-key lifecycle, Admin API-key lifecycle UI, Admin Governance, Alerts backend/API, Alerts page UI API client, Alert delivery receipts, Saved Searches backend/API, Saved Searches page UI API client, and saved-search linked in-app alert delivery pass on the accepted public host.']
     hidden_blockers=[r for r in hidden_details if r.get('class')!='uncontracted_route_hidden_from_public_navigation']

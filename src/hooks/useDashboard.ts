@@ -383,8 +383,8 @@ async function buildFromPublicAPIs(): Promise<DashboardPayload> {
       ],
       network: {
         title: "Network Graph (Core Visual)",
-        nodes: coRows.length ? `${packetRows(coInvestments, ["nodes"]).length} source-backed nodes` : "Nodes: Not disclosed by SWFI.com",
-        links: coRows.length ? `${packetRows(coInvestments, ["edges"]).length} source-backed links` : "Links: Not disclosed by SWFI.com",
+        nodes: coRows.length ? `${packetRows(coInvestments, ["nodes"]).length} nodes` : "Nodes: Not disclosed by SWFI.com",
+        links: coRows.length ? `${packetRows(coInvestments, ["edges"]).length} links` : "Links: Not disclosed by SWFI.com",
         href: appHref("/transactions/"),
       },
       rows: coRows.map((row) => ({

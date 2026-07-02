@@ -64,7 +64,7 @@ export default function ProvenancePage() {
                 <div>
                   <h1 className="m-0 text-[19px] font-bold text-[#11314F]">Source References</h1>
                   <p className="m-0 mt-1 text-[12px] text-[#7A8A9B]">
-                    Source record links resolve to the corresponding SWFI record pages.
+                    Source record links resolve to the corresponding SWFI record/profile page within /swficc where an internal record exists.
                   </p>
                 </div>
                 <a href={safeReturnHref} className="rounded border border-[#DCE3EA] px-3 py-2 text-[12px] text-[#16538C] no-underline">Return</a>
@@ -76,7 +76,7 @@ export default function ProvenancePage() {
                 <div className="text-[11px] font-bold uppercase tracking-[0.07em] text-[#7A8A9B]">Source Reference</div>
                 <div className="mt-1 text-[15px] font-semibold text-[#11314F]">Open a record source link to view its SWFI reference.</div>
                 <div className="mt-1 text-[12px] text-[#7A8A9B]">
-                  Records, table rows, and source labels should resolve to SWFI record pages whenever a record supplies a source URL.
+                  Records, table rows, and source labels should resolve to the corresponding SWFI record/profile page within /swficc where an internal record exists.
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {quickLinks.map(([label, href]) => (
@@ -90,7 +90,7 @@ export default function ProvenancePage() {
                 <a href={mirrorHref} className="mt-1 block text-[15px] font-semibold text-[#16538C] underline">
                   Open SWFI record
                 </a>
-                <div className="mt-1 text-[12px] text-[#7A8A9B]">Open the corresponding SWFI record page.</div>
+                <div className="mt-1 text-[12px] text-[#7A8A9B]">Open the corresponding SWFI record/profile page within /swficc where an internal record exists.</div>
               </section>
             ) : (
               <section className="rounded border border-[#DCE3EA] bg-white p-4 text-sm text-[#41566B]">

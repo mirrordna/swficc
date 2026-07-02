@@ -130,7 +130,7 @@ export default function AggregatesPage() {
         <section data-brd-aggregates="true" className="border border-[#D7DFE8] bg-white p-5">
           {!packet ? <div className="py-14 text-center text-[#526171]">Loading</div> : null}
           {packet && !ready ? (
-            <div className="py-14 text-center text-[#526171]">No source-backed aggregate rows are available for this selection.</div>
+            <div className="py-14 text-center text-[#526171]">No aggregate rows are available for this selection.</div>
           ) : null}
           {ready && view === "graph" ? <AggregateChart points={points} title={`${selectedLabel} / ${selectedRegion}`} /> : null}
           {ready && view === "data" ? <AggregateTable points={points} rawPoints={rawPoints} /> : null}

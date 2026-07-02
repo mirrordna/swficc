@@ -9,8 +9,13 @@ const repoRoot = process.cwd();
 const outputDir = path.join(repoRoot, "output");
 const receiptPath = path.join(outputDir, "swfipn-kp-acceptance-gate-latest.json");
 const origin = normalizeOrigin(process.env.SWFIPN_ORIGIN || "http://127.0.0.1:8353/swficc/");
+const backendOrigin = (process.env.SWFIPN_BACKEND_ORIGIN || "https://swfipn.activemirror.ai").replace(/\/$/, "");
 const resolveIp = process.env.SWFIPN_RESOLVE_IP || "";
-const originHost = new URL(origin).hostname;
+const originUrl = new URL(origin);
+const originHost = originUrl.hostname;
+const shouldProxyBackend = process.env.SWFIPN_PROXY_BACKEND === "1"
+  || (process.env.SWFIPN_PROXY_BACKEND !== "0" && ["localhost", "127.0.0.1", "::1"].includes(originHost));
+const apiPattern = /api\/(source-data|source-intelligence|recent-transactions|live-opportunities|sector-flows|allocator-activity|swfi|transactions)|\/v1\/swfi\//;
 const authMode = String(process.env.SWFIPN_KP_AUTH_MODE || "swfi-auth-handoff");
 const validateLegacyAuth = authMode === "legacy-auth";
 const username = loadSecret("SWFIPN_AUTH_TEST_USERNAME", "SWFIPN_AUTH_USERNAME_KEYCHAIN_SERVICE", ["SWFIPN_AUTH_USERNAME", "SWFI_PREVIEW_AUTH_USERNAME"]).trim();
@@ -23,6 +28,13 @@ const forbiddenVisible = [
   "Backend identifier",
   "Backend identifiers",
   "Source-backed fact",
+  "Source-backed",
+  "source-backed",
+  "Data source:",
+  "BRD V1.3",
+  "Glass Box",
+  "Command Box",
+  "deterministic",
   "Source Record ID",
   "Truth State",
   "Result Qualifier",
@@ -483,11 +495,12 @@ function brandLinkFailures(links, { dashboardGated = false } = {}) {
 
 async function dashboardCheck(browser) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  await installApiProxy(page);
   const result = { id: "dashboard_kp_contract", ok: true, failures: [], links: [] };
   try {
     const response = await page.goto(appUrl("/"), { waitUntil: "domcontentloaded", timeout: 45_000 });
     if (!response || response.status() >= 400) result.failures.push(`http_${response?.status() || "missing"}`);
-    const body = await hydratedBody(page, ["SWFI", "SOVEREIGN WEALTH FUND INSTITUTE", "KPI CARDS", "Top Active Allocators", "Newest Transactions"]);
+    const body = await hydratedBody(page, ["SWFI", "SOVEREIGN WEALTH FUND INSTITUTE", "TOTAL AUM ENGAGED", "Top Active Investors", "Newest Data"]);
     result.failures.push(...bodyFailures(body));
     const brand = await page.evaluate(() => {
       const header = document.querySelector("header");
@@ -563,6 +576,7 @@ async function loginContext(browser) {
 
 async function loginHandoffCheck(browser) {
   const context = await browser.newContext({ storageState: { cookies: [], origins: [] }, viewport: { width: 1440, height: 1000 } });
+  await installApiProxy(context);
   const expectedTarget = appTarget("/profiles/");
   const result = {
     id: "swfi_auth_handoff_login",
@@ -595,7 +609,7 @@ async function listRouteCheck(context, spec) {
   try {
     const response = await page.goto(appUrl(spec.route), { waitUntil: "domcontentloaded", timeout: 45_000 });
     if (!response || response.status() >= 400) result.failures.push(`http_${response?.status() || "missing"}`);
-    const body = await hydratedBody(page, [spec.ready, "Data source: SWFI records"]);
+    const body = await hydratedBody(page, [spec.ready, "Updated from SWFI"]);
     result.failures.push(...bodyFailures(body));
     result.failures.push(...navLabelFailures(await visibleNavLabels(page)));
     const pageLinks = await page.evaluate(() => Array.from(document.querySelectorAll("a[href]")).map((a) => ({
@@ -634,6 +648,7 @@ async function listRouteCheck(context, spec) {
 
 async function brandPageCheck(browser, spec) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  await installApiProxy(page);
   const result = { id: `brand:${spec.route}`, route: spec.route, source_url: spec.source_url, ok: true, failures: [] };
   try {
     const response = await page.goto(appUrl(spec.route), { waitUntil: "domcontentloaded", timeout: 45_000 });
@@ -671,6 +686,7 @@ async function sourceParityCheck(browser, internalPage, spec) {
   const result = { ok: true, failures: [], final_source_url: "", select_counts: {} };
   if (!spec.source_url) return result;
   const sourcePage = await browser.newPage({ viewport: { width: 1440, height: 1200 } });
+  await installApiProxy(sourcePage);
   try {
     const response = await sourcePage.goto(spec.source_url, { waitUntil: "domcontentloaded", timeout: 45_000 });
     if (!response || response.status() >= 400) result.failures.push(`source_http_${response?.status() || "missing"}`);
@@ -720,6 +736,7 @@ async function brandClickNavigationCheck(browser) {
       storageState: { cookies: [], origins: [] },
       viewport: { width: 1440, height: 1000 },
     });
+    await installApiProxy(context);
     const page = await context.newPage();
     try {
       const response = await page.goto(appUrl("/about/"), { waitUntil: "domcontentloaded", timeout: 45_000 });
@@ -844,11 +861,12 @@ async function allocatorMethodologyCheck() {
 
 async function sourceReferenceCheck(browser) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  await installApiProxy(page);
   const result = { id: "source_reference_buyer_safe", route: "/provenance/", ok: true, failures: [], links: [] };
   try {
     const response = await page.goto(appUrl("/provenance/"), { waitUntil: "domcontentloaded", timeout: 45_000 });
     if (!response || response.status() >= 400) result.failures.push(`http_${response?.status() || "missing"}`);
-    const body = await hydratedBody(page, ["Source References", "Source record links resolve to SWFIPN mirror pages"], 60_000);
+    const body = await hydratedBody(page, ["Source References", "corresponding SWFI record/profile page within /swficc where an internal record exists"], 60_000);
     result.failures.push(...bodyFailures(body));
     result.failures.push(...navLabelFailures(await visibleNavLabels(page)));
     result.links = await page.evaluate(() => Array.from(document.querySelectorAll("a[href]")).map((a) => ({
@@ -929,6 +947,7 @@ async function run() {
     for (const route of listRoutes) {
       checks.push(await runWithBrowser(`list:${route.route}`, async (browser) => {
         const context = await browser.newContext({ storageState: { cookies: [], origins: [] }, viewport: { width: 1440, height: 1000 } });
+        await installApiProxy(context);
         try {
           return await listRouteCheck(context, route);
         } finally {
@@ -959,6 +978,46 @@ async function run() {
   console.log(JSON.stringify({ status: receipt.status, summary: receipt.summary, receipt: receiptPath }, null, 2));
   if (receipt.status !== "pass") process.exit(1);
   process.exit(0);
+}
+
+async function installApiProxy(target) {
+  if (!shouldProxyBackend) return;
+  await target.route("**/*", async (route) => {
+    const request = route.request();
+    const requestUrl = new URL(request.url());
+    if (!apiPattern.test(request.url())) {
+      await route.continue();
+      return;
+    }
+    if (request.method() === "OPTIONS") {
+      await route.fulfill({ status: 204, headers: corsHeaders() });
+      return;
+    }
+    const upstreamUrl = requestUrl.origin === originUrl.origin
+      ? `${backendOrigin}${requestUrl.pathname}${requestUrl.search}`
+      : request.url();
+    try {
+      const response = await route.fetch({ url: upstreamUrl, timeout: 120_000 });
+      await route.fulfill({
+        response,
+        headers: { ...response.headers(), ...corsHeaders(), "cache-control": "no-store" },
+      });
+    } catch {
+      await route.fulfill({
+        status: 502,
+        headers: { ...corsHeaders(), "content-type": "application/json" },
+        body: JSON.stringify({ status: "unavailable", fact: false, data: { rows: [] } }),
+      });
+    }
+  });
+}
+
+function corsHeaders() {
+  return {
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET,POST,OPTIONS",
+    "access-control-allow-headers": "accept,content-type,x-swfipn-public",
+  };
 }
 
 run().catch((error) => {

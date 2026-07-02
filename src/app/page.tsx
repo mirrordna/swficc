@@ -35,7 +35,7 @@ const ENDPOINTS = {
 };
 
 const LOADING = "Loading";
-const DASHBOARD_EMPTY = "No SWFI rows available";
+const DASHBOARD_EMPTY = "No records to show for this view";
 const SEARCH_PREFETCH_CACHE_PREFIX = "swfipn.search.prefetch.v1:";
 const DASHBOARD_LOAD_ORDER: PacketKey[] = ["metrics", "sectorFlows", "allocators90", "rfps", "allocators30", "transactions30", "entities", "people", "top20", "news"];
 const insightNav = [
@@ -97,7 +97,7 @@ export default function DashboardPage() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeSearchIndex, setActiveSearchIndex] = useState(0);
-  const [newsTab, setNewsTab] = useState<"for-you" | "popular" | "topics">("for-you");
+  const [newsTab, setNewsTab] = useState<"latest" | "referenced" | "topics">("latest");
   const [newestTab, setNewestTab] = useState<"transactions" | "rfps" | "opportunities" | "people">("transactions");
   const [topTab, setTopTab] = useState<"compass" | "sector">("compass");
   const [expandedPanel, setExpandedPanel] = useState("capital-flows");
@@ -407,7 +407,7 @@ function VisualExecutiveOverview({
           </ExpandablePanel>
           <ExpandablePanel
             id="ai-insights"
-            title="AI Insights"
+            title="Market Signals"
             href="/intelligence"
             expanded={expandedPanel === "ai-insights"}
             onToggle={onTogglePanel}
@@ -427,7 +427,7 @@ function VisualExecutiveOverview({
           </ExpandablePanel>
           <ExpandablePanel
             id="relationships"
-            title="Top Institutional Relationships"
+            title="Top Active Investors"
             href="/allocators"
             expanded={expandedPanel === "relationships"}
             onToggle={onTogglePanel}
@@ -505,8 +505,8 @@ function VisualExecutiveOverview({
 
 function BrdNewsFeed({ rows: sourceRows, tab, onTabChange }: {
   rows: Record<string, unknown>[];
-  tab: "for-you" | "popular" | "topics";
-  onTabChange: (tab: "for-you" | "popular" | "topics") => void;
+  tab: "latest" | "referenced" | "topics";
+  onTabChange: (tab: "latest" | "referenced" | "topics") => void;
 }) {
   const rowsToUse = brdNewsRowsForTab(sourceRows, tab);
   const featured = rowsToUse[0];
@@ -516,13 +516,16 @@ function BrdNewsFeed({ rows: sourceRows, tab, onTabChange }: {
     <section data-gsap-reveal className="min-w-0">
       <BrdTabs
         tabs={[
-          ["for-you", "For you"],
-          ["popular", "Popular"],
-          ["topics", "Topics⌄"],
+          ["latest", "Latest Intelligence"],
+          ["referenced", "Most Referenced"],
+          ["topics", "Topics"],
         ]}
         active={tab}
-        onChange={(value) => onTabChange(value as "for-you" | "popular" | "topics")}
+        onChange={(value) => onTabChange(value as "latest" | "referenced" | "topics")}
       />
+      <DashboardSectionNote>
+        Latest market intelligence appears first. Use the other views to browse frequently referenced items or topics.
+      </DashboardSectionNote>
       {featured ? (
         <div className="mt-8 grid gap-10 lg:grid-cols-[minmax(260px,340px)_minmax(320px,1fr)_minmax(220px,310px)]">
           <DataLink href={researchRecordHref(featured)} sourceHref={sourceHref(featured)} className="block text-inherit no-underline">
@@ -611,6 +614,9 @@ function BrdNewestData({ tab, onTabChange, transactionRows, rfpRows, peopleRows 
         active={tab}
         onChange={(value) => onTabChange(value as "transactions" | "rfps" | "opportunities" | "people")}
       />
+      <DashboardSectionNote>
+        Showing recent activity by category. Open a row for details, or use search to explore more.
+      </DashboardSectionNote>
       <BrdTable headers={rowsToUse.headers} rows={rowsToUse.rows} empty={DASHBOARD_EMPTY} />
     </section>
   );
@@ -635,6 +641,9 @@ function BrdTopTen({ tab, onTabChange, rfpRows, sectorRows }: {
         active={tab}
         onChange={(value) => onTabChange(value as "compass" | "sector")}
       />
+      <DashboardSectionNote>
+        A compact ranking of current dashboard activity. Open a row to continue into the matching view.
+      </DashboardSectionNote>
       <BrdTable headers={["Inv Type", "Amount (USD)", "Count"]} rows={rowsToUse} empty={DASHBOARD_EMPTY} />
     </section>
   );
@@ -776,6 +785,10 @@ function BrdTabs({ tabs, active, onChange, className = "" }: {
       ))}
     </div>
   );
+}
+
+function DashboardSectionNote({ children }: { children: ReactNode }) {
+  return <p className="mt-2 max-w-3xl text-[12px] leading-5 text-[#667386]">{children}</p>;
 }
 
 function BrdTable({ headers, rows: tableRows, empty }: { headers: string[]; rows: Cell[][]; empty: string }) {
@@ -947,8 +960,8 @@ function brdSectorTopRows(sectorRows: Record<string, unknown>[]): Cell[][] {
   ]);
 }
 
-function brdNewsRowsForTab(rowsToUse: Record<string, unknown>[], tab: "for-you" | "popular" | "topics") {
-  if (tab === "popular") {
+function brdNewsRowsForTab(rowsToUse: Record<string, unknown>[], tab: "latest" | "referenced" | "topics") {
+  if (tab === "referenced") {
     return [...rowsToUse].sort((a, b) => brdNewsScore(b) - brdNewsScore(a));
   }
   if (tab === "topics") {
@@ -1103,7 +1116,7 @@ function ConceptTopBar({ dataAsOfLabel, packets }: { dataAsOfLabel: string; pack
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[18px] font-extrabold leading-tight text-white">SWFI Intelligence Terminal</span>
           </div>
-          <div className="text-[11px] text-white/80">Discovery dashboard powered by approved SWFI records.</div>
+          <div className="text-[11px] text-white/80">Institutional intelligence, capital activity, mandates, and market signals.</div>
           <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10.5px] font-semibold text-white/85">
             {exactCounts.map(([label, value]) => <span key={label}>{label} {value.toLocaleString("en-US")}</span>)}
           </div>
@@ -1117,7 +1130,7 @@ function ConceptTopBar({ dataAsOfLabel, packets }: { dataAsOfLabel: string; pack
         </nav>
         <form action={appHref("/search/")} className="order-3 flex h-9 w-full items-center border border-white/30 bg-white px-2.5 text-[#444D5F] sm:order-none sm:w-[430px]">
           <span className="mr-2 text-[10px] font-black uppercase tracking-[0.12em] text-[#7A8794]">Search</span>
-          <input id="dashboard-search" name="q" type="search" aria-label="Search SWFI records" placeholder="Companies, investors, funds, people, reports" className="min-w-0 flex-1 bg-transparent text-[12.5px] outline-none placeholder:text-[#70798B]" />
+          <input id="dashboard-search" name="q" type="search" aria-label="Search entities, people, transactions, RFPs, and news" placeholder="Companies, investors, funds, people, reports" className="min-w-0 flex-1 bg-transparent text-[12.5px] outline-none placeholder:text-[#70798B]" />
           <button aria-label="Search" className="ml-2 border border-[#C9D3DE] bg-white px-2 py-1 text-[10px] font-bold text-[#004483]" type="submit">Go</button>
         </form>
         <div className="flex items-center gap-2">
@@ -1164,10 +1177,10 @@ function ConceptKpiCard({ label, value, note, href, series, color }: {
         <MiniSparkline series={series} color={color} large />
       </div>
       <div className="mt-2 flex items-center justify-between gap-2 text-[10.5px]">
-        <span className="font-bold text-[#1A9A68]">Source-backed</span>
+        <span className="font-bold text-[#1A9A68]">Updated</span>
         <span className="truncate text-[#7B8996]">{note}</span>
       </div>
-      <div className="mt-2 text-[9.5px] font-semibold text-[#7B8996]">Data source: SWFI records</div>
+      <div className="mt-2 text-[9.5px] font-semibold text-[#7B8996]">Reviewed SWFI data</div>
     </DashboardLink>
   );
 }
@@ -1254,7 +1267,7 @@ function GlobalCapitalMap({ topRows, sectorRows }: { topRows: Record<string, unk
   return (
     <div className="grid min-h-[250px] gap-3">
       <div className="relative min-h-[190px] overflow-hidden rounded-[6px] bg-[#F7FAFD]">
-        <svg viewBox="0 0 700 285" className="absolute inset-0 h-full w-full" role="img" aria-label="Deterministic sector activity and top AUM map">
+        <svg viewBox="0 0 700 285" className="absolute inset-0 h-full w-full" role="img" aria-label="Sector activity and top AUM map">
           <defs>
             <radialGradient id="mapNode" cx="50%" cy="50%" r="50%">
               <stop offset="0%" stopColor="#0A66C2" stopOpacity="0.95" />
@@ -1283,7 +1296,7 @@ function GlobalCapitalMap({ topRows, sectorRows }: { topRows: Record<string, unk
         <div className="absolute left-3 top-3 rounded-[5px] bg-white/90 px-3 py-2 shadow-sm">
           <div className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#7B8996]">Sector activity</div>
           <div className="mt-1 text-[18px] font-extrabold text-[#13283D]">{compactMoney(sectorCapital)}</div>
-          <div className="mt-1 text-[9px] font-semibold text-[#7B8996]">Sector facet from SWFI records</div>
+          <div className="mt-1 text-[9px] font-semibold text-[#7B8996]">Industry activity</div>
         </div>
       </div>
       <div className="grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
@@ -1380,7 +1393,7 @@ function PipelineFunnelPanel({ packets, topRows, marketRows, fundraisingRows }: 
   const max = Math.max(1, ...stages.map((stage) => stage.value));
   return (
     <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_150px]">
-      <svg viewBox="0 0 380 250" className="h-[220px] w-full" role="img" aria-label="Deterministic pipeline funnel">
+      <svg viewBox="0 0 380 250" className="h-[220px] w-full" role="img" aria-label="Pipeline funnel">
         {stages.map((stage, index) => {
           const topWidth = 320 - index * 48;
           const bottomWidth = 320 - (index + 1) * 48;
@@ -1497,7 +1510,7 @@ function DealIntelligencePanel({ rows: sourceRows, sectorRows }: { rows: Record<
         <div className="min-w-0">
           <div className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#7B8996]">Deal momentum</div>
           <div className="mt-1 text-[13px] font-bold text-[#203448]">{topSector ? brdText(topSector.name || topSector.value) : DASHBOARD_EMPTY}</div>
-          <div className="mt-1 text-[11px] text-[#7B8996]">{topSector ? `${brdText(topSector.count)} source records` : "Data source: SWFI records"}</div>
+          <div className="mt-1 text-[11px] text-[#7B8996]">{topSector ? `${brdText(topSector.count)} items` : "No current activity"}</div>
         </div>
       </div>
       {topDeal ? (
@@ -1630,7 +1643,7 @@ function UnifiedIntelligencePanel({ rows: insights }: { rows: UnifiedInsight[] }
   const visible = insights.slice(0, 5);
   return (
     <div className="grid gap-3">
-      <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-5" role="img" aria-label="Source-backed cross-source intelligence heatmap">
+      <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-5" role="img" aria-label="Institutional activity heatmap">
         {visible.map((insight, index) => {
           const intensity = Math.max(16, Math.round((insight.value / max) * 100));
           return (
@@ -1803,7 +1816,7 @@ function StackedArea({ rows: sourceRows }: { rows: Record<string, unknown>[] }) 
   const plot = { left: 42, top: 22, width: 438, height: 176 };
   return (
     <div className="grid gap-2">
-      <svg viewBox="0 0 520 240" className="h-[230px] w-full rounded-[6px] bg-[#F5F8FB]" role="img" aria-label="Deterministic stacked capital flow chart">
+      <svg viewBox="0 0 520 240" className="h-[230px] w-full rounded-[6px] bg-[#F5F8FB]" role="img" aria-label="Stacked capital flow chart">
         {[0, 1, 2, 3, 4].map((line) => (
           <g key={line}>
             <line x1={plot.left} x2={plot.left + plot.width} y1={plot.top + line * 39} y2={plot.top + line * 39} stroke="#DCE5ED" strokeWidth="1" />
@@ -2005,7 +2018,7 @@ function MiniRecordTable({ headers, rows: sourceRows, empty, controls }: { heade
   const visible = sortedRows.slice(0, controls.rowLimit);
   return (
     <div className="min-w-0 overflow-x-auto">
-      <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.12em] text-[#7B8996]">Showing {visible.length.toLocaleString("en-US")} of {sourceRows.length.toLocaleString("en-US")} · Data source: SWFI records</div>
+      <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.12em] text-[#7B8996]">Showing {visible.length.toLocaleString("en-US")} of {sourceRows.length.toLocaleString("en-US")}</div>
       <div className="min-w-[560px]">
         <div className="grid grid-cols-4 gap-2 border-b border-[#DDE6EE] pb-1 text-[10px] font-extrabold uppercase tracking-[0.08em] text-[#6B7784]">
           {headers.map((header) => <div key={header}>{header}</div>)}
@@ -2128,7 +2141,7 @@ function DonutGauge({ value }: { value: number }) {
   const circumference = 2 * Math.PI * 27;
   const dash = (safe / 100) * circumference;
   return (
-    <svg viewBox="0 0 72 72" className="h-16 w-16 shrink-0" role="img" aria-label={`${safe}% source-weighted deal momentum`}>
+    <svg viewBox="0 0 72 72" className="h-16 w-16 shrink-0" role="img" aria-label={`${safe}% deal momentum`}>
       <circle cx="36" cy="36" r="27" fill="none" stroke="#E3EAF0" strokeWidth="9" />
       <circle cx="36" cy="36" r="27" fill="none" stroke="#1A9A68" strokeWidth="9" strokeLinecap="round" strokeDasharray={`${dash} ${circumference - dash}`} transform="rotate(-90 36 36)" />
       <text x="36" y="40" textAnchor="middle" fill="#13283D" fontSize="15" fontWeight="900">{safe}%</text>
@@ -2313,7 +2326,7 @@ function KpiCard({ label, value, note, source, href }: { label: string; value: s
       <div className="mt-1 break-words text-[25px] font-bold text-[#11314F]">{value}</div>
       <div className="mt-1 text-[11px] text-[#7A8A9B]">{note}</div>
       <MetricRail value={value} />
-      <div className="mt-1 text-[10.5px] text-[#7A8A9B]" data-source-path={source}>Data source: SWFI records</div>
+      <div className="mt-1 text-[10.5px] text-[#7A8A9B]" data-source-path={source}>Updated from SWFI</div>
     </DashboardLink>
   );
 }
@@ -2378,7 +2391,7 @@ function InsightRow({
         <div className="text-[13px] font-bold text-[#11314F]">
           {href ? <DashboardLink href={href} className="text-[#16538C] underline">{label}</DashboardLink> : label}
         </div>
-        <div className="mt-0.5 text-[11px] text-[#7A8A9B]" data-source-path={sourceNote}>Data source: SWFI records</div>
+        <div className="mt-0.5 text-[11px] text-[#7A8A9B]" data-source-path={sourceNote}>Updated from SWFI</div>
       </div>
       <div className="grid gap-2 px-4 py-2 text-[12px] text-[#41566B] md:grid-cols-[minmax(0,1fr)_minmax(160px,220px)_112px] md:items-end">
         <div className="font-semibold">
@@ -2561,7 +2574,7 @@ function VisualPanel({ title, source, empty, hasRows, children }: { title: strin
     <div className="min-w-0 rounded border border-[#DCE3EA] bg-white p-4">
       <div className="mb-3">
         <div className="text-[13px] font-bold tracking-[0.07em] text-[#41566B]">{title}</div>
-        <div className="mt-0.5 text-[11px] text-[#7A8A9B]" data-source-path={source}>Data source: SWFI records</div>
+        <div className="mt-0.5 text-[11px] text-[#7A8A9B]" data-source-path={source}>Updated from SWFI</div>
       </div>
       {hasRows ? children : <div className="text-[13px] text-[#41566B]">{empty}</div>}
     </div>

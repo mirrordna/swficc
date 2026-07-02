@@ -40,6 +40,8 @@ services:
       SWFI2_ALLOW_UNAUTH_LOCAL: "0"
       SWFI2_STRICT_BOOT: ${SWFI2_STRICT_BOOT:-0}
       SWFI2_PRODUCT_API_KEY_STORE_PATH: /app/product-state/api-product-keys.json
+      SWFI2_PRODUCT_API_DOCS_ENABLED: "1"
+      SWFI_MONGO_TIMEOUT_MS: "12000"
       SWFI2_ADMIN_STORE_PATH: /app/product-state/admin-governance.json
       SWFI2_SAVED_SEARCH_STORE_PATH: /app/product-state/saved-searches.json
       SWFI2_ALERT_STORE_PATH: /app/product-state/alerts.json

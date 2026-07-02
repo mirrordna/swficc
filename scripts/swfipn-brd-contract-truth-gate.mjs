@@ -100,7 +100,7 @@ function sourceDestinationManifestLayer(receipt, mappingReceipt) {
   const body = receipt.body || {};
   const totals = body.totals || {};
   const mappingTotal = number(mappingReceipt.body?.totals?.rows_seen);
-  return passFail("source_destination_manifest", "Source/destination manifest covers every mapped source record", [
+  return passFail("source_destination_manifest", "Source/destination manifest covers every source record with a destination", [
     { ok: receipt.exists, failure: "source_destination_manifest_receipt_missing" },
     { ok: receipt.status === "pass", failure: `source_destination_manifest_status_${receipt.status || "missing"}` },
     { ok: !receipt.stale, failure: `source_destination_manifest_receipt_stale_${receipt.age_hours ?? "unknown"}h_gt_${maxAgeHours}h` },

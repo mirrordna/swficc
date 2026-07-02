@@ -12,16 +12,23 @@ url = os.environ.get("SWFIPN_HEALTHCHECK_URL", f"http://{host}:{port}/__origin/r
 required = [
     "Top AUM & Sector Activity",
     "Capital Flows",
-    "AI Insights",
+    "Market Signals",
     "Pipeline Overview",
     "Top Active Allocators (Last 90 Days)",
     "Deal Intelligence",
-    "Data source: SWFI records",
+    "Updated from SWFI",
 ]
 
 forbidden = [
     "Endpoint:",
     "Source-backed fact",
+    "Source-backed",
+    "source-backed",
+    "Data source:",
+    "BRD V1.3",
+    "Glass Box",
+    "Command Box",
+    "deterministic",
     "Source Record ID",
     "Truth State",
     "Result Qualifier",

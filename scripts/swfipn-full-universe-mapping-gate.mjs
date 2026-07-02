@@ -19,7 +19,8 @@ const shardCount = Math.max(1, Number(process.env.SWFIPN_UNIVERSE_SHARD_COUNT ||
 const shardIndex = Math.max(0, Number(process.env.SWFIPN_UNIVERSE_SHARD_INDEX || 0));
 const probeLimit = Math.max(0, Number(process.env.SWFIPN_UNIVERSE_PROBE_LIMIT || 0));
 const probeAll = /^(1|true|yes)$/i.test(String(process.env.SWFIPN_UNIVERSE_PROBE_ALL || ""));
-const collections = envList("SWFIPN_UNIVERSE_COLLECTIONS", ["entities", "people", "transactions", "compass", "news", "reports"]);
+const canonicalCollections = ["entities", "people", "transactions", "compass", "news", "reports"];
+const collections = envList("SWFIPN_UNIVERSE_COLLECTIONS", canonicalCollections);
 const scanTimeoutMs = clampNumber(process.env.SWFIPN_UNIVERSE_SCAN_TIMEOUT_MS, 5_000, 300_000, 120_000);
 const scanRetries = clampNumber(process.env.SWFIPN_UNIVERSE_SCAN_RETRIES, 0, 10, 3);
 const failOnUiTotalMismatch = !/^(0|false|no)$/i.test(String(process.env.SWFIPN_UNIVERSE_FAIL_ON_UI_TOTAL_MISMATCH || "1"));
@@ -29,6 +30,8 @@ const allowShardedPartial = /^(1|true|yes)$/i.test(String(process.env.SWFIPN_UNI
 const allowSourceTotalDrift = /^(1|true|yes)$/i.test(String(process.env.SWFIPN_UNIVERSE_ALLOW_SOURCE_TOTAL_DRIFT || ""));
 const requireReportsContract = !/^(0|false|no)$/i.test(String(process.env.SWFIPN_UNIVERSE_REQUIRE_REPORTS_CONTRACT || "1"));
 const failOnMissingLabel = /^(1|true|yes)$/i.test(String(process.env.SWFIPN_UNIVERSE_FAIL_ON_MISSING_LABEL || "0"));
+let activeReceipt = null;
+let activeFamily = "";
 
 if (shardIndex >= shardCount) {
   throw new Error(`Invalid shard config: SWFIPN_UNIVERSE_SHARD_INDEX=${shardIndex} must be less than SWFIPN_UNIVERSE_SHARD_COUNT=${shardCount}`);
@@ -115,6 +118,9 @@ const families = [
     sourceUrl: (row) => text(row.source_url || row.report_url || row.url),
   },
 ].filter((family) => collections.includes(family.id) || collections.includes(family.collection));
+
+const requestedCollectionIds = families.map((family) => family.id);
+const missingCanonicalCollections = canonicalCollections.filter((id) => !requestedCollectionIds.includes(id));
 
 function normalizeOrigin(value) {
   return value.endsWith("/") ? value : `${value}/`;
@@ -669,7 +675,8 @@ async function run() {
     },
     shard: { index: shardIndex, count: shardCount },
     page_limit: pageLimit,
-    collections: families.map((family) => family.id),
+    collections: requestedCollectionIds,
+    canonical_collections: canonicalCollections,
     status: "pass",
     totals: {
       source_total: 0,
@@ -686,9 +693,11 @@ async function run() {
     families: [],
     failures: [],
   };
+  activeReceipt = receipt;
 
   const globalSeen = { keys: new Set() };
   for (const family of families) {
+    activeFamily = family.id;
     console.error(`[full-universe] ${family.id}: start`);
     const result = await enumerateFamily(family, globalSeen);
     console.error(`[full-universe] ${family.id}: ${result.status} ${result.rows_written}/${result.source_total} rows, pages=${result.pages}`);
@@ -703,9 +712,18 @@ async function run() {
       receipt.failures.push({ family: result.id, failures: result.failures });
     }
   }
+  activeFamily = "";
   if (requireReportsContract && !families.some((family) => family.id === "reports")) {
     receipt.status = "fail";
     receipt.failures.push({ family: "reports", failures: ["reports_contract_blocked"] });
+  }
+  if (missingCanonicalCollections.length && receipt.status === "pass") {
+    receipt.status = "partial_pass";
+    receipt.partial = {
+      ...(receipt.partial || {}),
+      missing_canonical_collections: missingCanonicalCollections,
+      note: "Collection-filtered runs are not full-universe acceptance receipts.",
+    };
   }
   if (allowPartial && (maxPages || maxRecords) && receipt.status === "pass") {
     receipt.status = "partial_pass";
@@ -728,6 +746,39 @@ async function run() {
   }, null, 2));
   if (receipt.status === "partial_pass" && !allowPartialExit) process.exit(1);
   if (!["pass", "partial_pass"].includes(receipt.status)) process.exit(1);
+}
+
+function writeInterruptedReceipt(signal) {
+  fs.mkdirSync(path.dirname(latestReceiptPath), { recursive: true });
+  const generatedAt = new Date().toISOString();
+  const receipt = activeReceipt || {
+    schema_version: "swfipn.full_universe_mapping_gate.v1",
+    generated_at: generatedAt,
+    run_id: runId,
+    origin,
+    backend_origin: backendOrigin,
+    scope: "phase1_public_dashboard_swfi_auth_handoff",
+    families: [],
+    failures: [],
+  };
+  receipt.status = "blocked";
+  receipt.interrupted_at = generatedAt;
+  receipt.interrupted_signal = signal;
+  receipt.active_family = activeFamily || null;
+  receipt.failures = Array.isArray(receipt.failures) ? receipt.failures : [];
+  receipt.failures.push({
+    family: activeFamily || "run",
+    failures: [`interrupted_before_full_universe_receipt:${signal}`],
+  });
+  fs.writeFileSync(latestReceiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  console.error(`[full-universe] interrupted by ${signal}; wrote blocked receipt ${latestReceiptPath}`);
+}
+
+for (const signal of ["SIGTERM", "SIGINT"]) {
+  process.once(signal, () => {
+    writeInterruptedReceipt(signal);
+    process.exit(signal === "SIGINT" ? 130 : 143);
+  });
 }
 
 run().catch((error) => {

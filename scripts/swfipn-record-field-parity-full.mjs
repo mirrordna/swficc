@@ -320,6 +320,7 @@ function packetRows(body) {
 }
 
 function loadMongoUri() {
+  const rejected = [];
   for (const [name, value] of [
     ["SWFIPN_RECORD_PARITY_MONGO_URI", process.env.SWFIPN_RECORD_PARITY_MONGO_URI],
     ["ATLAS_URI", process.env.ATLAS_URI],
@@ -327,9 +328,21 @@ function loadMongoUri() {
     ["SWFI_MONGODB_URI", process.env.SWFI_MONGODB_URI],
     ["MONGODB_URI", process.env.MONGODB_URI],
   ]) {
-    if (value) return { uri: value, source: `env:${name}` };
+    if (value && isAllowedMongoUri(value)) return { uri: value, source: `env:${name}` };
+    if (value) rejected.push({ source: `env:${name}`, reason: "local_mongo_uri_rejected" });
   }
-  return { uri: "", source: "" };
+  return { uri: "", source: "", rejected };
+}
+
+function isAllowedMongoUri(value) {
+  if (/^(1|true|yes|on)$/i.test(String(process.env.SWFIPN_RECORD_PARITY_ALLOW_LOCAL_MONGO || ""))) return true;
+  try {
+    const parsed = new URL(value);
+    const host = parsed.hostname.toLowerCase();
+    return !["localhost", "127.0.0.1", "::1", "0.0.0.0"].includes(host);
+  } catch {
+    return false;
+  }
 }
 
 function fetchMongoDocs(collection, ids, mongoUri, projection = null) {
@@ -546,6 +559,8 @@ async function main() {
       status: "blocked",
       generated_at: new Date().toISOString(),
       reason: "mongo_uri_unavailable",
+      detail: "No governed non-local Mongo URI is available for full field parity. Localhost Mongo URIs are rejected unless SWFIPN_RECORD_PARITY_ALLOW_LOCAL_MONGO=1.",
+      rejected_sources: mongo.rejected || [],
     };
     fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
     console.log(JSON.stringify({ status: receipt.status, receipt: receiptPath }, null, 2));

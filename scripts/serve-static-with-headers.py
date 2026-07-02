@@ -449,6 +449,9 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
         if self.is_login_path(parsed.path):
             self.redirect(self.swfi_signin_location(parsed))
             return
+        if self.should_proxy_internal_backend_post(parsed.path):
+            self.proxy_backend(parsed, method="POST")
+            return
         if self.should_proxy_caller_auth_backend(parsed.path):
             self.proxy_backend(parsed, method="POST")
             return
@@ -484,6 +487,9 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
             or path == "/api/v1/alerts"
             or path.startswith("/api/v1/alerts/")
         )
+
+    def should_proxy_internal_backend_post(self, path):
+        return path in {"/api/source-data/detail-batch-verify/v1"}
 
     def is_origin_ready_path(self, path):
         return path in {"/__origin/ready", "/swficc/__origin/ready"}

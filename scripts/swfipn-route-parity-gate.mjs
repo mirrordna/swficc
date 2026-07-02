@@ -110,6 +110,10 @@ function loadPlaywright() {
   return createRequire(import.meta.url)("playwright");
 }
 
+async function launchBrowser(chromium) {
+  return chromium.launch({ headless: true, timeout: 30_000 });
+}
+
 async function fetchJson(url, timeoutMs = 45_000) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -462,6 +466,7 @@ function renderMarkdown(receipt) {
 
 async function ensurePage(browser, viewport) {
   try {
+    if (!browser?.isConnected?.()) return null;
     return await browser.newPage({ viewport });
   } catch {
     return null;
@@ -473,7 +478,7 @@ async function run() {
   fs.mkdirSync(screenshotDir, { recursive: true });
   const overallStart = Date.now();
   const { chromium } = loadPlaywright();
-  const browser = await chromium.launch({ headless: true, timeout: 30_000 });
+  let browser = await launchBrowser(chromium);
   const screenshotCounter = { value: 1 };
   const allFindings = [];
   const seedResults = [];
@@ -481,6 +486,20 @@ async function run() {
   const seenHrefs = new Set();
 
   let page;
+  async function relaunchBrowser(viewport) {
+    await page?.close?.().catch(() => {});
+    await browser?.close?.().catch(() => {});
+    page = null;
+    browser = await launchBrowser(chromium);
+    return ensurePage(browser, viewport);
+  }
+
+  async function ensureLivePage(viewport) {
+    const livePage = await ensurePage(browser, viewport);
+    if (livePage) return livePage;
+    return relaunchBrowser(viewport);
+  }
+
   try {
     // ── PHASE 1: Section crawl (desktop) ──
     console.error("[route-parity] Phase 1: Section crawl (desktop)");
@@ -518,7 +537,7 @@ async function run() {
         }
       } catch (error) {
         seedResult.failures.push(error.message);
-        page = await ensurePage(browser, VIEWPORT_DESKTOP);
+        page = await ensureLivePage(VIEWPORT_DESKTOP);
       }
       seedResults.push(seedResult);
     }
@@ -529,16 +548,25 @@ async function run() {
     const linksToTest = crawlQueue.slice(0, MAX_LINKS);
     for (let i = 0; i < linksToTest.length; i++) {
       if (Date.now() - overallStart >= OVERALL_TIMEOUT_MS) break;
-      if (!page) page = await ensurePage(browser, VIEWPORT_DESKTOP);
+      if (!page) page = await ensureLivePage(VIEWPORT_DESKTOP);
       if (!page) {
         allFindings.push({ status: "BLOCKED", source_page: linksToTest[i].sourceRoute, click_label: linksToTest[i].text, expected_type: linksToTest[i].kind, actual_url: linksToTest[i].href, reason: "browser_unrecoverable", failures: ["browser_unrecoverable"], redirect_chain: [], screenshot: null, viewport: "1440x960" });
         continue;
       }
-      const finding = await verifyDetailPage(page, linksToTest[i], "1440x960", screenshotCounter);
+      let finding = await verifyDetailPage(page, linksToTest[i], "1440x960", screenshotCounter);
+      if (finding.status === "BLOCKED" && /browser has been closed|Target page|ERR_ABORTED|browser_unrecoverable/i.test(finding.reason || "")) {
+        await page.close().catch(() => {});
+        page = await relaunchBrowser(VIEWPORT_DESKTOP);
+        if (page) {
+          const retryFinding = await verifyDetailPage(page, linksToTest[i], "1440x960", screenshotCounter);
+          retryFinding.retry_of = finding.reason;
+          finding = retryFinding;
+        }
+      }
       allFindings.push(finding);
       if (finding.status === "BLOCKED") {
         await page.close().catch(() => {});
-        page = await ensurePage(browser, VIEWPORT_DESKTOP);
+        page = await ensureLivePage(VIEWPORT_DESKTOP);
       }
       if ((i + 1) % 50 === 0) console.error(`[route-parity]   desktop: ${i + 1}/${totalToTest}`);
     }
@@ -549,16 +577,25 @@ async function run() {
     if (mobileSample.length && Date.now() - overallStart < OVERALL_TIMEOUT_MS) {
       console.error(`[route-parity] Phase 3: Mobile verification (${mobileSample.length} links)`);
       if (page) await page.close().catch(() => {});
-      page = await ensurePage(browser, VIEWPORT_MOBILE);
+      page = await ensureLivePage(VIEWPORT_MOBILE);
       for (let i = 0; i < mobileSample.length; i++) {
         if (Date.now() - overallStart >= OVERALL_TIMEOUT_MS) break;
-        if (!page) page = await ensurePage(browser, VIEWPORT_MOBILE);
+        if (!page) page = await ensureLivePage(VIEWPORT_MOBILE);
         if (!page) break;
-        const finding = await verifyDetailPage(page, mobileSample[i], "375x812", screenshotCounter);
+        let finding = await verifyDetailPage(page, mobileSample[i], "375x812", screenshotCounter);
+        if (finding.status === "BLOCKED" && /browser has been closed|Target page|ERR_ABORTED|browser_unrecoverable/i.test(finding.reason || "")) {
+          await page.close().catch(() => {});
+          page = await relaunchBrowser(VIEWPORT_MOBILE);
+          if (page) {
+            const retryFinding = await verifyDetailPage(page, mobileSample[i], "375x812", screenshotCounter);
+            retryFinding.retry_of = finding.reason;
+            finding = retryFinding;
+          }
+        }
         allFindings.push(finding);
         if (finding.status === "BLOCKED") {
           await page.close().catch(() => {});
-          page = await ensurePage(browser, VIEWPORT_MOBILE);
+          page = await ensureLivePage(VIEWPORT_MOBILE);
         }
       }
     }
@@ -573,6 +610,9 @@ async function run() {
   const expectedDesktopLinks = Math.min(crawlQueue.length, MAX_LINKS);
   const expectedTotalLinks = expectedDesktopLinks + Math.min(crawlQueue.length, MOBILE_SAMPLE);
   const incompleteFailures = [];
+  if (expectedTotalLinks <= 0) {
+    incompleteFailures.push("browser_route_parity_expected_count_missing:0");
+  }
   if (allFindings.length < expectedTotalLinks) {
     incompleteFailures.push(`incomplete_visible_link_coverage:${allFindings.length}/${expectedTotalLinks}`);
   }

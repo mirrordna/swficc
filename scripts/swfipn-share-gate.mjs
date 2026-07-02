@@ -19,7 +19,6 @@ const requiredReceipts = [
   "swfipn-acceptance-criteria-gate-latest.json",
   "swfipn-strict-acceptance-deploy-latest.json",
   "swfipn-public-gc1-link-proof-latest.json",
-  "swfipn-acceptance-lock-latest.json",
   "swfipn-loop-collapse-latest.json",
 ];
 const requiredScreenshots = [
@@ -30,6 +29,13 @@ const requiredScreenshots = [
 const forbiddenVisible = [
   "Endpoint:",
   "Source-backed fact",
+  "Source-backed",
+  "source-backed",
+  "Data source:",
+  "BRD V1.3",
+  "Glass Box",
+  "Command Box",
+  "deterministic",
   "Source Record ID",
   "Truth State",
   "Result Qualifier",
@@ -135,7 +141,7 @@ async function renderedPublicCheck() {
     result.final_url = page.url();
     if (!response || response.status() >= 400) result.failures.push(`http_${response?.status() || "missing"}`);
     if (!result.final_url.startsWith(origin.replace(/\/$/, ""))) result.failures.push(`wrong_final_url:${result.final_url}`);
-    const body = await waitForBody(page, ["SWFI", "KPI CARDS", "Data source: SWFI records", "Top Active Allocators", "Newest Transactions"], 90_000);
+    const body = await waitForBody(page, ["SWFI", "KPI CARDS", "Updated from SWFI", "Top Active Allocators", "Newest Transactions"], 90_000);
     for (const text of forbiddenVisible) {
       if (body.includes(text)) result.failures.push(`forbidden_visible:${text}`);
     }

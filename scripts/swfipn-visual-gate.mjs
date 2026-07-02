@@ -7,8 +7,13 @@ const repoRoot = process.cwd();
 const outputDir = path.join(repoRoot, "output");
 const receiptPath = path.join(outputDir, "swfipn-visual-gate-latest.json");
 const origin = normalizeOrigin(process.env.SWFIPN_ORIGIN || "http://127.0.0.1:8353/swficc/");
+const backendOrigin = (process.env.SWFIPN_BACKEND_ORIGIN || "https://swfipn.activemirror.ai").replace(/\/$/, "");
 const resolveIp = process.env.SWFIPN_RESOLVE_IP || "";
 const originHost = new URL(origin).hostname;
+const originUrl = new URL(origin);
+const shouldProxyBackend = process.env.SWFIPN_PROXY_BACKEND === "1"
+  || (process.env.SWFIPN_PROXY_BACKEND !== "0" && ["localhost", "127.0.0.1", "::1"].includes(originUrl.hostname));
+const apiPattern = /api\/(source-data|source-intelligence|recent-transactions|live-opportunities|sector-flows|allocator-activity|swfi)|\/v1\/swfi\//;
 
 const REQUIRED_TEXT = [
   "TOTAL AUM ENGAGED",
@@ -16,32 +21,32 @@ const REQUIRED_TEXT = [
   "PIPELINE VALUE",
   "Global Capital Map",
   "Capital Flows",
-  "AI Insights",
+  "Market Signals",
   "Pipeline Overview",
-  "Top Institutional Relationships",
+  "Top Active Investors",
   "Research & Analytics Hub",
   "Market Intelligence",
   "Activity Feed",
   "Deal Intelligence",
-  "Data source: SWFI records",
+  "Reviewed SWFI data",
 ];
 
 const REQUIRED_VISUAL_SECTIONS = [
   "Global Capital Map",
   "Capital Flows & Allocation Trends",
-  "AI Insights",
+  "Market Signals",
   "Pipeline Overview",
-  "Top Institutional Relationships",
+  "Top Active Investors",
   "Research & Analytics Hub",
   "Market Intelligence",
   "Deal Intelligence",
 ];
 
 const REQUIRED_SVG_LABELS = [
-  "Deterministic sector activity and top AUM map",
-  "Deterministic stacked capital flow chart",
-  "Deterministic pipeline funnel",
-  "source-weighted deal momentum",
+  "Sector activity and top AUM map",
+  "Stacked capital flow chart",
+  "Pipeline funnel",
+  "deal momentum",
 ];
 
 const REQUIRED_ANCHORS = [
@@ -58,6 +63,13 @@ const REQUIRED_ANCHORS = [
 const FORBIDDEN_VISIBLE_TEXT = [
   "Endpoint:",
   "Source-backed fact",
+  "Source-backed",
+  "source-backed",
+  "BRD V1.3",
+  "Glass Box",
+  "Command Box",
+  "Data source:",
+  "deterministic",
   "Source Record ID",
   "Truth State",
   "Result Qualifier",
@@ -153,6 +165,7 @@ async function inspectViewport(browser, spec) {
   };
 
   try {
+    if (shouldProxyBackend) await installApiProxy(page);
     const response = await gotoWithRetry(page, origin, { waitUntil: "domcontentloaded", timeout: 60_000 });
     entry.status = response?.status() || 0;
     if (!response || response.status() >= 400) entry.failures.push(`http_${response?.status() || "missing"}`);
@@ -298,7 +311,7 @@ async function inspectViewport(browser, spec) {
     const minimumSourceLinks = spec.mode === "top" ? 10 : 4;
     if (entry.check.dataSourceLinkCount < minimumSourceLinks) entry.failures.push(`too_few_source_links:${entry.check.dataSourceLinkCount}`);
     if (entry.check.leakedLinks?.length) entry.failures.push(`link_id_or_source_leak:${entry.check.leakedLinks.join("|")}`);
-    if (entry.check.missingSvgLabels?.length) entry.failures.push(`missing_deterministic_svg:${entry.check.missingSvgLabels.join("|")}`);
+    if (entry.check.missingSvgLabels?.length) entry.failures.push(`missing_svg_label:${entry.check.missingSvgLabels.join("|")}`);
     if (entry.check.document.scrollWidth > entry.check.document.clientWidth + 1) {
       entry.failures.push(`horizontal_overflow:${entry.check.document.scrollWidth}>${entry.check.document.clientWidth}`);
     }
@@ -343,6 +356,45 @@ async function inspectViewport(browser, spec) {
 
   entry.ok = entry.failures.length === 0;
   return entry;
+}
+
+async function installApiProxy(page) {
+  await page.route("**/*", async (route) => {
+    const request = route.request();
+    const requestUrl = new URL(request.url());
+    if (!apiPattern.test(request.url())) {
+      await route.continue();
+      return;
+    }
+    if (request.method() === "OPTIONS") {
+      await route.fulfill({ status: 204, headers: corsHeaders() });
+      return;
+    }
+    const upstreamUrl = requestUrl.origin === originUrl.origin
+      ? `${backendOrigin}${requestUrl.pathname}${requestUrl.search}`
+      : request.url();
+    try {
+      const response = await route.fetch({ url: upstreamUrl, timeout: 120_000 });
+      await route.fulfill({
+        response,
+        headers: { ...response.headers(), ...corsHeaders(), "cache-control": "no-store" },
+      });
+    } catch {
+      await route.fulfill({
+        status: 502,
+        headers: { ...corsHeaders(), "content-type": "application/json" },
+        body: JSON.stringify({ status: "unavailable", fact: false, data: { rows: [] } }),
+      });
+    }
+  });
+}
+
+function corsHeaders() {
+  return {
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET,POST,OPTIONS",
+    "access-control-allow-headers": "accept,content-type,x-swfipn-public",
+  };
 }
 
 async function gotoWithRetry(page, url, options, attempts = 3) {
@@ -392,7 +444,7 @@ async function run() {
     status: failures.length ? "fail" : "pass",
     visual_baseline: true,
     baseline_mode: true,
-    baseline_claim: "BRD dashboard visual baseline: required visual sections, deterministic SVGs, expansion control, leakage scan, anchors, desktop screenshots, and mobile screenshot.",
+    baseline_claim: "BRD dashboard visual baseline: required visual sections, SVGs, expansion control, leakage scan, anchors, desktop screenshots, and mobile screenshot.",
     summary: {
       checks: checks.length,
       viewports: VIEWPORTS.length,

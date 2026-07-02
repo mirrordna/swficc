@@ -7,6 +7,7 @@ const cwd = process.cwd();
 const target = normalizeTarget(process.env.SWFIPN_ORIGIN || "http://localhost:3025/swficc/");
 const backendOrigin = (process.env.SWFIPN_BACKEND_ORIGIN || "https://swfipn.activemirror.ai").replace(/\/$/, "");
 const targetHost = new URL(target).hostname;
+const targetOrigin = new URL(target).origin;
 const shouldProxyBackend = process.env.SWFIPN_PROXY_BACKEND === "1"
   || (process.env.SWFIPN_PROXY_BACKEND !== "0" && ["localhost", "127.0.0.1", "::1"].includes(targetHost));
 const outputDir = path.join(cwd, "output");
@@ -28,8 +29,8 @@ const requiredText = [
   "Compass",
   "Reports",
   "Discover",
-  "For you",
-  "Popular",
+  "Latest Intelligence",
+  "Most Referenced",
   "Topics",
   "Upcoming Events",
   "Market Focus",
@@ -64,19 +65,23 @@ async function main() {
   page.on("pageerror", (error) => consoleErrors.push(error.message));
 
   if (shouldProxyBackend) {
-    await page.route(`${backendOrigin}/**`, async (route) => {
+    await page.route("**/*", async (route) => {
       const request = route.request();
+      const requestUrl = new URL(request.url());
       if (!apiPattern.test(request.url())) {
         await route.continue();
         return;
       }
+      const upstreamUrl = requestUrl.origin === targetOrigin
+        ? `${backendOrigin}${requestUrl.pathname}${requestUrl.search}`
+        : request.url();
       if (request.method() === "OPTIONS") {
         await route.fulfill({ status: 204, headers: corsHeaders() });
         return;
       }
       try {
-        const response = await route.fetch({ timeout: 120_000 });
-        apiResponses.push({ status: response.status(), url: request.url() });
+        const response = await route.fetch({ url: upstreamUrl, timeout: 120_000 });
+        apiResponses.push({ status: response.status(), url: upstreamUrl });
         await route.fulfill({
           response,
           headers: { ...response.headers(), ...corsHeaders(), "cache-control": "no-store" },
@@ -163,7 +168,7 @@ async function main() {
     caveats: [
       shouldProxyBackend ? "Local proof uses Playwright API proxy only to bypass localhost CORS; payloads are live from the configured backend origin." : "",
       "Upcoming Events has no verified first-party SWFIPN data endpoint in this repo; the dashboard links to the external GWC events source required by BRD.",
-      "Popular and For You tabs are structurally implemented; no user-personalization or weekly page-view packet was found in the approved public dashboard endpoints.",
+      "Latest Intelligence and Most Referenced views are structurally implemented; no user-personalization packet was found in the approved public dashboard endpoints.",
     ].filter(Boolean),
   };
   fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2));

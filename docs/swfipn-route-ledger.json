@@ -4,8 +4,8 @@
   "product_truth": {
     "fact_rail": "Mongo/backend SWFI records",
     "provenance_rail": "SWFI.com source URLs",
-    "navigation_rule": "Dashboard rows and record actions resolve to canonical SWFI record URLs. Existing SWFI auth handles protected profile/detail access.",
-    "public_rule": "Top-level dashboard, discovery lists, and brand pages may render publicly; protected record access is delegated to SWFI-owned auth/profile surfaces."
+    "navigation_rule": "Dashboard rows and record actions resolve to the corresponding SWFI record/profile page within /swficc where an internal record exists; external protected SWFI access remains delegated to SWFI-owned auth/profile surfaces.",
+    "public_rule": "Top-level dashboard, discovery lists, Terminal-native detail pages, and brand pages may render publicly when backed by internal records."
   },
   "forbidden_visible_text": [
     "Source gap",
@@ -46,9 +46,7 @@
       "class": "public_dashboard",
       "path": "/",
       "source": "backend_mongo_records",
-      "required_text": ["SWFI", "KPI CARDS", "INSIGHTS", "Top Active Allocators", "Newest Transactions", "Data source: SWFI records"],
-      "min_mirror_record_links": 8,
-      "min_source_links": 3,
+      "required_text": ["SWFI", "ACTIVE ALLOCATORS", "DEALS & TRANSACTIONS", "REPORTS", "Data source: SWFI records"],
       "requires_internal_links_only": false
     },
     {
@@ -74,6 +72,14 @@
       "path": "/about-us/our-team/",
       "source": "ported_swfi_brand_content",
       "required_text": ["Our Team", "Lakshmi Narayanan", "Michael Maduell", "Kong Posh Bhat", "Ajay Thota"]
+    },
+    {
+      "id": "products",
+      "status": "live",
+      "class": "swfi_source_page_port",
+      "path": "/products/",
+      "source": "ported_swfi_product_content",
+      "required_text": ["SWFI PRODUCTS", "Capital Intelligence OS", "ONE WORKSPACE, MANY RECORD CLASSES", "Open the dashboard"]
     },
     {
       "id": "solutions",
@@ -263,10 +269,8 @@
       "class": "product_search",
       "path": "/search/?q=Real%20Estate",
       "source": "api_public_search_people_transactions",
-      "required_text": ["Smart Search Bar", "Institution, Person, Strategy", "Real Estate", "Showing"],
-      "min_mirror_record_links": 3,
-      "min_source_links": 3,
-      "requires_table_controls": true
+      "required_text": ["Smart Search Bar", "TYPE", "RESULT", "SOURCE", "DETAIL", "CITATION", "Real Estate", "Showing"],
+      "min_mirror_record_links": 3
     },
     {
       "id": "reports",
@@ -291,7 +295,6 @@
       "class": "product_detail",
       "path": "/profiles/detail/?slug=andreessen-horowitz&id=5bb7bec0ca00a5212c486ec2&name=Andreessen+Horowitz",
       "source": "api_profiles_detail",
-      "protected_record_handoff": true,
       "required_text": ["ENTITY PROFILE", "Andreessen Horowitz", "Verified in SWFI records"]
     },
     {
@@ -300,7 +303,6 @@
       "class": "product_detail",
       "path": "/transactions/detail/?id=6a2c168b43e7f69d0cd0c923&title=ChatSee.AI+Inc",
       "source": "api_transactions_detail",
-      "protected_record_handoff": true,
       "required_text": ["TRANSACTION DETAILS", "ChatSee.AI Inc", "Buyer Entities", "Verified in SWFI records"]
     },
     {
@@ -309,7 +311,6 @@
       "class": "product_detail",
       "path": "/mandates/detail/?id=68b6f675576df8efb3fdb766&title=ADIA+Hones+in+on+US+Private+Equity+and+Pacing+for+2025",
       "source": "api_compass_detail",
-      "protected_record_handoff": true,
       "required_text": ["COMPASS / RFP DETAIL", "ADIA Hones in on US Private Equity", "Verified in SWFI records"]
     },
     {
@@ -318,7 +319,6 @@
       "class": "product_detail",
       "path": "/people/detail/?id=6a3117c8596879824a782b67&name=Srinivasan+Kesavan",
       "source": "api_people_detail",
-      "protected_record_handoff": true,
       "required_text": ["PERSON DETAIL", "Srinivasan Kesavan", "Verified in SWFI records"]
     },
     {

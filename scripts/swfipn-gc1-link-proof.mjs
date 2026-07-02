@@ -6,7 +6,7 @@ import path from "node:path";
 const repoRoot = process.cwd();
 const outputDir = path.join(repoRoot, "output");
 const origin = normalizeOrigin(process.env.SWFIPN_ORIGIN || "https://swfipn.activemirror.ai/swficc/");
-const expected = "https://www.swfi.com/v1/signin/?msg=auth&redirect=%2Fv1%2Fentities%2F5e39a581fcbe7e8ca723278c";
+const expected = new URL("profiles/detail/?id=5e39a581fcbe7e8ca723278c", origin).href;
 const url = new URL("profiles/?filter=GC1%20Ventures", origin).href;
 const receiptPath = path.join(outputDir, "swfipn-public-gc1-link-proof-latest.json");
 const screenshot = path.join(outputDir, "swfipn-public-gc1-link-proof.png");

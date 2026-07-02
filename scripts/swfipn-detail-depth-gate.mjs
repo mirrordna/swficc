@@ -26,13 +26,14 @@ const fixtures = [
   {
     id: "transaction_buyer_entities",
     path: "/transactions/detail/?id=6a300360f573546e66a087b5",
+    backendPath: "/api/transactions/6a300360f573546e66a087b5/v1",
     required: [
       "Transaction Details",
       "Enterprise Therapeutics Limited, Series A",
       "Buyer Entities",
       "Imperial Innovations Group plc",
-      "GBP 3,737,784",
     ],
+    recordRequiredFields: ["amount_display"],
   },
   {
     id: "mandate_summary_attachment",
@@ -100,6 +101,20 @@ function appUrl(routePath) {
   return new URL(clean, origin).href;
 }
 
+function backendUrl(routePath) {
+  return new URL(routePath, `${backendOrigin}/`).href;
+}
+
+async function fetchRecordRequiredText(fixture) {
+  if (!fixture.backendPath || !Array.isArray(fixture.recordRequiredFields)) return [];
+  const response = await fetch(backendUrl(fixture.backendPath), { headers: { Accept: "application/json" } });
+  const body = await response.json().catch(() => ({}));
+  const record = body?.data?.record || {};
+  return fixture.recordRequiredFields
+    .map((field) => String(record[field] ?? "").trim())
+    .filter(Boolean);
+}
+
 async function waitForDetailBody(page, expected, timeout = 45_000) {
   const started = Date.now();
   let body = "";
@@ -137,12 +152,14 @@ async function run() {
         raw_swfi_record_links: [],
       };
       try {
+        const sourceDerivedRequired = await fetchRecordRequiredText(fixture);
+        result.required = [...fixture.required, ...sourceDerivedRequired];
         await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
-        const body = await waitForDetailBody(page, fixture);
+        const body = await waitForDetailBody(page, { ...fixture, required: result.required });
         result.final_url = page.url();
         result.text_excerpt = body.slice(0, 1200);
         const lower = body.toLowerCase();
-        for (const item of fixture.required) {
+        for (const item of result.required) {
           if (!lower.includes(item.toLowerCase())) result.failures.push(`missing_text:${item}`);
         }
         for (const item of forbidden) {

@@ -58,7 +58,7 @@ async function main() {
   await page.waitForFunction(() => {
     const text = document.body.innerText || "";
     const sourceBackedLink = document.querySelector('a[data-source-state="on-file"], a[data-record-link="true"]');
-    return /For you|Popular|Topics/.test(text)
+    return /Latest Intelligence|Most Referenced|Topics/.test(text)
       && /Newest Data/.test(text)
       && /Top 10/.test(text)
       && Boolean(sourceBackedLink);

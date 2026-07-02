@@ -902,7 +902,7 @@ function ProfileRelatedRecords({ entityName }: { entityName: string }) {
         <div>
           <div className="text-[11px] font-bold uppercase tracking-[0.07em] text-[#7A8A9B]">Related Transactions</div>
           <div className="mt-1 text-sm text-[#41566B]">
-            {packet ? `Showing ${transactionRows.length.toLocaleString("en-US")} of ${total.toLocaleString("en-US")} source-backed rows` : LOADING}
+            {packet ? `Showing ${transactionRows.length.toLocaleString("en-US")} of ${total.toLocaleString("en-US")} related rows` : LOADING}
           </div>
         </div>
         <a href={allHref} className="text-sm text-[#16538C] underline">Open all</a>

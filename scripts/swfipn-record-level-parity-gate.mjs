@@ -23,7 +23,13 @@ const specs = {
       stringField("type", ["type"]),
       stringField("country", ["country"]),
       stringField("region", ["region"]),
-      numberField("assets", ["assets", "aum"], ["assets"], { zeroNullEquivalent: true }),
+      {
+        id: "assets",
+        kind: "number",
+        live: (row) => liveValue(row, ["assets", "aum"]),
+        source: (doc) => sourceNumberValue(doc, ["assets", "managedAssets"]),
+        zeroNullEquivalent: true,
+      },
     ],
   },
   people: {
@@ -133,6 +139,18 @@ function sourceValue(doc, fields) {
     if (value !== undefined && value !== null && text(value) !== "") return value;
   }
   return undefined;
+}
+
+function sourceNumberValue(doc, fields) {
+  let zeroValue;
+  for (const field of fields) {
+    const value = doc?.[field];
+    if (value === undefined || value === null || text(value) === "") continue;
+    const numeric = scalarNumber(value);
+    if (numeric !== 0 && !Number.isNaN(numeric)) return value;
+    if (zeroValue === undefined) zeroValue = value;
+  }
+  return zeroValue;
 }
 
 function liveValue(row, fields) {

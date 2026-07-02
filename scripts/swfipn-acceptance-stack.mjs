@@ -57,9 +57,13 @@ function runCommand(id, command, args, options = {}) {
     ok: result.status === 0,
     exit_code: result.status,
     signal: result.signal || "",
+    started_at: new Date(startedAt).toISOString(),
+    finished_at: new Date(finishedAt).toISOString(),
+    started_at_ms: startedAt,
+    finished_at_ms: finishedAt,
     duration_ms: finishedAt - startedAt,
-    stdout_tail: tail(result.stdout),
-    stderr_tail: tail(result.stderr),
+    stdout_tail: tail(result.stdout, options.tailMax ?? 5000),
+    stderr_tail: tail(result.stderr, options.tailMax ?? 5000),
     error: result.error ? result.error.message : "",
   };
 }
@@ -135,18 +139,27 @@ function gitDiffStats() {
   };
 }
 
-function receiptSummary(file, allowedStatuses = ["pass", "complete", "pass_with_quarantine", "go", "go_with_caveat"]) {
+function receiptSummary(file, allowedStatuses = ["pass", "complete", "pass_with_quarantine", "go", "go_with_caveat"], minFreshAtMs = 0) {
   const absolute = path.join(outputDir, file);
   try {
+    const stat = fs.statSync(absolute);
     const body = JSON.parse(fs.readFileSync(absolute, "utf8"));
     const inferredStatus = body.status || body.final_verdict || (body.collapse_detected === false ? "pass" : "");
+    const generatedAtMs = body.generated_at ? Date.parse(body.generated_at) : Number.NaN;
+    const receiptTimeMs = Number.isFinite(generatedAtMs) ? generatedAtMs : stat.mtimeMs;
+    const fresh = !minFreshAtMs || receiptTimeMs >= minFreshAtMs - 1000;
     return {
       file,
-      ok: allowedStatuses.includes(inferredStatus),
-      status: inferredStatus,
+      ok: fresh && allowedStatuses.includes(inferredStatus),
+      status: fresh ? inferredStatus : "stale",
+      stale: !fresh,
       generated_at: body.generated_at || "",
+      mtime: stat.mtime.toISOString(),
       summary: body.summary || null,
-      failures: Array.isArray(body.failures) ? body.failures.slice(0, 8) : [],
+      failures: [
+        ...(fresh ? [] : [`receipt_stale_before_current_run:${body.generated_at || stat.mtime.toISOString()}`]),
+        ...(Array.isArray(body.failures) ? body.failures.slice(0, 8) : []),
+      ],
     };
   } catch (error) {
     return { file, ok: false, status: "missing", error: error.message };
@@ -222,7 +235,7 @@ function remoteContainerProof() {
     `cd ${shellQuote(deploy.receipt.release)}`,
     `SWFIPN_DOMAIN=${shellQuote(new URL(publicOrigin).hostname)} docker compose -p ${shellQuote(composeProject)} -f compose.acceptance.yml ps --format json`,
   ].join(" && ");
-  const result = runCommand("remote_container_health", "ssh", [remoteHost, command], { timeout: 90_000, maxBuffer: 20 * 1024 * 1024 });
+  const result = runCommand("remote_container_health", "ssh", [remoteHost, command], { timeout: 90_000, maxBuffer: 20 * 1024 * 1024, tailMax: 25 * 1024 * 1024 });
   const services = parseComposePs(result.stdout_tail);
   const failures = [];
   const expected = ["swfi2-backend", "swfipn-web", "caddy"];
@@ -319,8 +332,9 @@ async function releaseMarkerCheck() {
 }
 
 function npmGate(id, script, receipt, env = {}, allowedStatuses) {
+  fs.rmSync(path.join(outputDir, receipt), { force: true });
   const result = runCommand(id, "npm", ["run", script], { env });
-  const summary = receiptSummary(receipt, allowedStatuses);
+  const summary = receiptSummary(receipt, allowedStatuses, result.started_at_ms);
   return {
     ...result,
     receipt: summary,
@@ -398,7 +412,12 @@ function renderMarkdown(receipt) {
     "|---|---:|---|",
   ];
   for (const row of receipt.acceptance_matrix) {
-    lines.push(`| ${row.requirement} | ${row.status} | ${(row.evidence || []).join("<br>")} |`);
+    const evidence = Array.isArray(row.evidence)
+      ? row.evidence
+      : row.evidence
+        ? [row.evidence]
+        : [];
+    lines.push(`| ${row.requirement} | ${row.status} | ${evidence.join("<br>")} |`);
   }
   lines.push("", "## Failures", "");
   if (!receipt.failures.length) {
@@ -462,16 +481,17 @@ async function main() {
     steps.push(await releaseMarkerCheck());
     steps.push(remoteCurrentProof());
     steps.push(remoteContainerProof());
+    fs.rmSync(path.join(outputDir, "swfipn-runtime-staleness-gate-latest.json"), { force: true });
     const runtimeStaleness = runCommand("runtime_staleness", "node", ["scripts/swfipn-runtime-staleness-gate.mjs"], {
-        env: {
-          SWFIPN_ORIGIN: target === "public" ? publicOrigin : activeOrigin,
-          SWFIPN_BACKEND_ORIGIN: backendOrigin,
-          SWFIPN_RUNTIME_REMOTE_CHECK: target === "public" ? "1" : "0",
-          SWFIPN_RUNTIME_REMOTE_HOST: remoteHost,
-        },
-        timeout: 300_000,
-      });
-    const runtimeReceipt = receiptSummary("swfipn-runtime-staleness-gate-latest.json");
+      env: {
+        SWFIPN_ORIGIN: target === "public" ? publicOrigin : activeOrigin,
+        SWFIPN_BACKEND_ORIGIN: backendOrigin,
+        SWFIPN_RUNTIME_REMOTE_CHECK: target === "public" ? "1" : "0",
+        SWFIPN_RUNTIME_REMOTE_HOST: remoteHost,
+      },
+      timeout: 300_000,
+    });
+    const runtimeReceipt = receiptSummary("swfipn-runtime-staleness-gate-latest.json", undefined, runtimeStaleness.started_at_ms);
     steps.push({ ...runtimeStaleness, receipt: runtimeReceipt, ok: runtimeStaleness.ok && runtimeReceipt.ok });
     steps.push(npmGate("closeout", target === "public" ? "closeout:gate:public" : "closeout:gate", "swfipn-closeout-gate-latest.json", gateEnv));
     steps.push(npmGate("map_leakage", target === "public" ? "map-leakage:gate:public" : "map-leakage:gate", "swfipn-link-mapping-leakage-gate-latest.json", gateEnv));
@@ -490,28 +510,32 @@ async function main() {
         ["pass", "blocked"]
       ));
     }
-    steps.push({
-      ...runCommand("acceptance_lock_tool", "python3", [
-        "tools/loop-budget/swficc_acceptance_lock.py",
-        "--repo", ".",
-        "--out", "output/swfipn-acceptance-lock-tool-latest.json",
+    fs.rmSync(path.join(outputDir, "swfipn-acceptance-lock-tool-latest.json"), { force: true });
+    const acceptanceLockTool = runCommand("acceptance_lock_tool", "python3", [
+      "tools/loop-budget/swficc_acceptance_lock.py",
+      "--repo", ".",
+      "--out", "output/swfipn-acceptance-lock-tool-latest.json",
         "--receipt", "output/swfipn-acceptance-criteria-gate-latest.json",
         "--receipt", "output/swfipn-kp-acceptance-gate-latest.json",
         "--receipt", "output/swfipn-link-mapping-leakage-gate-latest.json",
-        "--receipt", "output/swfipn-visible-link-escape-gate-latest.json",
-        "--receipt", "output/swfipn-runtime-staleness-gate-latest.json",
-      ], { timeout: 120_000 }),
-      receipt: receiptSummary("swfipn-acceptance-lock-tool-latest.json"),
+      "--receipt", "output/swfipn-visible-link-escape-gate-latest.json",
+      "--receipt", "output/swfipn-runtime-staleness-gate-latest.json",
+    ], { timeout: 120_000 });
+    steps.push({
+      ...acceptanceLockTool,
+      receipt: receiptSummary("swfipn-acceptance-lock-tool-latest.json", undefined, acceptanceLockTool.started_at_ms),
     });
     writeReceipt(steps);
+    fs.rmSync(path.join(outputDir, "swfipn-loop-collapse-latest.json"), { force: true });
+    const loopCollapse = runCommand("loop_collapse", "python3", [
+      "tools/loop-budget/loop_collapse_detector.py",
+      "--repo", ".",
+      "--out", "output/swfipn-loop-collapse-latest.json",
+      "--acceptance-lock", "output/swfipn-acceptance-lock-latest.json",
+    ], { timeout: 120_000 });
     steps.push({
-      ...runCommand("loop_collapse", "python3", [
-        "tools/loop-budget/loop_collapse_detector.py",
-        "--repo", ".",
-        "--out", "output/swfipn-loop-collapse-latest.json",
-        "--acceptance-lock", "output/swfipn-acceptance-lock-latest.json",
-      ], { timeout: 120_000 }),
-      receipt: receiptSummary("swfipn-loop-collapse-latest.json"),
+      ...loopCollapse,
+      receipt: receiptSummary("swfipn-loop-collapse-latest.json", undefined, loopCollapse.started_at_ms),
     });
     writeReceipt(steps);
     if (includeShare) {

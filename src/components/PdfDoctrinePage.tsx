@@ -162,21 +162,21 @@ export default function PdfDoctrinePage() {
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h1 className="m-0 text-[19px] font-bold text-[#11314F]">Reports Intelligence</h1>
-                  <p className="m-0 mt-1 text-[12px] text-[#7A8A9B]">Source-backed SWFI rankings, allocator activity, transactions, mandates, and market-flow tables.</p>
+                  <p className="m-0 mt-1 text-[12px] text-[#7A8A9B]">Rankings, allocator activity, transactions, mandates, and market-flow tables.</p>
                 </div>
                 <a href="/swficc/" className="rounded border border-[#DCE3EA] px-3 py-2 text-[12px] text-[#16538C] no-underline">Dashboard</a>
               </div>
             </section>
 
             <section data-gsap-reveal className="rounded border border-[#DCE3EA] bg-white px-4 py-3 text-sm text-[#41566B]">
-              <strong className="text-[#11314F]">Data source:</strong> Approved SWFI records. Each linked row opens the corresponding SWFI record.
+              <strong className="text-[#11314F]">Updated from SWFI.</strong> Each linked row opens the corresponding SWFI record.
             </section>
 
             <section data-gsap-reveal className="rounded border border-[#DCE3EA] bg-white px-4 py-3">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="m-0 text-[16px] font-bold text-[#11314F]">Reports / League Tables Visualization</h2>
-                  <p className="m-0 mt-1 text-[12px] text-[#7A8A9B]">Source-backed reports, rankings, allocator activity, transactions, and market-flow visuals.</p>
+                  <p className="m-0 mt-1 text-[12px] text-[#7A8A9B]">Reports, rankings, allocator activity, transactions, and market-flow visuals.</p>
                 </div>
                 <div className="flex rounded border border-[#C7D2DD] bg-[#F7F9FA] p-1 text-sm">
                   {[
@@ -304,7 +304,7 @@ function ReportsVisualization({ reportRows, marketRows, allocatorRows, transacti
     <div className="grid gap-4" data-brd-reports-visualization="true">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="grid gap-1 text-[12px] text-[#7A8A9B]">
-          <span>Data source: Approved SWFI records</span>
+          <span>Updated from SWFI</span>
           <span>League Tables and reports are represented from the report asset records on file.</span>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -623,7 +623,7 @@ function downloadReportsVisualizationPng(rowsForChart: { label: string; count: n
   context.fillText("Reports / League Tables Visualization", 32, 48);
   context.fillStyle = "#617386";
   context.font = "16px Arial";
-  context.fillText("Data source: Approved SWFI records", 32, 78);
+  context.fillText("Updated from SWFI", 32, 78);
   const max = Math.max(1, ...rowsForChart.map((row) => row.count));
   rowsForChart.slice(0, 8).forEach((row, index) => {
     const y = 125 + index * 46;

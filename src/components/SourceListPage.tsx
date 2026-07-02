@@ -532,7 +532,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="m-0 text-[16px] font-bold text-[#11314F]">{sectionVisualizationTitle(kind)}</h2>
-                <p className="m-0 mt-1 text-[12px] text-[#7A8A9B]">Live SWFI rows with synchronized data and visualization views.</p>
+                <p className="m-0 mt-1 text-[12px] text-[#7A8A9B]">Current records with data and visualization views.</p>
               </div>
               <div className="flex rounded border border-[#C7D2DD] bg-[#F7F9FA] p-1 text-sm">
                 {[
@@ -559,7 +559,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
         ) : null}
 
         <section data-gsap-reveal className="rounded border border-[#DCE3EA] bg-white px-4 py-3 text-sm text-[#41566B]">
-          <strong className="text-[#11314F]">Data source:</strong> SWFI records
+          <strong className="text-[#11314F]">Updated from SWFI.</strong>
           <span className="mt-1 block text-[#7A8A9B]">Open any row to view the corresponding SWFI record.</span>
         </section>
 
@@ -1264,7 +1264,7 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
     <div className="grid gap-4" data-brd-section-visualization={kind}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="grid gap-1 text-[12px] text-[#7A8A9B]">
-          <span>Data source: SWFI records</span>
+          <span>Updated from SWFI</span>
           <span>Showing {sourceRows.length.toLocaleString("en-US")} loaded rows from {totalRows.toLocaleString("en-US")} total records.</span>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -1440,7 +1440,7 @@ function downloadSectionPng(kind: Kind, sourceRows: Row[]) {
   context.fillText(sectionVisualizationTitle(kind), 32, 48);
   context.fillStyle = "#617386";
   context.font = "16px Arial";
-  context.fillText("Data source: SWFI records", 32, 78);
+  context.fillText("Updated from SWFI", 32, 78);
   const max = Math.max(1, ...rowsForChart.map((row) => row.count));
   rowsForChart.forEach((row, index) => {
     const y = 125 + index * 46;
@@ -1495,7 +1495,7 @@ function CompassVisualization({ rows: sourceRows, totalRows }: { rows: Row[]; to
     <div className="grid gap-4" data-brd-compass-visualization="true">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="grid gap-1 text-[12px] text-[#7A8A9B]">
-          <span>Data source: SWFI records</span>
+          <span>Updated from SWFI</span>
           <span>Showing {sourceRows.length.toLocaleString("en-US")} loaded Compass rows from {totalRows.toLocaleString("en-US")} total records.</span>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -1668,7 +1668,7 @@ function DealEnginePanel() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="m-0 text-[16px] font-bold text-[#11314F]">Capital Deal Engine</h2>
-          <div className="mt-1 text-[12px] text-[#7A8A9B]">Source-backed ticket size, investment frequency, and co-investment intelligence from SWFI transaction rows.</div>
+          <div className="mt-1 text-[12px] text-[#7A8A9B]">Ticket size, investment frequency, and co-investment intelligence from transaction activity.</div>
         </div>
         <div className="rounded border border-[#DCE3EA] px-3 py-2 text-[12px] text-[#41566B]">
           {readyCount === 3 ? "3 of 3 SWFI record sets ready" : `Loading ${readyCount} of 3 SWFI record sets`}

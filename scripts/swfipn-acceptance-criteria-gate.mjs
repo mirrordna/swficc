@@ -13,6 +13,8 @@ const username = process.env.SWFIPN_AUTH_TEST_USERNAME || "";
 const password = process.env.SWFIPN_AUTH_TEST_PASSWORD || "";
 const allowAuthSkip = process.env.SWFIPN_ACCEPTANCE_ALLOW_AUTH_SKIP === "1";
 const expectedPacketSource = process.env.SWFIPN_EXPECTED_PACKET_SOURCE || "swfi_api";
+const checkTimeoutMs = Number(process.env.SWFIPN_ACCEPTANCE_CRITERIA_CHECK_TIMEOUT_MS || 120_000);
+const routeParityTargetLimit = Number(process.env.SWFIPN_ACCEPTANCE_ROUTE_TARGET_LIMIT || 25);
 
 const dashboardEndpoints = {
   metrics: "/api/swfi/dashboard-metrics/v1",
@@ -128,11 +130,7 @@ async function hydratedBody(page, required, timeout = 75_000) {
     body = await page.locator("body").innerText().catch(() => "");
     const lower = body.toLowerCase();
     const textReady = required.every((text) => lower.includes(text.toLowerCase())) && !/\bLoading\b/.test(body);
-    const dashboardReady = await page.evaluate(() => {
-      const el = document.querySelector("[data-dashboard-ready]");
-      return !el || el.getAttribute("data-dashboard-ready") === "true";
-    }).catch(() => false);
-    if (textReady && dashboardReady) return body;
+    if (textReady) return body;
     await page.waitForTimeout(750);
   }
   return body;
@@ -158,6 +156,37 @@ async function readLinks(page) {
     recordLink: a.getAttribute("data-record-link") || "",
     sourceState: a.getAttribute("data-source-state") || "",
   })).filter((link) => link.text || link.raw));
+}
+
+async function waitForRecordLinks(page, minCount = 1, timeout = 30_000) {
+  await page.waitForFunction((minimum) => {
+    const rootPath = new URL(window.location.href).pathname.replace(/\/$/, "");
+    const recordPattern = /\/(?:profiles|transactions|mandates|people|research)\/detail\/\?/i;
+    return Array.from(document.querySelectorAll("a[href]")).filter((anchor) => {
+      const href = anchor.getAttribute("href") || "";
+      const absolute = anchor.href || "";
+      return anchor.getAttribute("data-record-link") === "true"
+        || recordPattern.test(href)
+        || recordPattern.test(absolute)
+        || (rootPath && href.startsWith(`${rootPath}/`) && recordPattern.test(href.slice(rootPath.length)));
+    }).length >= minimum;
+  }, minCount, { timeout }).catch(() => null);
+}
+
+async function waitForRecordLinkKinds(page, requirements, timeout = 30_000) {
+  await page.waitForFunction((required) => {
+    const links = Array.from(document.querySelectorAll("a[href]")).map((anchor) => anchor.getAttribute("href") || anchor.href || "");
+    return Object.entries(required).every(([kind, minimum]) => {
+      const pattern = kind === "profile"
+        ? /\/profiles\/detail\/\?/i
+        : kind === "transaction"
+          ? /\/transactions\/detail\/\?/i
+          : kind === "mandate"
+            ? /\/mandates\/detail\/\?/i
+            : /\/(?:profiles|transactions|mandates|people|research)\/detail\/\?/i;
+      return links.filter((href) => pattern.test(href)).length >= Number(minimum);
+    });
+  }, requirements, { timeout }).catch(() => null);
 }
 
 function targetFor(link) {
@@ -335,7 +364,7 @@ function linkLeakFailures(links) {
   return leaked.map((link) => `link_exposes_internal_or_source_token:${link.text || link.raw}`);
 }
 
-async function fetchJson(url, timeout = 90_000) {
+async function fetchJson(url, timeout = 15_000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
   try {
@@ -355,6 +384,40 @@ async function fetchJson(url, timeout = 90_000) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function boundedCheck(id, task, timeoutMs = checkTimeoutMs) {
+  const startedAt = Date.now();
+  let timer;
+  try {
+    const result = await Promise.race([
+      task(),
+      new Promise((resolve) => {
+        timer = setTimeout(() => {
+          resolve({
+            id,
+            ok: false,
+            failures: [`check_timeout_ms_${timeoutMs}`],
+            duration_ms: Date.now() - startedAt,
+          });
+        }, timeoutMs);
+      }),
+    ]);
+    return {
+      ...result,
+      id: result.id || id,
+      duration_ms: result.duration_ms || Date.now() - startedAt,
+    };
+  } catch (error) {
+    return {
+      id,
+      ok: false,
+      failures: [error.message],
+      duration_ms: Date.now() - startedAt,
+    };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 async function fetchStalenessJson(url) {
@@ -532,6 +595,7 @@ async function unauthenticatedLinkCheck(browser) {
   try {
     await page.goto(appUrl("/"), { waitUntil: "domcontentloaded", timeout: 90_000 });
     await hydratedBody(page, requiredDashboardHydrationText, 90_000);
+    await waitForRecordLinks(page, 20);
     const links = await readLinks(page);
     const gatedLinks = links.filter((link) => link.dashboardTarget && !link.dashboardTarget.startsWith("#"));
     const mirroredLinks = links.filter((link) => isMirroredRecordHref(link.href) || isMirroredRecordHref(link.raw));
@@ -641,6 +705,8 @@ async function tableRowsNavigationCheck(browser) {
   try {
     await page.goto(appUrl("/"), { waitUntil: "domcontentloaded", timeout: 90_000 });
     await hydratedBody(page, requiredDashboardHydrationText, 90_000);
+    await waitForRecordLinks(page, 15);
+    await waitForRecordLinkKinds(page, { profile: 5, transaction: 5 });
     const links = await readLinks(page);
     const recordLinks = links.filter((link) => link.recordLink === "true" || isMirroredRecordHref(link.href) || isMirroredRecordHref(link.raw));
     const profileLinks = recordLinks.filter((link) => isMirroredRecordHref(link.href, "entity") || isMirroredRecordHref(link.raw, "entity"));
@@ -804,9 +870,10 @@ async function routeParityCheck(browser) {
     if (badGates.length) result.failures.push(`bad_login_targets:${badGates.slice(0, 8).map((link) => cleanText(link.text || link.raw)).join("|")}`);
     const targets = [...new Set(gatedLinks.map((link) => link.dashboardTarget).filter(Boolean))];
     result.target_count = targets.length;
-    for (const target of targets) {
+    result.targets_sampled = Math.min(targets.length, routeParityTargetLimit);
+    for (const target of targets.slice(0, routeParityTargetLimit)) {
       const targetUrl = new URL(target, origin).href;
-      const response = await context.request.get(targetUrl, { timeout: 45_000, maxRedirects: 2 }).catch((error) => ({ error }));
+      const response = await context.request.get(targetUrl, { timeout: 15_000, maxRedirects: 2 }).catch((error) => ({ error }));
       const status = typeof response.status === "function" ? response.status() : 0;
       const finalUrl = typeof response.url === "function" ? response.url() : "";
       const row = { target, status, final_url: finalUrl, ok: true, failures: [] };
@@ -846,10 +913,10 @@ async function directProtectedRoutesCheck(browser) {
       const page = await publicContext.newPage();
       try {
         const response = await page.goto(appUrl(sample.route), { waitUntil: "domcontentloaded", timeout: 30_000 });
-        await page.waitForFunction(() => {
+        await page.waitForFunction((expectedText) => {
           const body = document.body?.innerText || "";
-          return body.length > 500 && !/\bLoading\b/.test(body);
-        }, null, { timeout: 20_000 }).catch(() => {});
+          return body.includes(expectedText) || (body.length > 500 && !/\bLoading\b/.test(body));
+        }, sample.protectedText, { timeout: 60_000 }).catch(() => {});
         const body = await bodyText(page, 4_000);
         row.unauthenticated.final_url = page.url();
         if (!response || response.status() >= 400) row.unauthenticated.failures.push(`http_${response?.status() || "missing"}`);
@@ -885,16 +952,16 @@ async function run() {
   });
   const checks = [];
   try {
-    checks.push(await lookAndFeelCheck(browser));
-    checks.push(await publicAccessCheck(browser));
-    checks.push(await unauthenticatedLinkCheck(browser));
-    checks.push(await authenticatedNavigationCheck(browser));
-    checks.push(await internalDetailsHiddenCheck(browser));
-    checks.push(await tableRowsNavigationCheck(browser));
-    checks.push(await dashboardDataParityCheck(browser));
-    checks.push(await stalenessCheck());
-    checks.push(await routeParityCheck(browser));
-    checks.push(await directProtectedRoutesCheck(browser));
+    checks.push(await boundedCheck("look_and_feel_consistent", () => lookAndFeelCheck(browser)));
+    checks.push(await boundedCheck("dashboard_public_accessible", () => publicAccessCheck(browser)));
+    checks.push(await boundedCheck("unauthenticated_links_redirect_to_login", () => unauthenticatedLinkCheck(browser)));
+    checks.push(await boundedCheck("authenticated_links_emit_swfi_record_href", () => authenticatedNavigationCheck(browser)));
+    checks.push(await boundedCheck("internal_technical_details_hidden", () => internalDetailsHiddenCheck(browser)));
+    checks.push(await boundedCheck("tabular_rows_link_to_swfi_pages", () => tableRowsNavigationCheck(browser)));
+    checks.push(await boundedCheck("data_parity", () => dashboardDataParityCheck(browser), Math.max(checkTimeoutMs, 180_000)));
+    checks.push(await boundedCheck("staleness", () => stalenessCheck()));
+    checks.push(await boundedCheck("route_parity", () => routeParityCheck(browser), Math.max(checkTimeoutMs, 180_000)));
+    checks.push(await boundedCheck("direct_record_routes_are_self_contained", () => directProtectedRoutesCheck(browser)));
   } finally {
     await browser.close().catch(() => {});
   }

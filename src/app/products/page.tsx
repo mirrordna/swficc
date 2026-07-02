@@ -14,7 +14,7 @@ const modules = [
 const workflows = [
   ["Find allocators", "Screen investors by type, region, AUM, sector activity, and mandate signals."],
   ["Analyze activity", "Move from dashboard signal to transaction, mandate, profile, person, or report detail."],
-  ["Prepare outreach", "Create source-backed briefs without adding unsupported claims."],
+  ["Prepare outreach", "Create investor briefs from approved records without adding unsupported claims."],
 ] as const;
 
 export default function ProductsPage() {
@@ -33,7 +33,7 @@ export default function ProductsPage() {
                   Capital Intelligence OS
                 </h1>
                 <p className="m-0 max-w-[620px] text-[19px] leading-8 text-[#C8CFD7]">
-                  A source-backed workspace for allocator discovery, transaction intelligence, mandates, people, research, and institutional capital-flow analysis.
+                  A workspace for allocator discovery, transaction intelligence, mandates, people, research, and institutional capital-flow analysis.
                 </p>
               </div>
               <div className="flex flex-wrap gap-3">
