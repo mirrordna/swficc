@@ -33,6 +33,13 @@ const failOnMissingLabel = /^(1|true|yes)$/i.test(String(process.env.SWFIPN_UNIV
 let activeReceipt = null;
 let activeFamily = "";
 
+function writeLatestReceipt(receipt) {
+  fs.mkdirSync(path.dirname(latestReceiptPath), { recursive: true });
+  const tmpPath = `${latestReceiptPath}.${process.pid}.tmp`;
+  fs.writeFileSync(tmpPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  fs.renameSync(tmpPath, latestReceiptPath);
+}
+
 if (shardIndex >= shardCount) {
   throw new Error(`Invalid shard config: SWFIPN_UNIVERSE_SHARD_INDEX=${shardIndex} must be less than SWFIPN_UNIVERSE_SHARD_COUNT=${shardCount}`);
 }
@@ -735,7 +742,7 @@ async function run() {
   }
   receipt.completed_at = new Date().toISOString();
   receipt.elapsed_ms = Date.parse(receipt.completed_at) - Date.parse(receipt.generated_at);
-  fs.writeFileSync(latestReceiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  writeLatestReceipt(receipt);
   console.log(JSON.stringify({
     status: receipt.status,
     run_id: receipt.run_id,
@@ -749,7 +756,6 @@ async function run() {
 }
 
 function writeInterruptedReceipt(signal) {
-  fs.mkdirSync(path.dirname(latestReceiptPath), { recursive: true });
   const generatedAt = new Date().toISOString();
   const receipt = activeReceipt || {
     schema_version: "swfipn.full_universe_mapping_gate.v1",
@@ -770,7 +776,7 @@ function writeInterruptedReceipt(signal) {
     family: activeFamily || "run",
     failures: [`interrupted_before_full_universe_receipt:${signal}`],
   });
-  fs.writeFileSync(latestReceiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  writeLatestReceipt(receipt);
   console.error(`[full-universe] interrupted by ${signal}; wrote blocked receipt ${latestReceiptPath}`);
 }
 
@@ -782,8 +788,7 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
 }
 
 run().catch((error) => {
-  fs.mkdirSync(path.dirname(latestReceiptPath), { recursive: true });
-  fs.writeFileSync(latestReceiptPath, `${JSON.stringify({ schema_version: "swfipn.full_universe_mapping_gate.v1", status: "fail", generated_at: new Date().toISOString(), error: error.message }, null, 2)}\n`);
+  writeLatestReceipt({ schema_version: "swfipn.full_universe_mapping_gate.v1", status: "fail", generated_at: new Date().toISOString(), error: error.message });
   console.error(error);
   process.exit(1);
 });

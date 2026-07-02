@@ -8,9 +8,9 @@ This does not claim that full BRD Phase 2 productization is complete.
 
 Public URL: `https://swfipn.activemirror.ai/swficc/`
 
-Deployed release: `/opt/swfipn-acceptance/releases/20260630T173132Z`
+Deployed release: `/opt/swfipn-acceptance/releases/20260702T055424Z`
 
-Public asset version: `20260630T173132Z`
+Public asset version: `20260702T055424Z`
 
 ## Verdict
 
@@ -55,7 +55,7 @@ Production API DNS cutover: `blocked`
 | Gate | Result | Receipt |
 | --- | --- | --- |
 | Share/sendability gate | `fail` | `output/swfipn-share-gate-latest.json` |
-| Full-universe mapping gate | `pass` | `output/swfipn-full-universe-mapping-latest.json` |
+| Full-universe mapping gate | `blocked` | `output/swfipn-full-universe-mapping-latest.json` |
 | Source/destination manifest gate | `pass` | `output/swfipn-source-destination-manifest-latest.json` |
 | Detail-batch parity gate | `pass` | `output/swfipn-detail-batch-parity-latest.json` |
 | Full route parity gate | `pass` | `output/swfipn-route-parity-full-latest.json` |
