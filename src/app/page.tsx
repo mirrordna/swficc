@@ -2332,7 +2332,16 @@ function DashboardLink({ href, children, ...props }: AnchorHTMLAttributes<HTMLAn
 
 function researchRecordHref(row: Record<string, unknown>) {
   const source = sourceHref(row) || researchSourceUrl(row);
-  return source || dashboardSearchFallback(row, "/intelligence");
+  const legacy = legacyPostFromSource(source)
+    || text(row.legacy_post || row.legacy_post_id || row.post_id || row.wordpress_id || (String(row.id || "").match(/^\d+$/) ? row.id : ""), "");
+  if (legacy) {
+    const params = new URLSearchParams();
+    const label = brdText(row.title || row.name, "");
+    if (label) params.set("title", label);
+    params.set("legacy", legacy);
+    return `/research/detail/?${params.toString()}`;
+  }
+  return dashboardSearchFallback(row, "/intelligence");
 }
 
 async function loadDashboardPackets(onPacket: (key: PacketKey, packet: Packet) => void) {
@@ -2670,6 +2679,16 @@ function personSourceUrl(personId: string): string {
 function researchSourceUrl(row: Record<string, unknown>): string {
   const legacy = text(row.legacy_post || row.legacy_post_id || row.post_id || row.wordpress_id || (String(row.id || "").match(/^\d+$/) ? row.id : ""), "");
   return legacy ? `https://www.swfi.com/?p=${encodeURIComponent(legacy)}` : "";
+}
+
+function legacyPostFromSource(source: string | undefined): string {
+  if (!source) return "";
+  try {
+    const parsed = new URL(source, "https://www.swfi.com");
+    return parsed.searchParams.get("p") || "";
+  } catch {
+    return String(source).match(/[?&]p=(\d+)/)?.[1] || "";
+  }
 }
 
 function dashboardProfileHref(row: Record<string, unknown>): string {
