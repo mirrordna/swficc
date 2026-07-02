@@ -306,6 +306,21 @@ function isApprovedSwfiRecordHandoff(href, kind = "") {
   return Boolean(detected && (!kind || detected === kind));
 }
 
+function isAllowedSwfiLegacyArticleUrl(value) {
+  try {
+    const parsed = new URL(String(value || ""), new URL(origin).origin);
+    if (!["www.swfi.com", "swfi.com"].includes(parsed.hostname)) return false;
+    if (parsed.pathname !== "/" && parsed.pathname !== "") return false;
+    return /^\d+$/.test(parsed.searchParams.get("p") || "");
+  } catch {
+    return false;
+  }
+}
+
+function isApprovedSwfiPlatformHref(value) {
+  return isApprovedSwfiRecordHandoff(value) || isAllowedSwfiLegacyArticleUrl(value);
+}
+
 function dashboardTargetMatchesRoute(target, route) {
   if (!target) return false;
   try {
@@ -325,11 +340,11 @@ function dashboardHrefExposures(links) {
   const failures = [];
   const externalSwfi = links.filter((link) => (
     isExternalSwfiHref(link.href) || isExternalSwfiHref(link.raw) || isExternalSwfiHref(link.dashboardTarget)
-  ) && !isApprovedSwfiRecordHandoff(link.href) && !isApprovedSwfiRecordHandoff(link.raw));
+  ) && !isApprovedSwfiPlatformHref(link.href) && !isApprovedSwfiPlatformHref(link.raw));
   if (externalSwfi.length) failures.push(`dashboard_external_swfi_links:${externalSwfi.slice(0, 8).map((link) => link.text || link.href).join("|")}`);
   const leakPattern = /(?:[?&]source=|%3Fsource%3D|%26source%3D|\/v1\/)/i;
   const leaked = links.filter((link) => {
-    if (isApprovedSwfiRecordHandoff(link.href) || isApprovedSwfiRecordHandoff(link.raw)) return false;
+    if (isApprovedSwfiPlatformHref(link.href) || isApprovedSwfiPlatformHref(link.raw)) return false;
     return leakPattern.test([link.href, link.raw, link.source, link.dashboardTarget].filter(Boolean).join(" "));
   });
   if (leaked.length) failures.push(`dashboard_exposes_source_urls:${leaked.slice(0, 8).map((link) => link.text || link.href).join("|")}`);
@@ -337,11 +352,11 @@ function dashboardHrefExposures(links) {
 }
 
 function isExternalSwfiHref(href) {
-  return /^https?:\/\/(www\.)?swfi\.com/i.test(String(href || "")) && !isApprovedSwfiRecordHandoff(href);
+  return /^https?:\/\/(www\.)?swfi\.com/i.test(String(href || "")) && !isApprovedSwfiPlatformHref(href);
 }
 
 function isInternalMirrorRecordHref(href) {
-  if (isApprovedSwfiRecordHandoff(href)) return true;
+  if (isApprovedSwfiPlatformHref(href)) return true;
   try {
     const parsed = new URL(href, origin);
     const root = new URL(origin);
