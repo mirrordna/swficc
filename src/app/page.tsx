@@ -1028,6 +1028,13 @@ function cleanMoney(value: unknown) {
   return result === SOURCE_GAP || result === LOADING ? "Not disclosed" : result;
 }
 
+function compactMoneyDisplay(value: unknown) {
+  const display = cleanMoney(value);
+  if (display === "Not disclosed") return display;
+  const numeric = numericSortValue(display);
+  return numeric && numeric > 0 ? compactMoney(numeric) : display;
+}
+
 function cleanDisplayValue(value: string, fallback = "Not disclosed") {
   return value === SOURCE_GAP || value === LOADING || /not disclosed by swfi\.com/i.test(value) ? fallback : value;
 }
@@ -1177,7 +1184,7 @@ function ConceptTopBar({ dataAsOfLabel, packets }: { dataAsOfLabel: string; pack
   );
 }
 
-function ConceptKpiCard({ label, value, note, href, series, color, statusLabel = "SWFI records", sourceLabel = "SWFI records" }: {
+function ConceptKpiCard({ label, value, note, href, series, color, statusLabel = "", sourceLabel = "" }: {
   label: string;
   value: string;
   note: string;
@@ -1198,7 +1205,7 @@ function ConceptKpiCard({ label, value, note, href, series, color, statusLabel =
         <span className="font-bold text-[#1A9A68]">{statusLabel}</span>
         <span className="truncate text-[#7B8996]">{note}</span>
       </div>
-      <div className="mt-2 text-[9.5px] font-semibold text-[#7B8996]">{sourceLabel}</div>
+      {sourceLabel ? <div className="mt-2 text-[9.5px] font-semibold text-[#7B8996]">{sourceLabel}</div> : null}
     </DashboardLink>
   );
 }
@@ -1347,7 +1354,7 @@ function InstitutionIntelligenceOverview({
                     <span className="font-extrabold text-[#1A9A68]">{dealCountLabel(value)}</span>
                   </span>
                   <Bar value={value} max={investorMax} />
-                  <span className="truncate text-[10.5px] text-[#7B8996]">{allocatorMeta(row)} · {cleanMoney(row.total_deal_value_display || row.total_deal_value)}</span>
+                  <span className="truncate text-[10.5px] text-[#7B8996]">{allocatorMeta(row)} · {compactMoneyDisplay(row.total_deal_value_display || row.total_deal_value)}</span>
                 </DataLink>
               );
             })}
@@ -2302,7 +2309,7 @@ function compactCurrency(value: number, currency: string) {
 }
 
 function capitalOrCountDisplay(row: Record<string, unknown>) {
-  const capital = cleanMoney(row.capital_display || row.capital_deployed || row.capital);
+  const capital = compactMoneyDisplay(row.capital_display || row.capital_deployed || row.capital);
   if (capital !== "Not disclosed") return capital;
   const countValue = numericSortValue(text(row.count, ""));
   return countValue ? `${countValue.toLocaleString("en-US")} transactions` : "Not disclosed";
