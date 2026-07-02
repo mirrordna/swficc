@@ -1180,7 +1180,7 @@ function ConceptKpiCard({ label, value, note, href, series, color }: {
         <span className="font-bold text-[#1A9A68]">Updated</span>
         <span className="truncate text-[#7B8996]">{note}</span>
       </div>
-      <div className="mt-2 text-[9.5px] font-semibold text-[#7B8996]">Reviewed SWFI data</div>
+      <div className="mt-2 text-[9.5px] font-semibold text-[#7B8996]">Updated from SWFI</div>
     </DashboardLink>
   );
 }
