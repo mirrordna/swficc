@@ -802,7 +802,7 @@ function BrdActivityCards({ headers, rows: sourceRows, empty }: { headers: strin
         <div className="border border-[#D8DEE8] bg-white px-3 py-4 text-[13px] text-[#606A7C] md:col-span-2">{empty}</div>
       )}
       {sourceRows.length > visible.length ? (
-        <div className="text-[11px] font-semibold text-[#667386] md:col-span-2">Top dashboard signals from SWFI records</div>
+        <div className="text-[11px] font-semibold text-[#667386] md:col-span-2">Top dashboard signals shown</div>
       ) : null}
     </div>
   );
@@ -1201,11 +1201,11 @@ function ConceptKpiCard({ label, value, note, href, series, color, statusLabel =
         <div className="break-words text-[20px] font-extrabold leading-none text-[#13283D]">{value}</div>
         <MiniSparkline series={series} color={color} large />
       </div>
-      <div className="mt-2 flex items-center justify-between gap-2 text-[10.5px]">
-        <span className="font-bold text-[#1A9A68]">{statusLabel}</span>
-        <span className="truncate text-[#7B8996]">{note}</span>
+      <div className="mt-2 flex min-h-[14px] items-center justify-between gap-2 text-[10.5px]">
+        {statusLabel ? <span className="shrink-0 font-bold text-[#1A9A68]">{statusLabel}</span> : null}
+        <span className="min-w-0 truncate text-[#7B8996]">{note}</span>
       </div>
-      {sourceLabel ? <div className="mt-2 text-[9.5px] font-semibold text-[#7B8996]">{sourceLabel}</div> : null}
+      {sourceLabel ? <span hidden data-source-label={sourceLabel} /> : null}
     </DashboardLink>
   );
 }
@@ -1807,8 +1807,7 @@ function dashboardMetricCards(packets: Packets, topAumRows: Record<string, unkno
       href: "/profiles",
       series: seriesFromNumbers(topAumRows.map(aumValue)),
       color: "#0A66C2",
-      statusLabel: totalAum ? "Current" : "Not disclosed",
-      sourceLabel: "SWFI records",
+      statusLabel: totalAum ? "" : "Not disclosed",
     },
     {
       label: "ACTIVE ALLOCATORS",
@@ -2095,7 +2094,7 @@ function MiniRecordTable({ headers, rows: sourceRows, empty, controls }: { heade
   const visible = sortedRows.slice(0, controls.rowLimit);
   return (
     <div className="min-w-0 overflow-x-auto">
-      <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.12em] text-[#7B8996]">Top analytical rows from SWFI records</div>
+      <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.12em] text-[#7B8996]">Top analytical rows</div>
       <div className="min-w-[560px]">
         <div className="grid grid-cols-4 gap-2 border-b border-[#DDE6EE] pb-1 text-[10px] font-extrabold uppercase tracking-[0.08em] text-[#6B7784]">
           {headers.map((header) => <div key={header}>{header}</div>)}
@@ -2438,7 +2437,7 @@ function KpiCard({ label, value, note, source, href }: { label: string; value: s
       <div className="mt-1 break-words text-[25px] font-bold text-[#11314F]">{value}</div>
       <div className="mt-1 text-[11px] text-[#7A8A9B]">{note}</div>
       <MetricRail value={value} />
-      <div className="mt-1 text-[10.5px] text-[#7A8A9B]" data-source-path={source}>SWFI records</div>
+      <span hidden data-source-path={source} />
     </DashboardLink>
   );
 }
@@ -2554,7 +2553,7 @@ function VisualPanel({ title, source, empty, hasRows, children }: { title: strin
     <div className="min-w-0 rounded border border-[#DCE3EA] bg-white p-4">
       <div className="mb-3">
         <div className="text-[13px] font-bold tracking-[0.07em] text-[#41566B]">{title}</div>
-        <div className="mt-0.5 text-[11px] text-[#7A8A9B]" data-source-path={source}>SWFI records</div>
+        <span hidden data-source-path={source} />
       </div>
       {hasRows ? children : <div className="text-[13px] text-[#41566B]">{empty}</div>}
     </div>
