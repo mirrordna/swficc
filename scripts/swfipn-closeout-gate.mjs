@@ -130,7 +130,7 @@ async function waitForDashboard(page) {
       return counts;
     }).catch(() => ({ entity: 0, transaction: 0, compass: 0 }));
     const linksReady = linkKinds.entity >= 4 && linkKinds.transaction >= 3 && linkKinds.compass >= 3;
-    if (/TOTAL AUM ENGAGED/i.test(body) && /Market\s+Signals/i.test(body) && linksReady && !/\bLoading\b/.test(body)) return body;
+    if (/TOP AUM RANKING/i.test(body) && /Institution Intelligence Overview/i.test(body) && /Market\s+Signals/i.test(body) && linksReady && !/\bLoading\b/.test(body)) return body;
     await page.waitForTimeout(750);
   }
   return body;
@@ -186,7 +186,7 @@ async function dashboardCheck(browser) {
     const body = await waitForDashboard(page);
     result.first_usable_ms = Date.now() - start;
     if (!response || response.status() >= 400) result.failures.push(`http_${response?.status() || "missing"}`);
-    for (const text of ["SWFI", "TOTAL AUM ENGAGED", "Market Signals", "Pipeline Overview", "Updated from SWFI"]) {
+    for (const text of ["SWFI", "TOP AUM RANKING", "Institution Intelligence Overview", "Market Signals", "Pipeline Overview"]) {
       if (!body.includes(text)) result.failures.push(`missing_text:${text}`);
     }
     const hits = forbiddenHits(body);

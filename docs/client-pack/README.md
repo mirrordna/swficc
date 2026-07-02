@@ -14,6 +14,11 @@ This pack explains what the dashboard is, how to use it, how releases should be 
 | `SOP.md` | Operator process for preflight, release, postflight, and feedback intake. |
 | `VALIDATION_CHECKLIST.md` | Evidence-based checklist for stakeholder acceptance testing. |
 | `TERMS_AND_BOUNDARIES.md` | Product scope, data-use boundaries, auth assumptions, and non-goals for the validation release. |
+| `CURRENT_VALIDATION_STATUS.md` | Client-safe status summary that separates sendable dashboard scope from unfinished full-product scope. |
+| `METRIC_GLOSSARY.md` | Customer-facing definitions for dashboard metrics without internal endpoint or database language. |
+| `RELEASE_VALIDATION_SCRIPT.md` | Demo/release script for telling testers exactly what changed and what to validate. |
+| `RECEIPT_INDEX.md` | Receipt map for operators who need to prove a claim before sending it externally. |
+| `KNOWN_CAVEATS_AND_OWNERS.md` | Current caveats, blockers, and ownership buckets. |
 
 ## Current Product Position
 
