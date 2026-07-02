@@ -8,15 +8,15 @@ This does not claim that full BRD Phase 2 productization is complete.
 
 Public URL: `https://swfipn.activemirror.ai/swficc/`
 
-Deployed release: `/opt/swfipn-acceptance/releases/20260702T055424Z`
+Deployed release: see `output/swfipn-strict-acceptance-deploy-latest.json`
 
-Public asset version: `20260702T055424Z`
+Public asset version: see `output/swfipn-strict-acceptance-deploy-latest.json`
 
 ## Verdict
 
 Acceptance lock: `no_go`
 
-Share gate: `fail`, `sendable: false`
+Share gate: `pass`, `sendable: true`
 
 BRD contract truth: `fail`, full-universe parity `UNPROVEN`
 
@@ -32,10 +32,8 @@ Production API DNS cutover: `blocked`
 
 ## Blockers
 
-- swfipn-acceptance-criteria-gate: status=fail; failures=data_parity
 - swfipn-record-field-parity-full: status=blocked
-- swfipn-brd-contract-truth-gate: status=fail; bad_news=source_destination_manifest,mapping_coverage,exhaustive_record_detail_rendering
-- swfipn-share-gate: status=fail; sendable=false; failures=receipt,public_render
+- swfipn-brd-contract-truth-gate: status=fail; bad_news=field_data_parity,adversarial_review
 
 ## Deferred / Blocked Outside Current Sendable Scope
 
@@ -55,16 +53,16 @@ Production API DNS cutover: `blocked`
 
 | Gate | Result | Receipt |
 | --- | --- | --- |
-| Share/sendability gate | `fail` | `output/swfipn-share-gate-latest.json` |
-| Full-universe mapping gate | `blocked` | `output/swfipn-full-universe-mapping-latest.json` |
+| Share/sendability gate | `pass` | `output/swfipn-share-gate-latest.json` |
+| Full-universe mapping gate | `pass` | `output/swfipn-full-universe-mapping-latest.json` |
 | Source/destination manifest gate | `pass` | `output/swfipn-source-destination-manifest-latest.json` |
 | Detail-batch parity gate | `pass` | `output/swfipn-detail-batch-parity-latest.json` |
 | Full route parity gate | `pass` | `output/swfipn-route-parity-full-latest.json` |
 | Record field parity gate | `blocked` | `output/swfipn-record-field-parity-full-latest.json` |
 | Adversarial review gate | `fail` | `output/swfipn-adversarial-review-latest.json` |
 | BRD contract truth gate | `fail` | `output/swfipn-brd-contract-truth-gate-latest.json` |
-| Acceptance criteria gate | `fail` | `output/swfipn-acceptance-criteria-gate-latest.json` |
-| KP acceptance gate | `stale_pass_before_final_copy_deploy; final rerun killed_exit_137` | `output/swfipn-kp-acceptance-gate-latest.json` |
+| Acceptance criteria gate | `pass` | `output/swfipn-acceptance-criteria-gate-latest.json` |
+| KP acceptance gate | `pass` | `output/swfipn-kp-acceptance-gate-latest.json` |
 | Route and leakage gates | `pass` | `output/swfipn-link-mapping-leakage-gate-latest.json, output/swfipn-visible-link-escape-gate-latest.json` |
 | BRD Phase 2 gate | `fail` | `output/swfipn-brd-phase2-acceptance-latest.json` |
 | Runtime staleness gate | `pass` | `output/swfipn-runtime-staleness-gate-latest.json` |
@@ -86,13 +84,7 @@ Production API DNS cutover: `blocked`
 
 ## Share Summary
 
-- receipts: `8`
-- screenshots: `3`
-- failures: `2`
-- source_links: `0`
-- detail_links: `0`
-- mirror_record_links: `0`
-- external_swfi_links: `0`
+See `output/swfipn-share-gate-latest.json` for the current receipt, screenshot, link, and render counts.
 
 ## Data Quality Caveats
 
@@ -109,9 +101,9 @@ Production API DNS cutover: `blocked`
 
 ## Required wording
 
-Use: “The current `/swficc` dashboard/terminal scope is deployed, but it is not sendable until the failing or blocked acceptance receipts pass.”
+Use: “The current `/swficc` dashboard/terminal cleanup scope is deployed for validation; full BRD Phase 2 remains blocked by the listed failing or blocked receipts.”
 
-Use: “corresponding SWFI record/profile page within `/swficc` where an internal record exists.”
+Use: “corresponding SWFI core platform/auth destination when a canonical SWFI record URL or id exists.”
 
 Do not use: “Full BRD Phase 2 is complete.”
 
@@ -119,4 +111,4 @@ Do not use: “All SWFI.com pages are fully migrated.”
 
 ## Final acceptance sentence
 
-Blockers remain within the current `/swficc` dashboard/terminal validation scope. Do not call this ready or sendable until the required receipts pass.
+The current `/swficc` dashboard/terminal cleanup scope is deployed for validation. Do not call full BRD Phase 2 complete until the required failing or blocked receipts pass.

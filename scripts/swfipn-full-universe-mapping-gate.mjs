@@ -20,6 +20,12 @@ const shardIndex = Math.max(0, Number(process.env.SWFIPN_UNIVERSE_SHARD_INDEX ||
 const probeLimit = Math.max(0, Number(process.env.SWFIPN_UNIVERSE_PROBE_LIMIT || 0));
 const probeAll = /^(1|true|yes)$/i.test(String(process.env.SWFIPN_UNIVERSE_PROBE_ALL || ""));
 const canonicalCollections = ["entities", "people", "transactions", "compass", "news", "reports"];
+const RECORD_DETAIL_ROUTES = {
+  entities: "/profiles/detail/",
+  people: "/people/detail/",
+  transactions: "/transactions/detail/",
+  compass: "/mandates/detail/",
+};
 const collections = envList("SWFIPN_UNIVERSE_COLLECTIONS", canonicalCollections);
 const scanTimeoutMs = clampNumber(process.env.SWFIPN_UNIVERSE_SCAN_TIMEOUT_MS, 5_000, 300_000, 120_000);
 const scanRetries = clampNumber(process.env.SWFIPN_UNIVERSE_SCAN_RETRIES, 0, 10, 3);
@@ -30,14 +36,40 @@ const allowShardedPartial = /^(1|true|yes)$/i.test(String(process.env.SWFIPN_UNI
 const allowSourceTotalDrift = /^(1|true|yes)$/i.test(String(process.env.SWFIPN_UNIVERSE_ALLOW_SOURCE_TOTAL_DRIFT || ""));
 const requireReportsContract = !/^(0|false|no)$/i.test(String(process.env.SWFIPN_UNIVERSE_REQUIRE_REPORTS_CONTRACT || "1"));
 const failOnMissingLabel = /^(1|true|yes)$/i.test(String(process.env.SWFIPN_UNIVERSE_FAIL_ON_MISSING_LABEL || "0"));
+const runReceiptPath = path.join(outputDir, `swfipn-full-universe-mapping-${runId}-receipt.json`);
 let activeReceipt = null;
 let activeFamily = "";
 
-function writeLatestReceipt(receipt) {
-  fs.mkdirSync(path.dirname(latestReceiptPath), { recursive: true });
-  const tmpPath = `${latestReceiptPath}.${process.pid}.tmp`;
+function writeJsonAtomic(filePath, receipt) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const tmpPath = `${filePath}.${process.pid}.tmp`;
   fs.writeFileSync(tmpPath, `${JSON.stringify(receipt, null, 2)}\n`);
-  fs.renameSync(tmpPath, latestReceiptPath);
+  fs.renameSync(tmpPath, filePath);
+}
+
+function isCanonicalLatestRun(receipt) {
+  const families = Array.isArray(receipt?.families) ? receipt.families : [];
+  return shardCount === 1
+    && !maxPages
+    && !maxRecords
+    && probeLimit === 0
+    && !probeAll
+    && missingCanonicalCollections.length === 0
+    && receipt?.status === "pass"
+    && families.length === canonicalCollections.length
+    && families.every((family) => family.status === "pass" && family.partial_run === false)
+    && !receipt?.failures?.length;
+}
+
+function writeReceipt(receipt) {
+  const canonicalLatest = isCanonicalLatestRun(receipt);
+  writeJsonAtomic(runReceiptPath, {
+    ...receipt,
+    canonical_latest_eligible: canonicalLatest,
+    canonical_latest_path: canonicalLatest ? latestReceiptPath : "",
+  });
+  if (canonicalLatest) writeJsonAtomic(latestReceiptPath, receipt);
+  return canonicalLatest ? latestReceiptPath : runReceiptPath;
 }
 
 if (shardIndex >= shardCount) {
@@ -55,8 +87,8 @@ const families = [
     section: "entities",
     uiRoute: "/profiles/",
     sourcePattern: /^https:\/\/www\.swfi\.com\/v1\/entities\/([a-f0-9]{24})\/?$/i,
-    expectedRedirect: (id) => `/v1/entities/${id}`,
-    clickHref: (id) => swfiSignin(`/v1/entities/${id}`),
+    expectedRedirect: (id) => `${RECORD_DETAIL_ROUTES.entities}?${new URLSearchParams({ id }).toString()}`,
+    clickHref: (id) => appUrl(`${RECORD_DETAIL_ROUTES.entities}?${new URLSearchParams({ id }).toString()}`),
     label: (row) => text(row.name || row.title || row.slug || ""),
     idFromRow: (row) => idFromSwfiSource(row.source_url || row.swfi_url, "entities") || hexId(row.entity_id || row.id || row.source_record_id),
     sourceUrl: (row, id) => text(row.source_url || row.swfi_url) || `https://www.swfi.com/v1/entities/${id}`,
@@ -67,8 +99,8 @@ const families = [
     section: "people",
     uiRoute: "/people/",
     sourcePattern: /^https:\/\/www\.swfi\.com\/v1\/people\/([a-f0-9]{24})\/?$/i,
-    expectedRedirect: (id) => `/v1/people/${id}`,
-    clickHref: (id) => swfiSignin(`/v1/people/${id}`),
+    expectedRedirect: (id) => `${RECORD_DETAIL_ROUTES.people}?${new URLSearchParams({ id }).toString()}`,
+    clickHref: (id) => appUrl(`${RECORD_DETAIL_ROUTES.people}?${new URLSearchParams({ id }).toString()}`),
     label: (row) => text(row.name || row.title || ""),
     idFromRow: (row) => idFromSwfiSource(row.source_url || row.swfi_url, "people") || hexId(row.person_id || row.id || row.source_record_id),
     sourceUrl: (row, id) => text(row.source_url || row.swfi_url) || `https://www.swfi.com/v1/people/${id}`,
@@ -79,8 +111,8 @@ const families = [
     section: "transactions",
     uiRoute: "/transactions/",
     sourcePattern: /^https:\/\/www\.swfi\.com\/v1\/transactions\/([a-f0-9]{24})\/?$/i,
-    expectedRedirect: (id) => `/v1/transactions/${id}`,
-    clickHref: (id) => swfiSignin(`/v1/transactions/${id}`),
+    expectedRedirect: (id) => `${RECORD_DETAIL_ROUTES.transactions}?${new URLSearchParams({ id }).toString()}`,
+    clickHref: (id) => appUrl(`${RECORD_DETAIL_ROUTES.transactions}?${new URLSearchParams({ id }).toString()}`),
     label: (row) => text(row.title || row.name || ""),
     idFromRow: (row) => idFromSwfiSource(row.source_url || row.swfi_url, "transactions") || hexId(row.transaction_id || row.id || row.source_record_id),
     sourceUrl: (row, id) => text(row.source_url || row.swfi_url) || `https://www.swfi.com/v1/transactions/${id}`,
@@ -92,8 +124,8 @@ const families = [
     uiRoute: "/mandates/",
     sourcePattern: /^https:\/\/www\.swfi\.com\/v1\/compass\/([a-f0-9]{24})\/?$/i,
     uiTotalScope: "live_open_only",
-    expectedRedirect: (id) => `/v1/compass/${id}`,
-    clickHref: (id) => swfiSignin(`/v1/compass/${id}`),
+    expectedRedirect: (id) => `${RECORD_DETAIL_ROUTES.compass}?${new URLSearchParams({ id }).toString()}`,
+    clickHref: (id) => appUrl(`${RECORD_DETAIL_ROUTES.compass}?${new URLSearchParams({ id }).toString()}`),
     label: (row) => text(row.title || row.name || ""),
     idFromRow: (row) => idFromSwfiSource(row.source_url || row.swfi_url, "compass") || hexId(row.compass_id || row.mandate_id || row.rfp_id || row.id || row.source_record_id),
     sourceUrl: (row, id) => text(row.source_url || row.swfi_url) || `https://www.swfi.com/v1/compass/${id}`,
@@ -225,11 +257,6 @@ function appUrl(route) {
   return new URL(value.replace(/^\//, ""), origin).href;
 }
 
-function swfiSignin(redirectPath) {
-  const params = new URLSearchParams({ msg: "auth", redirect: redirectPath });
-  return `https://www.swfi.com/v1/signin/?${params.toString()}`;
-}
-
 function scanUrl(collection, limit, after) {
   const params = new URLSearchParams({ collection, limit: String(limit) });
   if (after) params.set("after", after);
@@ -347,9 +374,14 @@ function validateRecord(family, row, seen) {
       }
     }
   } else {
-    const handoff = parseSwfiSignin(clickHref);
-    if (!handoff) failures.push(`wrong_click_handoff:${clickHref}`);
-    else if (handoff.redirect !== expectedRedirect) failures.push(`redirect_mismatch:${handoff.redirect}_expected_${expectedRedirect}`);
+    const parsed = new URL(clickHref);
+    const expected = appUrl(expectedRedirect);
+    const expectedParsed = new URL(expected);
+    const normalizedActual = `${parsed.pathname.replace(/\/+$/, "")}?${new URLSearchParams(parsed.search).toString()}`;
+    const normalizedExpected = `${expectedParsed.pathname.replace(/\/+$/, "")}?${new URLSearchParams(expectedParsed.search).toString()}`;
+    if (parsed.origin !== originUrl.origin || normalizedActual !== normalizedExpected) {
+      failures.push(`wrong_click_route:${normalizedActual}_expected_${normalizedExpected}`);
+    }
   }
 
   if (!failures.some((failure) => failure.startsWith("duplicate_key")) && id) seen.keys.add(canonicalKey);
@@ -366,7 +398,7 @@ function validateRecord(family, row, seen) {
     source_origin: explicitSourceValue ? "source_record" : "legacy_post_derived",
     expected_redirect: expectedRedirect,
     click_href: clickHref,
-    internal_route: family.section === "news" ? clickHref : "",
+    internal_route: clickHref,
     source_fields: sourceFieldsForParity(row),
     warnings,
     failures,
@@ -412,21 +444,6 @@ function sourceFieldsForParity(row) {
       .filter((key) => row[key] !== undefined)
       .map((key) => [key, row[key]]),
   );
-}
-
-function parseSwfiSignin(href) {
-  try {
-    const parsed = new URL(text(href));
-    if (parsed.hostname !== "www.swfi.com") return null;
-    if (parsed.pathname.replace(/\/?$/, "/") !== "/v1/signin/") return null;
-    if (parsed.searchParams.get("msg") !== "auth") return null;
-    const redirect = parsed.searchParams.get("redirect") || "";
-    if (!redirect.startsWith("/") || /^https?:\/\//i.test(redirect)) return null;
-    if (!/^\/v1\/(entities|people|transactions|compass)\/[a-f0-9]{24}$/i.test(redirect)) return null;
-    return { href: parsed.href, redirect };
-  } catch {
-    return null;
-  }
 }
 
 function loadPlaywright() {
@@ -742,13 +759,14 @@ async function run() {
   }
   receipt.completed_at = new Date().toISOString();
   receipt.elapsed_ms = Date.parse(receipt.completed_at) - Date.parse(receipt.generated_at);
-  writeLatestReceipt(receipt);
+  const receiptPath = writeReceipt(receipt);
   console.log(JSON.stringify({
     status: receipt.status,
     run_id: receipt.run_id,
     totals: receipt.totals,
     failures: receipt.failures.slice(0, 20),
-    receipt: latestReceiptPath,
+    receipt: receiptPath,
+    canonical_latest_updated: receiptPath === latestReceiptPath,
     outputs: receipt.families.map((family) => ({ family: family.id, output: family.output })),
   }, null, 2));
   if (receipt.status === "partial_pass" && !allowPartialExit) process.exit(1);
@@ -776,8 +794,8 @@ function writeInterruptedReceipt(signal) {
     family: activeFamily || "run",
     failures: [`interrupted_before_full_universe_receipt:${signal}`],
   });
-  writeLatestReceipt(receipt);
-  console.error(`[full-universe] interrupted by ${signal}; wrote blocked receipt ${latestReceiptPath}`);
+  const receiptPath = writeReceipt(receipt);
+  console.error(`[full-universe] interrupted by ${signal}; wrote blocked receipt ${receiptPath}`);
 }
 
 for (const signal of ["SIGTERM", "SIGINT"]) {
@@ -788,7 +806,7 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
 }
 
 run().catch((error) => {
-  writeLatestReceipt({ schema_version: "swfipn.full_universe_mapping_gate.v1", status: "fail", generated_at: new Date().toISOString(), error: error.message });
+  writeReceipt({ schema_version: "swfipn.full_universe_mapping_gate.v1", status: "fail", generated_at: new Date().toISOString(), run_id: runId, error: error.message });
   console.error(error);
   process.exit(1);
 });

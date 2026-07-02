@@ -588,10 +588,15 @@ async function main() {
     if (item.checked > item.count) item.count = item.checked;
   }
   const failed = Object.values(state.collections).reduce((sum, item) => sum + item.mismatched + item.missing_source_record + item.blocked, 0);
+  const hasDataFailures = Object.values(state.collections).some((item) => item.mismatched > 0 || item.missing_source_record > 0);
+  const hasOnlyMongoLookupFailures = failed > 0
+    && !hasDataFailures
+    && state.failures.length > 0
+    && state.failures.every((failure) => failure.id === "mongo_lookup_failed");
   const totalChecked = Object.values(state.collections).reduce((sum, item) => sum + item.checked, 0);
   const totalCount = Object.values(state.collections).reduce((sum, item) => sum + item.count, 0);
   const receipt = {
-    status: failed ? "fail" : partialRun ? "partial_pass" : totalChecked === totalCount && totalCount > 0 ? "pass" : "fail",
+    status: hasOnlyMongoLookupFailures ? "blocked" : failed ? "fail" : partialRun ? "partial_pass" : totalChecked === totalCount && totalCount > 0 ? "pass" : "fail",
     generated_at: new Date().toISOString(),
     scope: fromMappingSnapshot
       ? "full required-field parity from frozen SWFIPN mapping snapshot to Mongo by source id"

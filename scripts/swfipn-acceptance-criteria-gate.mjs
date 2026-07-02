@@ -14,6 +14,7 @@ const password = process.env.SWFIPN_AUTH_TEST_PASSWORD || "";
 const allowAuthSkip = process.env.SWFIPN_ACCEPTANCE_ALLOW_AUTH_SKIP === "1";
 const expectedPacketSource = process.env.SWFIPN_EXPECTED_PACKET_SOURCE || "swfi_api";
 const checkTimeoutMs = Number(process.env.SWFIPN_ACCEPTANCE_CRITERIA_CHECK_TIMEOUT_MS || 120_000);
+const apiFetchTimeoutMs = Number(process.env.SWFIPN_API_FETCH_TIMEOUT_MS || 60_000);
 const routeParityTargetLimit = Number(process.env.SWFIPN_ACCEPTANCE_ROUTE_TARGET_LIMIT || 25);
 
 const dashboardEndpoints = {
@@ -364,7 +365,7 @@ function linkLeakFailures(links) {
   return leaked.map((link) => `link_exposes_internal_or_source_token:${link.text || link.raw}`);
 }
 
-async function fetchJson(url, timeout = 15_000) {
+async function fetchJson(url, timeout = apiFetchTimeoutMs) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
   try {

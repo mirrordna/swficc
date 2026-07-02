@@ -19,7 +19,6 @@ import {
 import { useGsapReveal } from "@/hooks/useGsapReveal";
 import { HOME_PACKET_SNAPSHOT } from "@/lib/homeSourceSnapshot";
 import { appHref, assetHref, isSwfiPlatformRecordHref, sourceProvenanceHref, swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
-import { mandateDetailHref, personDetailHref, profileDetailHref, researchDetailHref, transactionDetailHref } from "@/lib/detailRoutes";
 
 const ENDPOINTS = {
   metrics: "/api/swfi/dashboard-metrics/v1",
@@ -29,7 +28,7 @@ const ENDPOINTS = {
   transactions30: "/api/recent-transactions/v1?days=30&limit=25&page=1",
   entities: "/api/source-data/search/v1?collection=entities&limit=25&page=1",
   people: "/api/source-data/search/v1?collection=people&limit=25&page=1",
-  top20: "/v1/swfi/top20?limit=5",
+  top20: "/v1/swfi/top20?limit=25",
   news: "/api/source-intelligence/news/v1?limit=25",
   sectorFlows: "/api/sector-flows/v1?days=365",
 };
@@ -101,7 +100,7 @@ export default function DashboardPage() {
   const [newestTab, setNewestTab] = useState<"transactions" | "rfps" | "opportunities" | "people">("transactions");
   const [topTab, setTopTab] = useState<"compass" | "sector">("compass");
   const [expandedPanel, setExpandedPanel] = useState("capital-flows");
-  const [visualControls, setVisualControls] = useState<DashboardTableControls>({ rowLimit: 5, sortColumn: 0, sortDir: "asc" });
+  const visualControls = useMemo<DashboardTableControls>(() => ({ rowLimit: 5, sortColumn: 0, sortDir: "asc" }), []);
 
   useEffect(() => {
     let active = true;
@@ -198,14 +197,6 @@ export default function DashboardPage() {
     setExpandedPanel((current) => current === id ? "" : id);
   }
 
-  function sortVisualPanel(column: number) {
-    setVisualControls((current) => ({
-      ...current,
-      sortColumn: column,
-      sortDir: current.sortColumn === column && current.sortDir === "asc" ? "desc" : "asc",
-    }));
-  }
-
   return (
     <div ref={rootRef} data-dashboard-ready={dashboardReady ? "true" : "false"} className="min-h-screen bg-[#F5F3EF] font-sans text-[#101827]">
       <BrdTopNavigation onSearchOpen={() => setSearchOpen(true)} />
@@ -223,8 +214,6 @@ export default function DashboardPage() {
         expandedPanel={expandedPanel}
         onTogglePanel={togglePanel}
         controls={visualControls}
-        onRowLimitChange={(rowLimit) => setVisualControls((current) => ({ ...current, rowLimit }))}
-        onSort={sortVisualPanel}
       />
       <main className="mx-auto grid max-w-[1440px] gap-x-14 gap-y-8 px-4 py-8 sm:px-8 xl:grid-cols-[minmax(0,1fr)_304px]">
         <BrdNewsFeed rows={newsRows} tab={newsTab} onTabChange={setNewsTab} />
@@ -354,8 +343,6 @@ function VisualExecutiveOverview({
   expandedPanel,
   controls,
   onTogglePanel,
-  onRowLimitChange,
-  onSort,
 }: {
   packets: Packets;
   topAumRows: Record<string, unknown>[];
@@ -369,8 +356,6 @@ function VisualExecutiveOverview({
   expandedPanel: string;
   controls: DashboardTableControls;
   onTogglePanel: (id: string) => void;
-  onRowLimitChange: (value: number) => void;
-  onSort: (column: number) => void;
 }) {
   const kpis = dashboardMetricCards(packets, topAumRows, sectorRows);
   const topRows = topAumRows.length ? topAumRows : entityRows;
@@ -386,7 +371,7 @@ function VisualExecutiveOverview({
         <div className="grid gap-3 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_340px]">
           <ExpandablePanel
             id="capital-map"
-            title="Global Capital Map"
+            title="Disclosed AUM & Market Activity"
             href="#capital-map"
             expanded={expandedPanel === "capital-map"}
             onToggle={onTogglePanel}
@@ -397,7 +382,7 @@ function VisualExecutiveOverview({
           </ExpandablePanel>
           <ExpandablePanel
             id="capital-flows"
-            title="Capital Flows & Allocation Trends"
+            title="Capital Flows by Industry / Category"
             href="/deals"
             expanded={expandedPanel === "capital-flows"}
             onToggle={onTogglePanel}
@@ -487,14 +472,6 @@ function VisualExecutiveOverview({
             <DealIntelligencePanel rows={transactionRows} sectorRows={sectorRows} />
           </ExpandablePanel>
         </div>
-        <DashboardControlStrip
-          totalRows={Math.max(topRows.length, entityRows.length, allocatorRows.length, transactionRows.length, rfpRows.length, newsRows.length, sectorRows.length)}
-          rowLimit={controls.rowLimit}
-          sortColumn={controls.sortColumn}
-          sortDir={controls.sortDir}
-          onRowLimitChange={onRowLimitChange}
-          onSort={onSort}
-        />
         <div className="overflow-hidden bg-[#071F48] text-white">
           <NewsTicker rows={newsRows} />
         </div>
@@ -615,9 +592,9 @@ function BrdNewestData({ tab, onTabChange, transactionRows, rfpRows, peopleRows 
         onChange={(value) => onTabChange(value as "transactions" | "rfps" | "opportunities" | "people")}
       />
       <DashboardSectionNote>
-        Showing recent activity by category. Open a row for details, or use search to explore more.
+        Recent activity by category. Open any item to continue into the matching SWFI workflow.
       </DashboardSectionNote>
-      <BrdTable headers={rowsToUse.headers} rows={rowsToUse.rows} empty={DASHBOARD_EMPTY} />
+      <BrdActivityCards headers={rowsToUse.headers} rows={rowsToUse.rows} empty={DASHBOARD_EMPTY} />
     </section>
   );
 }
@@ -642,9 +619,9 @@ function BrdTopTen({ tab, onTabChange, rfpRows, sectorRows }: {
         onChange={(value) => onTabChange(value as "compass" | "sector")}
       />
       <DashboardSectionNote>
-        A compact ranking of current dashboard activity. Open a row to continue into the matching view.
+        A compact ranking of current dashboard activity. Open any item to continue into the matching view.
       </DashboardSectionNote>
-      <BrdTable headers={["Inv Type", "Amount (USD)", "Count"]} rows={rowsToUse} empty={DASHBOARD_EMPTY} />
+      <BrdRankingVisual headers={["Inv Type", "Amount (USD)", "Count"]} rows={rowsToUse} empty={DASHBOARD_EMPTY} />
     </section>
   );
 }
@@ -791,33 +768,61 @@ function DashboardSectionNote({ children }: { children: ReactNode }) {
   return <p className="mt-2 max-w-3xl text-[12px] leading-5 text-[#667386]">{children}</p>;
 }
 
-function BrdTable({ headers, rows: tableRows, empty }: { headers: string[]; rows: Cell[][]; empty: string }) {
+function BrdActivityCards({ headers, rows: sourceRows, empty }: { headers: string[]; rows: Cell[][]; empty: string }) {
+  const visible = sourceRows.slice(0, 6);
   return (
-    <div className="mt-5 overflow-x-auto">
-      <table className="min-w-full border-collapse text-left text-[13px]">
-        <thead>
-          <tr className="bg-[#E9ECF1] text-[12px] font-extrabold text-[#263148]">
-            {headers.map((header) => (
-              <th key={header} className="border-b border-[#D8DEE8] px-3 py-2">{header}</th>
+    <div className="mt-5 grid gap-3 md:grid-cols-2">
+      {visible.length ? visible.map((row, index) => (
+        <div key={`${cellText(row[0])}-${index}`} className="min-w-0 border border-[#D8DEE8] bg-white/85 p-3 shadow-[0_1px_2px_rgba(20,44,70,0.04)]">
+          <div className="grid grid-cols-[28px_minmax(0,1fr)] gap-2">
+            <span className="grid h-7 w-7 place-items-center rounded-full bg-[#EEF2F7] text-[11px] font-extrabold text-[#B90D12]">{index + 1}</span>
+            <div className="min-w-0 text-[13px] font-bold text-[#14213D]">{displayCell(row[0])}</div>
+          </div>
+          <div className="mt-3 grid gap-2 text-[11.5px] text-[#526171] sm:grid-cols-2">
+            {row.slice(1).map((cell, detailIndex) => (
+              <div key={`${headers[detailIndex + 1] || detailIndex}-${detailIndex}`} className="min-w-0 rounded-[5px] bg-[#F5F7FA] px-2 py-2">
+                <div className="text-[9.5px] font-extrabold uppercase tracking-[0.1em] text-[#8290A0]">{headers[detailIndex + 1]}</div>
+                <div className="mt-1 break-words font-bold text-[#2F3A4F]">{displayCell(cell)}</div>
+              </div>
             ))}
-          </tr>
-        </thead>
-        <tbody>
-          {tableRows.length ? tableRows.slice(0, 10).map((row, index) => (
-            <tr key={index} className="border-b border-[#ECEFF4] bg-white/80">
-              {row.map((cell, cellIndex) => (
-                <td key={cellIndex} className={`px-3 py-2 align-top ${cellIndex === 0 ? "font-bold text-[#14213D]" : "text-[#2F3A4F]"}`}>
-                  {displayCell(cell)}
-                </td>
-              ))}
-            </tr>
-          )) : (
-            <tr>
-              <td className="bg-white px-3 py-4 text-[#606A7C]" colSpan={headers.length}>{empty}</td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+          </div>
+        </div>
+      )) : (
+        <div className="border border-[#D8DEE8] bg-white px-3 py-4 text-[13px] text-[#606A7C] md:col-span-2">{empty}</div>
+      )}
+      {sourceRows.length > visible.length ? (
+        <div className="text-[11px] font-semibold text-[#667386] md:col-span-2">Top dashboard signals from SWFI records</div>
+      ) : null}
+    </div>
+  );
+}
+
+function BrdRankingVisual({ headers, rows: sourceRows, empty }: { headers: string[]; rows: Cell[][]; empty: string }) {
+  const visible = sourceRows.slice(0, 10);
+  const max = Math.max(1, ...visible.map(rankingMetricValue));
+  return (
+    <div className="mt-5 grid gap-2">
+      {visible.length ? visible.map((row, index) => {
+        const value = rankingMetricValue(row);
+        return (
+          <div key={`${cellText(row[0])}-${index}`} className="grid gap-2 border border-[#D8DEE8] bg-white/85 px-3 py-2.5 shadow-[0_1px_2px_rgba(20,44,70,0.04)]">
+            <div className="grid grid-cols-[32px_minmax(0,1fr)_minmax(82px,120px)] items-start gap-2">
+              <span className="text-[18px] font-extrabold leading-none text-[#B90D12]">{index + 1}</span>
+              <div className="min-w-0 text-[13px] font-bold text-[#14213D]">{displayCell(row[0])}</div>
+              <div className="text-right text-[11.5px] font-extrabold text-[#13283D]">{cellText(row[1]) !== "Not disclosed" ? displayCell(row[1]) : displayCell(row[2])}</div>
+            </div>
+            <div className="h-2 overflow-hidden rounded bg-[#E8EDF2]" aria-hidden="true">
+              <div className="h-full rounded bg-[#2C78D2]" style={{ width: `${Math.max(4, Math.min(100, (value / max) * 100))}%` }} />
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10.5px] text-[#667386]">
+              <span>{headers[1]}: {displayCell(row[1])}</span>
+              <span>{headers[2]}: {displayCell(row[2])}</span>
+            </div>
+          </div>
+        );
+      }) : (
+        <div className="border border-[#D8DEE8] bg-white px-3 py-4 text-[13px] text-[#606A7C]">{empty}</div>
+      )}
     </div>
   );
 }
@@ -1049,7 +1054,7 @@ function ConceptSidebar({ topRows }: { topRows: Record<string, unknown>[] }) {
         </div>
         <div className="min-w-0">
           <div className="text-[10px] font-extrabold uppercase leading-tight tracking-[0.14em] text-white">Terminal</div>
-          <div className="mt-1 text-[10px] font-semibold leading-tight text-white/55">Source workspaces</div>
+          <div className="mt-1 text-[10px] font-semibold leading-tight text-white/55">Platform dashboard</div>
         </div>
       </div>
       <nav className="px-3 py-3">
@@ -1161,13 +1166,15 @@ function ConceptTopBar({ dataAsOfLabel, packets }: { dataAsOfLabel: string; pack
   );
 }
 
-function ConceptKpiCard({ label, value, note, href, series, color }: {
+function ConceptKpiCard({ label, value, note, href, series, color, statusLabel = "SWFI records", sourceLabel = "SWFI records" }: {
   label: string;
   value: string;
   note: string;
   href: string;
   series: number[];
   color: string;
+  statusLabel?: string;
+  sourceLabel?: string;
 }) {
   return (
     <DashboardLink href={href} data-qa-min="150" className="min-w-0 border border-[#C9D3DE] bg-white px-3 py-2.5 text-inherit no-underline shadow-[0_1px_2px_rgba(20,44,70,0.05)] hover:border-[#D51E29]/50">
@@ -1177,59 +1184,11 @@ function ConceptKpiCard({ label, value, note, href, series, color }: {
         <MiniSparkline series={series} color={color} large />
       </div>
       <div className="mt-2 flex items-center justify-between gap-2 text-[10.5px]">
-        <span className="font-bold text-[#1A9A68]">Updated</span>
+        <span className="font-bold text-[#1A9A68]">{statusLabel}</span>
         <span className="truncate text-[#7B8996]">{note}</span>
       </div>
-      <div className="mt-2 text-[9.5px] font-semibold text-[#7B8996]">Updated from SWFI</div>
+      <div className="mt-2 text-[9.5px] font-semibold text-[#7B8996]">{sourceLabel}</div>
     </DashboardLink>
-  );
-}
-
-function DashboardControlStrip({
-  totalRows,
-  rowLimit,
-  sortColumn,
-  sortDir,
-  onRowLimitChange,
-  onSort,
-}: {
-  totalRows: number;
-  rowLimit: number;
-  sortColumn: number;
-  sortDir: "asc" | "desc";
-  onRowLimitChange: (value: number) => void;
-  onSort: (column: number) => void;
-}) {
-  const visibleRows = Math.min(rowLimit, totalRows);
-  const sortButtons = ["Result", "Metric", "Source", "Detail"];
-  return (
-    <section data-gsap-reveal className="mb-3 flex flex-wrap items-center gap-2 border border-[#C9D3DE] bg-white px-3 py-2 text-[11.5px] text-[#405062] shadow-[0_1px_2px_rgba(20,44,70,0.05)]">
-      <div className="mr-auto font-bold">
-        Showing {visibleRows.toLocaleString("en-US")} of {totalRows.toLocaleString("en-US")}
-      </div>
-      <label className="flex items-center gap-2 font-bold">
-        <span>Rows</span>
-        <select
-          value={rowLimit}
-          onChange={(event) => onRowLimitChange(Number(event.target.value))}
-          className="min-h-8 border border-[#B8C4D0] bg-white px-2 text-[#203448]"
-        >
-          {[5, 10, 25].map((value) => <option key={value} value={value}>{value}</option>)}
-        </select>
-      </label>
-      <div className="flex flex-wrap gap-1">
-        {sortButtons.map((label, index) => (
-          <button
-            key={label}
-            type="button"
-            onClick={() => onSort(index)}
-            className="min-h-8 border border-[#B8C4D0] bg-white px-2.5 font-bold text-[#0A3A7A] hover:border-[#B90D12]/50"
-          >
-            {label}{sortColumn === index ? ` ${sortDir}` : ""}
-          </button>
-        ))}
-      </div>
-    </section>
   );
 }
 
@@ -1262,12 +1221,15 @@ function ExpandablePanel({ id, title, href, expanded, onToggle, children, detail
 
 function GlobalCapitalMap({ topRows, sectorRows }: { topRows: Record<string, unknown>[]; sectorRows: Record<string, unknown>[] }) {
   const topCapital = topRows.slice(0, 4);
+  const aumCurrency = commonAumCurrency(topRows);
+  const regionalRows = aumCurrency ? regionalCapitalRows(topRows, aumCurrency) : [];
+  const regionalCapital = sumNumbers(regionalRows.map((row) => row.value));
   const sectorCapital = sumNumbers(sectorRows.map(sectorValue));
-  const nodes = mapNodes(sectorRows);
+  const nodes = mapNodes(regionalRows);
   return (
     <div className="grid min-h-[250px] gap-3">
       <div className="relative min-h-[190px] overflow-hidden rounded-[6px] bg-[#F7FAFD]">
-        <svg viewBox="0 0 700 285" className="absolute inset-0 h-full w-full" role="img" aria-label="Sector activity and top AUM map">
+        <svg viewBox="0 0 700 285" className="absolute inset-0 h-full w-full" role="img" aria-label="Regional disclosed AUM map">
           <defs>
             <radialGradient id="mapNode" cx="50%" cy="50%" r="50%">
               <stop offset="0%" stopColor="#0A66C2" stopOpacity="0.95" />
@@ -1294,10 +1256,15 @@ function GlobalCapitalMap({ topRows, sectorRows }: { topRows: Record<string, unk
           ))}
         </svg>
         <div className="absolute left-3 top-3 rounded-[5px] bg-white/90 px-3 py-2 shadow-sm">
-          <div className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#7B8996]">Sector activity</div>
-          <div className="mt-1 text-[18px] font-extrabold text-[#13283D]">{compactMoney(sectorCapital)}</div>
-          <div className="mt-1 text-[9px] font-semibold text-[#7B8996]">Industry activity</div>
+          <div className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#7B8996]">Disclosed AUM</div>
+          <div className="mt-1 text-[18px] font-extrabold text-[#13283D]">{regionalCapital ? compactCurrency(regionalCapital, aumCurrency) : "Not disclosed"}</div>
+          <div className="mt-1 text-[9px] font-semibold text-[#7B8996]">Grouped by SWFI region</div>
         </div>
+        {!nodes.length ? (
+          <div className="absolute inset-x-3 bottom-3 rounded-[5px] bg-white/90 px-3 py-2 text-[11px] font-semibold text-[#526171] shadow-sm">
+            Comparable regional AUM is not disclosed in the loaded rows.
+          </div>
+        ) : null}
       </div>
       <div className="grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
         {topCapital.map((row) => (
@@ -1307,6 +1274,9 @@ function GlobalCapitalMap({ topRows, sectorRows }: { topRows: Record<string, unk
           </DataLink>
         ))}
       </div>
+      {!regionalCapital && sectorCapital ? (
+        <div className="text-[10.5px] font-semibold text-[#7B8996]">Market activity total: {compactMoney(sectorCapital)}</div>
+      ) : null}
     </div>
   );
 }
@@ -1320,11 +1290,11 @@ function CapitalFlowPanel({ rows: sourceRows }: { rows: Record<string, unknown>[
           <div key={brdText(row.name || row.value)} className="rounded-[5px] border border-[#E3EAF0] bg-[#F8FAFC] px-2 py-2">
             <div className="truncate text-[10px] font-bold text-[#516273]">{brdText(row.name || row.value)}</div>
             <div className="mt-1 text-[11px] font-extrabold text-[#13283D]">{cleanMoney(row.capital_display || row.capital_deployed || row.capital)}</div>
-            <div className={`mt-1 text-[10px] font-bold ${index % 2 ? "text-[#B90D12]" : "text-[#1A9A68]"}`}>SWFI sector facet</div>
+            <div className={`mt-1 text-[10px] font-bold ${index % 2 ? "text-[#B90D12]" : "text-[#1A9A68]"}`}>Industry / category</div>
           </div>
         ))}
       </div>
-      <StackedArea rows={chartRows} />
+      <IndustryCategoryBars rows={chartRows} />
     </div>
   );
 }
@@ -1683,7 +1653,7 @@ function UnifiedIntelligencePanel({ rows: insights }: { rows: UnifiedInsight[] }
         ))}
       </div>
       {!visible.length ? <div className="text-[12px] text-[#405062]">{DASHBOARD_EMPTY}</div> : null}
-      <div className="text-[10px] font-semibold text-[#7B8996]">Joined from available SWFI source packets.</div>
+      <div className="text-[10px] font-semibold text-[#7B8996]">Combined from available SWFI data.</div>
     </div>
   );
 }
@@ -1709,29 +1679,31 @@ function dashboardMetricCards(packets: Packets, topAumRows: Record<string, unkno
   const activeAllocators = numericSortValue(packetCount(packets.allocators90, "count")) || metricNumber(packets.metrics, "allocators") || 0;
   const sectorCapital = sumNumbers(sectorRows.map(sectorValue));
   const rfps = metricNumber(packets.metrics, "rfps") || packetCountNumber(packets.rfps) || 0;
-  const swfs = metricNumber(packets.metrics, "swfs") || packetCountNumber(packets.entities) || 0;
+  const swfs = metricNumber(packets.metrics, "swfs") || 0;
   const research = metricNumber(packets.metrics, "news") || packetCountNumber(packets.news) || 0;
   return [
     {
       label: "TOTAL AUM ENGAGED",
-      value: totalAum ? compactMoney(totalAum) : metricCardWithFallback(packets.metrics, "institutions", packetCountNumber(packets.entities)),
-      note: "Capital visualization",
+      value: totalAumDisplay(packets.top20, topAumRows),
+      note: "Top AUM ranking",
       href: "#capital-map",
       series: seriesFromNumbers(topAumRows.map(aumValue)),
       color: "#0A66C2",
+      statusLabel: totalAum ? "Current ranking" : "Not disclosed",
+      sourceLabel: "SWFI records",
     },
     {
-      label: "ACTIVE RELATIONSHIPS",
+      label: "ACTIVE ALLOCATORS",
       value: activeAllocators ? compactNumber(activeAllocators) : packetCount(packets.allocators90, "count"),
-      note: "Allocator activity",
+      note: "90-day buyers",
       href: "/allocators",
       series: seriesFromNumbers([activeAllocators]),
       color: "#1A9A68",
     },
     {
-      label: "PIPELINE VALUE",
+      label: "DISCLOSED DEAL VALUE",
       value: sectorCapital ? compactMoney(sectorCapital) : metricCard(packets.metrics, "transactions"),
-      note: "Capital flows",
+      note: "Market activity",
       href: "/deals",
       series: seriesFromNumbers(sectorRows.map(sectorValue)),
       color: "#E4A400",
@@ -1808,37 +1780,25 @@ function MiniSparkline({ series, color, large = false }: { series: number[]; col
   );
 }
 
-function StackedArea({ rows: sourceRows }: { rows: Record<string, unknown>[] }) {
+function IndustryCategoryBars({ rows: sourceRows }: { rows: Record<string, unknown>[] }) {
   const chartRows = sourceRows.slice(0, 6);
-  const palette = ["#0A3A7A", "#2C78D2", "#25A36F", "#E0A415", "#B90D12", "#8E56D8"];
-  const layers = deterministicStackLayers(chartRows);
-  const max = Math.max(1, ...layers.flatMap((layer) => layer.top));
-  const plot = { left: 42, top: 22, width: 438, height: 176 };
+  const max = Math.max(1, ...chartRows.map(sectorValue));
   return (
-    <div className="grid gap-2">
-      <svg viewBox="0 0 520 240" className="h-[230px] w-full rounded-[6px] bg-[#F5F8FB]" role="img" aria-label="Stacked capital flow chart">
-        {[0, 1, 2, 3, 4].map((line) => (
-          <g key={line}>
-            <line x1={plot.left} x2={plot.left + plot.width} y1={plot.top + line * 39} y2={plot.top + line * 39} stroke="#DCE5ED" strokeWidth="1" />
-            <text x="12" y={plot.top + line * 39 + 4} fill="#526171" fontSize="9">{compactMoney(max * (1 - line / 4))}</text>
-          </g>
-        ))}
-        {layers.map((layer, index) => {
-          const d = stackedAreaPath(layer, max, plot);
-          return <path key={layer.label} d={d} fill={palette[index % palette.length]} opacity={0.88 - index * 0.04} />;
-        })}
-        {flowLabels().map((label, index) => (
-          <text key={label} x={plot.left + (plot.width / 5) * index} y="224" fill="#526171" fontSize="10" fontWeight="700">{label}</text>
-        ))}
-      </svg>
-      <div className="flex flex-wrap gap-2 text-[10px] text-[#526171]">
+    <div className="grid content-start gap-2 rounded-[6px] bg-[#F5F8FB] p-3" role="img" aria-label="Capital flow by industry or category">
+      <div className="grid gap-2">
         {chartRows.map((row, index) => (
-          <DashboardLink key={brdText(row.name || row.value)} href={`/deals/?filter=${encodeURIComponent(brdText(row.name || row.value, ""))}`} className="flex items-center gap-1 text-[#526171] no-underline">
-            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: palette[index % palette.length] }} />
-            <span>{brdText(row.name || row.value)}</span>
+          <DashboardLink key={`${brdText(row.name || row.value)}-${index}`} href={`/deals/?filter=${encodeURIComponent(brdText(row.name || row.value, ""))}`} className="grid gap-1 rounded-[5px] bg-white/70 px-2 py-2 text-[#405062] no-underline hover:bg-white">
+            <span className="flex items-center justify-between gap-2 text-[11px]">
+              <span className="truncate font-bold text-[#0A3A7A]">{brdText(row.name || row.value)}</span>
+              <span className="shrink-0 font-extrabold text-[#13283D]">{capitalOrCountDisplay(row)}</span>
+            </span>
+            <span className="block h-2 overflow-hidden rounded bg-[#E3EAF0]" aria-hidden="true">
+              <span className="block h-full rounded bg-[#2C78D2]" style={{ width: `${Math.max(4, Math.min(100, (sectorValue(row) / max) * 100))}%` }} />
+            </span>
           </DashboardLink>
         ))}
       </div>
+      {!chartRows.length ? <div className="text-[12px] text-[#405062]">{DASHBOARD_EMPTY}</div> : null}
     </div>
   );
 }
@@ -1977,8 +1937,8 @@ function ExpandedMandateRows({ rows: sourceRows, controls }: { rows: Record<stri
 function ExpandedNewsRows({ rows: sourceRows, controls }: { rows: Record<string, unknown>[]; controls: DashboardTableControls }) {
   return (
     <MiniRecordTable
-      headers={["Headline", "Source", "Published", "Record"]}
-      rows={sourceRows.map((row) => [researchCell(row), brdText(row.source), brdText(row.published_at || row.date, "Not disclosed"), sourceDetailCell("SWFI source", sourceHref(row), "/intelligence/")])}
+      headers={["Headline", "Publisher", "Published", "Open"]}
+      rows={sourceRows.map((row) => [researchCell(row), brdText(row.source), brdText(row.published_at || row.date, "Not disclosed"), sourceDetailCell("Open in SWFI", sourceHref(row) || researchSourceUrl(row))])}
       empty={DASHBOARD_EMPTY}
       controls={controls}
     />
@@ -1999,10 +1959,10 @@ function ExpandedSectorRows({ rows: sourceRows, controls }: { rows: Record<strin
 function ExpandedUnifiedInsightRows({ rows: insights, controls }: { rows: UnifiedInsight[]; controls: DashboardTableControls }) {
   return (
     <MiniRecordTable
-      headers={["Signal", "Record", "Metric", "Source Detail"]}
+      headers={["Signal", "Record", "Metric", "Context"]}
       rows={insights.map((insight) => [
         insight.label,
-        { label: insight.title, href: insight.href, sourceHref: insight.sourceHref, citationText: "SWFI source on file" },
+        { label: insight.title, href: insight.href, sourceHref: insight.sourceHref, citationText: "Open in SWFI" },
         insight.metric,
         insight.detail,
       ])}
@@ -2018,7 +1978,7 @@ function MiniRecordTable({ headers, rows: sourceRows, empty, controls }: { heade
   const visible = sortedRows.slice(0, controls.rowLimit);
   return (
     <div className="min-w-0 overflow-x-auto">
-      <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.12em] text-[#7B8996]">Showing {visible.length.toLocaleString("en-US")} of {sourceRows.length.toLocaleString("en-US")}</div>
+      <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.12em] text-[#7B8996]">Top analytical rows from SWFI records</div>
       <div className="min-w-[560px]">
         <div className="grid grid-cols-4 gap-2 border-b border-[#DDE6EE] pb-1 text-[10px] font-extrabold uppercase tracking-[0.08em] text-[#6B7784]">
           {headers.map((header) => <div key={header}>{header}</div>)}
@@ -2035,30 +1995,55 @@ function MiniRecordTable({ headers, rows: sourceRows, empty, controls }: { heade
   );
 }
 
-function mapNodes(rows: Record<string, unknown>[]) {
-  const values = rows.slice(0, 5)
-    .map(sectorValue)
-    .filter((value) => Number.isFinite(value) && value > 0);
-  const max = Math.max(1, ...values);
-  const valueAt = (index: number) => values[index] ?? 0;
-  return [
-    { label: "North America", x: 135, y: 121, r: nodeRadius(valueAt(0), max) },
-    { label: "Europe", x: 335, y: 105, r: nodeRadius(valueAt(1), max) },
-    { label: "Middle East", x: 405, y: 143, r: nodeRadius(valueAt(2), max) },
-    { label: "Asia", x: 525, y: 122, r: nodeRadius(valueAt(3), max) },
-    { label: "Oceania", x: 592, y: 206, r: nodeRadius(valueAt(4), max) },
-  ];
+type RegionalCapitalRow = Record<string, unknown> & {
+  label: string;
+  value: number;
+  aum: number;
+  aum_currency: string;
+  region: string;
+};
+
+function regionalCapitalRows(rowsToUse: Record<string, unknown>[], currency: string): RegionalCapitalRow[] {
+  const groups = new Map<string, number>();
+  for (const row of rowsToUse) {
+    const label = brdText(row.region || row.region_name || row.geography, "");
+    const value = aumValue(row);
+    if (!label || value <= 0 || aumCurrency(row) !== currency) continue;
+    groups.set(label, (groups.get(label) || 0) + value);
+  }
+  return [...groups.entries()]
+    .map(([label, value]) => ({ label, name: label, region: label, value, aum: value, aum_currency: currency }))
+    .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
+}
+
+function mapNodes(rowsToUse: RegionalCapitalRow[]) {
+  const mapped = rowsToUse
+    .map((row) => ({ row, point: regionPoint(row.label) }))
+    .filter((item): item is { row: RegionalCapitalRow; point: { x: number; y: number } } => Boolean(item.point));
+  const max = Math.max(1, ...mapped.map((item) => item.row.value));
+  return mapped.slice(0, 6).map(({ row, point }) => ({
+    label: row.label,
+    x: point.x,
+    y: point.y,
+    r: nodeRadius(row.value, max),
+  }));
 }
 
 function mapFlows(nodes: Array<{ x: number; y: number }>) {
-  if (nodes.length < 5) return [];
-  return [
-    curvedPath(nodes[0], nodes[1], -42),
-    curvedPath(nodes[0], nodes[2], 36),
-    curvedPath(nodes[1], nodes[3], -28),
-    curvedPath(nodes[2], nodes[3], 24),
-    curvedPath(nodes[3], nodes[4], 34),
-  ];
+  if (nodes.length < 2) return [];
+  return nodes.slice(1).map((node, index) => curvedPath(nodes[index], node, index % 2 ? 30 : -34));
+}
+
+function regionPoint(label: string): { x: number; y: number } | undefined {
+  const clean = label.toLowerCase();
+  if (clean.includes("north america")) return { x: 135, y: 121 };
+  if (clean.includes("latin") || clean.includes("south america")) return { x: 188, y: 185 };
+  if (clean.includes("europe")) return { x: 335, y: 105 };
+  if (clean.includes("middle east")) return { x: 405, y: 143 };
+  if (clean.includes("africa")) return { x: 360, y: 168 };
+  if (clean.includes("asia")) return { x: 525, y: 122 };
+  if (clean.includes("oceania") || clean.includes("australia")) return { x: 592, y: 206 };
+  return undefined;
 }
 
 function curvedPath(a: { x: number; y: number }, b: { x: number; y: number }, lift: number) {
@@ -2098,44 +2083,6 @@ function mapDots() {
   return dots;
 }
 
-function flowLabels() {
-  return ["S1", "S2", "S3", "S4", "S5", "S6"];
-}
-
-function deterministicStackLayers(rows: Record<string, unknown>[]) {
-  const baseSeries = rows.map((row, rowIndex) => ({
-    label: brdText(row.name || row.value),
-    values: flowLabels().map((_, pointIndex) => deterministicFlowPoint(sectorValue(row), rowIndex, pointIndex)),
-  }));
-  const cumulative = Array(flowLabels().length).fill(0) as number[];
-  return baseSeries.map((series) => {
-    const bottom = [...cumulative];
-    series.values.forEach((value, index) => {
-      cumulative[index] += value;
-    });
-    return { label: series.label, bottom, top: [...cumulative] };
-  });
-}
-
-function deterministicFlowPoint(base: number, rowIndex: number, pointIndex: number) {
-  const wave = 0.72 + ((rowIndex * 13 + pointIndex * 17) % 31) / 100;
-  const slope = 0.82 + pointIndex * 0.055;
-  return Math.max(1, base * wave * slope);
-}
-
-function stackedAreaPath(layer: { bottom: number[]; top: number[] }, max: number, plot: { left: number; top: number; width: number; height: number }) {
-  const topPoints = layer.top.map((value, index) => pointFor(value, index, layer.top.length, max, plot));
-  const bottomPoints = layer.bottom.map((value, index) => pointFor(value, index, layer.bottom.length, max, plot)).reverse();
-  const [first, ...rest] = [...topPoints, ...bottomPoints];
-  return `M${first.x} ${first.y} ${rest.map((point) => `L${point.x} ${point.y}`).join(" ")} Z`;
-}
-
-function pointFor(value: number, index: number, count: number, max: number, plot: { left: number; top: number; width: number; height: number }) {
-  const x = plot.left + (count <= 1 ? 0 : (index / (count - 1)) * plot.width);
-  const y = plot.top + plot.height - (value / max) * plot.height;
-  return { x: x.toFixed(1), y: y.toFixed(1) };
-}
-
 function DonutGauge({ value }: { value: number }) {
   const safe = Math.max(0, Math.min(100, value));
   const circumference = 2 * Math.PI * 27;
@@ -2165,6 +2112,19 @@ function totalAumValue(packet: Packet | undefined, topRows: Record<string, unkno
   return sumNumbers(topRows.map(aumValue));
 }
 
+function totalAumDisplay(packet: Packet | undefined, topRows: Record<string, unknown>[]) {
+  if (isFact(packet)) {
+    const data = packetData(packet);
+    const direct = numberValue(data.total_assets || data.total_aum || data.aum_total);
+    const currency = text(data.total_assets_currency || data.total_aum_currency || data.aum_total_currency, "").trim().toUpperCase();
+    if (direct && currency) return compactCurrency(direct, currency);
+    if (direct) return compactNumber(direct);
+  }
+  const total = sumNumbers(topRows.map(aumValue));
+  const currency = commonAumCurrency(topRows);
+  return total && currency ? compactCurrency(total, currency) : "Not disclosed";
+}
+
 function metricNumber(packet: Packet | undefined, key: string) {
   if (!packet || !isFact(packet)) return undefined;
   const data = packetData(packet) as { cards?: Record<string, { value?: unknown }> } | undefined;
@@ -2181,6 +2141,18 @@ function packetCountNumber(packet: Packet | undefined) {
 
 function aumValue(row: Record<string, unknown>) {
   return numericSortValue(text(row.aum, "")) ?? 0;
+}
+
+function aumCurrency(row: Record<string, unknown>) {
+  return text(row.aum_currency || row.currency, "").trim().toUpperCase();
+}
+
+function commonAumCurrency(rowsToUse: Record<string, unknown>[]) {
+  const currencies = new Set(rowsToUse
+    .filter((row) => aumValue(row) > 0)
+    .map(aumCurrency)
+    .filter(Boolean));
+  return currencies.size === 1 ? [...currencies][0] : "";
 }
 
 function sumNumbers(values: number[]) {
@@ -2213,6 +2185,19 @@ function compactMoney(value: number) {
   return `$${amount.toLocaleString("en-US", { maximumFractionDigits: amount >= 100 ? 0 : 1 })}${unit[1]}`;
 }
 
+function compactCurrency(value: number, currency: string) {
+  if (!Number.isFinite(value) || !currency) return "Not disclosed";
+  if (currency === "USD" || currency === "$") return compactMoney(value);
+  return `${currency} ${compactNumber(value)}`;
+}
+
+function capitalOrCountDisplay(row: Record<string, unknown>) {
+  const capital = cleanMoney(row.capital_display || row.capital_deployed || row.capital);
+  if (capital !== "Not disclosed") return capital;
+  const countValue = numericSortValue(text(row.count, ""));
+  return countValue ? `${countValue.toLocaleString("en-US")} transactions` : "Not disclosed";
+}
+
 function seriesFromNumbers(values: number[]) {
   const clean = values.filter((value) => Number.isFinite(value) && value > 0);
   if (clean.length >= 2) return clean.slice(0, 8);
@@ -2230,7 +2215,8 @@ function DashboardLink({ href, children, ...props }: AnchorHTMLAttributes<HTMLAn
 }
 
 function researchRecordHref(row: Record<string, unknown>) {
-  return researchDetailHref(row, sourceHref(row));
+  const source = sourceHref(row) || researchSourceUrl(row);
+  return source || dashboardSearchFallback(row, "/intelligence");
 }
 
 async function loadDashboardPackets(onPacket: (key: PacketKey, packet: Packet) => void) {
@@ -2292,7 +2278,7 @@ function dataAsOfLabelFor(packet?: Packet) {
     : {};
   const value = text(packet?.generated_at || provenance.fetched_at, "");
   const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) return "Data as of latest SWFI source sync";
+  if (!Number.isFinite(parsed)) return "Data as of latest SWFI update";
   return `Data as of ${new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit", year: "numeric" }).format(new Date(parsed))}`;
 }
 
@@ -2313,12 +2299,6 @@ function metricCard(packet: Packet | undefined, key: string) {
   return typeof value === "number" ? value.toLocaleString("en-US") : "Not disclosed";
 }
 
-function metricCardWithFallback(packet: Packet | undefined, key: string, fallback?: number) {
-  const value = metricCard(packet, key);
-  if (value !== "Not disclosed") return value;
-  return fallback && Number.isFinite(fallback) && fallback > 0 ? compactNumber(fallback) : value;
-}
-
 function KpiCard({ label, value, note, source, href }: { label: string; value: string; note: string; source: string; href: string }) {
   return (
     <DashboardLink data-qa-min="150" href={href} className="min-w-0 rounded border border-[#DCE3EA] bg-white p-[13px_15px] text-inherit no-underline">
@@ -2326,7 +2306,7 @@ function KpiCard({ label, value, note, source, href }: { label: string; value: s
       <div className="mt-1 break-words text-[25px] font-bold text-[#11314F]">{value}</div>
       <div className="mt-1 text-[11px] text-[#7A8A9B]">{note}</div>
       <MetricRail value={value} />
-      <div className="mt-1 text-[10.5px] text-[#7A8A9B]" data-source-path={source}>Updated from SWFI</div>
+      <div className="mt-1 text-[10.5px] text-[#7A8A9B]" data-source-path={source}>SWFI records</div>
     </DashboardLink>
   );
 }
@@ -2339,138 +2319,6 @@ function MetricRail({ value }: { value: string }) {
   return (
     <div className="mt-2 h-1.5 overflow-hidden rounded bg-[#E8EDF2]" aria-hidden="true">
       <div className="h-full rounded bg-[#5C9BD6]" style={{ width: `${width}%` }} />
-    </div>
-  );
-}
-
-function InsightRow({
-  id,
-  label,
-  href,
-  sourceNote,
-  headers,
-  rows: sourceRows,
-  empty,
-  defaultSortColumn = 0,
-  defaultSortDir = "asc",
-}: {
-  id: string;
-  label: string;
-  href?: string;
-  sourceNote: string;
-  headers: string[];
-  rows: Cell[][];
-  empty: string;
-  defaultSortColumn?: number;
-  defaultSortDir?: "asc" | "desc";
-}) {
-  const [tableSearch, setTableSearch] = useState("");
-  const [sortColumn, setSortColumn] = useState(defaultSortColumn);
-  const [sortDir, setSortDir] = useState<"asc" | "desc">(defaultSortDir);
-  const [rowLimit, setRowLimit] = useState(5);
-  const [pageIndex, setPageIndex] = useState(0);
-  const rowsToUse = useMemo(
-    () => sourceRows.length ? sourceRows : [headers.map(() => empty)],
-    [empty, headers, sourceRows],
-  );
-  const filteredRows = useMemo(() => {
-    const clean = tableSearch.trim().toLowerCase();
-    if (!clean) return rowsToUse;
-    return rowsToUse.filter((row) => row.some((cell) => searchableCellText(cell).toLowerCase().includes(clean)));
-  }, [rowsToUse, tableSearch]);
-  const sortedRows = useMemo(() => {
-    return [...filteredRows].sort((a, b) => compareCells(a[sortColumn], b[sortColumn], sortDir));
-  }, [filteredRows, sortColumn, sortDir]);
-  const pageCount = Math.max(1, Math.ceil(sortedRows.length / rowLimit));
-  const safePageIndex = Math.min(pageIndex, pageCount - 1);
-  const pageStart = safePageIndex * rowLimit;
-  const visibleRows = sortedRows.slice(pageStart, pageStart + rowLimit);
-  return (
-    <div id={id} className="scroll-mt-20 border-b border-[#F2F5F8] last:border-b-0">
-      <div className="px-4 pt-3">
-        <div className="text-[13px] font-bold text-[#11314F]">
-          {href ? <DashboardLink href={href} className="text-[#16538C] underline">{label}</DashboardLink> : label}
-        </div>
-        <div className="mt-0.5 text-[11px] text-[#7A8A9B]" data-source-path={sourceNote}>Updated from SWFI</div>
-      </div>
-      <div className="grid gap-2 px-4 py-2 text-[12px] text-[#41566B] md:grid-cols-[minmax(0,1fr)_minmax(160px,220px)_112px] md:items-end">
-        <div className="font-semibold">
-          Showing {visibleRows.length.toLocaleString("en-US")} of {rowsToUse.length.toLocaleString("en-US")}
-          {tableSearch.trim() ? ` / filtered ${filteredRows.length.toLocaleString("en-US")}` : ""}
-        </div>
-        <label className="grid gap-1">
-          <span className="font-semibold">Search</span>
-          <input
-            type="search"
-            value={tableSearch}
-            onChange={(event) => {
-              setTableSearch(event.target.value);
-              setPageIndex(0);
-            }}
-            className="min-h-8 rounded border border-[#C7D2DD] px-2 outline-none"
-            placeholder="Search rows"
-          />
-        </label>
-        <label className="grid gap-1">
-          <span className="font-semibold">Rows</span>
-          <select
-            value={rowLimit}
-            onChange={(event) => {
-              setRowLimit(Number(event.target.value));
-              setPageIndex(0);
-            }}
-            className="min-h-8 rounded border border-[#C7D2DD] bg-white px-2"
-          >
-            {[5, 10, 25].map((value) => <option key={value} value={value}>{value}</option>)}
-          </select>
-        </label>
-      </div>
-      <div className="grid grid-cols-2 gap-2 px-4 pb-1 text-[11px] text-[#5B6B7C] md:grid-cols-4">
-        {headers.map((header, index) => (
-          <button
-            key={header}
-            type="button"
-            className="bg-transparent p-0 text-left font-semibold text-[#41566B]"
-            onClick={() => {
-              setSortColumn(index);
-              setSortDir(sortColumn === index && sortDir === "asc" ? "desc" : "asc");
-              setPageIndex(0);
-            }}
-          >
-            {header}{sortColumn === index ? ` ${sortDir}` : ""}
-          </button>
-        ))}
-      </div>
-      {visibleRows.length ? visibleRows.map((row, index) => (
-        <div key={`${label}-${index}`} className="grid grid-cols-1 gap-1 px-4 py-2 text-[12.5px] text-[#41566B] md:grid-cols-[1.4fr_1fr_1fr_0.9fr] md:gap-3">
-          {row.map((cell, cellIndex) => <div key={cellIndex} className={`min-w-0 break-words ${cellIndex === 0 ? "font-bold text-[#16538C]" : ""}`}>{displayCell(cell)}</div>)}
-        </div>
-      )) : (
-        <div className="px-4 py-2 text-[12.5px] text-[#41566B]">{empty}</div>
-      )}
-      {pageCount > 1 ? (
-        <div className="flex flex-wrap items-center justify-between gap-2 px-4 pb-3 text-[12px] text-[#41566B]">
-          <div>Page {(safePageIndex + 1).toLocaleString("en-US")} of {pageCount.toLocaleString("en-US")}</div>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              className="rounded border border-[#C7D2DD] bg-white px-3 py-1 text-[#16538C] disabled:opacity-40"
-              disabled={safePageIndex <= 0}
-              onClick={() => setPageIndex((current) => Math.max(0, current - 1))}
-            >
-              Previous
-            </button>
-            <button
-              type="button"
-              className="rounded border border-[#C7D2DD] bg-white px-3 py-1 text-[#16538C] disabled:opacity-40"
-              disabled={safePageIndex >= pageCount - 1}
-              onClick={() => setPageIndex((current) => Math.min(pageCount - 1, current + 1))}
-            >
-              Next
-            </button>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -2574,7 +2422,7 @@ function VisualPanel({ title, source, empty, hasRows, children }: { title: strin
     <div className="min-w-0 rounded border border-[#DCE3EA] bg-white p-4">
       <div className="mb-3">
         <div className="text-[13px] font-bold tracking-[0.07em] text-[#41566B]">{title}</div>
-        <div className="mt-0.5 text-[11px] text-[#7A8A9B]" data-source-path={source}>Updated from SWFI</div>
+        <div className="mt-0.5 text-[11px] text-[#7A8A9B]" data-source-path={source}>SWFI records</div>
       </div>
       {hasRows ? children : <div className="text-[13px] text-[#41566B]">{empty}</div>}
     </div>
@@ -2688,28 +2536,38 @@ function personSourceUrl(personId: string): string {
   return personId ? `https://www.swfi.com/v1/people/${encodeURIComponent(personId)}` : "";
 }
 
+function researchSourceUrl(row: Record<string, unknown>): string {
+  const legacy = text(row.legacy_post || row.legacy_post_id || row.post_id || row.wordpress_id || (String(row.id || "").match(/^\d+$/) ? row.id : ""), "");
+  return legacy ? `https://www.swfi.com/?p=${encodeURIComponent(legacy)}` : "";
+}
+
 function dashboardProfileHref(row: Record<string, unknown>): string {
   const entityId = text(row.entity_id || row.entityID || row.source_record_id || row.id, "");
   const source = sourceHref(row) || entitySourceUrl(entityId);
-  return profileDetailHref(row, source || undefined);
+  return source || dashboardSearchFallback(row, "/profiles");
 }
 
 function dashboardTransactionHref(row: Record<string, unknown>): string {
   const transactionId = text(row.transaction_id || row.transactionID || row.source_record_id || row.id, "");
   const source = sourceHref(row) || transactionSourceUrl(transactionId);
-  return transactionDetailHref(row, source || undefined);
+  return source || dashboardSearchFallback(row, "/deals");
 }
 
 function dashboardMandateHref(row: Record<string, unknown>): string {
   const mandateId = text(row.compass_id || row.mandate_id || row.rfp_id || row.source_record_id || row.id, "");
   const source = sourceHref(row) || mandateSourceUrl(mandateId);
-  return mandateDetailHref(row, source || undefined);
+  return source || dashboardSearchFallback(row, "/mandates");
 }
 
 function dashboardPersonHref(row: Record<string, unknown>): string {
   const personId = text(row.person_id || row.personID || row.source_record_id || row.id, "");
   const source = sourceHref(row) || personSourceUrl(personId);
-  return personDetailHref(row, source || undefined);
+  return source || dashboardSearchFallback(row, "/people");
+}
+
+function dashboardSearchFallback(row: Record<string, unknown>, fallback: string): string {
+  const query = brdText(row.name || row.title || row.institution || row.buyer_entity, "");
+  return query ? `/search/?q=${encodeURIComponent(query)}` : fallback;
 }
 
 function dealCell(row: Record<string, unknown>): Cell {
@@ -2718,7 +2576,7 @@ function dealCell(row: Record<string, unknown>): Cell {
     label: brdText(row.title || row.name),
     href: dashboardTransactionHref(row),
     sourceHref: source,
-    citationText: "SWFI transaction source on file",
+    citationText: "Open in SWFI",
   };
 }
 
@@ -2728,7 +2586,7 @@ function mandateCell(row: Record<string, unknown>): Cell {
     label: brdText(row.title || row.name),
     href: dashboardMandateHref(row),
     sourceHref: source,
-    citationText: "SWFI Compass source on file",
+    citationText: "Open in SWFI",
   };
 }
 
@@ -2736,43 +2594,26 @@ function researchCell(row: Record<string, unknown>): Cell {
   const source = sourceHref(row);
   return {
     label: brdText(row.title || row.name),
-    href: researchDetailHref(row, source),
+    href: researchRecordHref(row),
     sourceHref: source,
-    citationText: "SWFI source on file",
+    citationText: "Open in SWFI",
   };
 }
 
-function sourceDetailCell(label: string, href?: string, fallback = "/research/"): Cell {
+function sourceDetailCell(label: string, href?: string): Cell {
   const provenance = href ? sourceProvenanceHref(href) : undefined;
-  return provenance ? { label, href: sourceRecordDetailHref(provenance, fallback), sourceHref: provenance, citationText: "SWFI source on file" } : label;
-}
-
-function sourceRecordDetailHref(provenance: string, fallback: string): string {
-  try {
-    const parsed = new URL(provenance);
-    const parts = parsed.pathname.split("/").filter(Boolean);
-    const v1Index = parts.indexOf("v1");
-    const section = v1Index >= 0 ? parts[v1Index + 1] : parts[0];
-    const id = v1Index >= 0 ? parts[v1Index + 2] : parts[1];
-    if (!/^[a-f0-9]{24}$/i.test(id || "")) return fallback;
-    if (section === "entities") return profileDetailHref({}, provenance);
-    if (section === "people") return personDetailHref({}, provenance);
-    if (section === "transactions") return transactionDetailHref({}, provenance);
-    if (section === "compass") return mandateDetailHref({}, provenance);
-  } catch {
-    return fallback;
-  }
-  return fallback;
+  return provenance ? { label, href: provenance, sourceHref: provenance, citationText: "Open in SWFI" } : label;
 }
 
 function cellText(cell: Cell): string {
   return cleanDisplayValue(typeof cell === "string" ? cell : cell.label);
 }
 
-function searchableCellText(cell: Cell): string {
-  return typeof cell === "string"
-    ? cell
-    : [cell.label, cell.href, cell.sourceHref, cell.citationText].filter(Boolean).join(" ");
+function rankingMetricValue(row: Cell[]) {
+  const amount = numericSortValue(cellText(row[1]));
+  if (amount && amount > 0) return amount;
+  const countValue = numericSortValue(cellText(row[2]));
+  return countValue && countValue > 0 ? countValue : 0;
 }
 
 function compareCells(a: Cell | undefined, b: Cell | undefined, dir: "asc" | "desc") {
@@ -2793,7 +2634,7 @@ function displayCell(cell: Cell) {
   return (
     <span className="grid gap-1">
       <DataLink href={cell.href || "#"} sourceHref={cell.sourceHref} className="text-[#16538C] underline">{label}</DataLink>
-      {hasSource ? <span className="text-[10.5px] leading-tight text-[#7A8A9B]">SWFI source on file</span> : null}
+      {hasSource ? <span className="text-[10.5px] leading-tight text-[#7A8A9B]">Open in SWFI</span> : null}
     </span>
   );
 }
@@ -2802,7 +2643,7 @@ function DataLink({ href, sourceHref, className, style, children }: { href: stri
   const target = href;
   const provenance = sourceHref || sourceProvenanceHref(href);
   const recordLink = isCanonicalSwfiRecordHref(href);
-  return <DashboardLink href={target} title={provenance ? "SWFI source on file" : undefined} data-record-link={recordLink ? "true" : undefined} data-source-state={provenance ? "on-file" : undefined} className={className} style={style}>{children}</DashboardLink>;
+  return <DashboardLink href={target} title={provenance ? "Open in SWFI" : undefined} data-record-link={recordLink ? "true" : undefined} data-source-state={provenance ? "on-file" : undefined} className={className} style={style}>{children}</DashboardLink>;
 }
 
 function isCanonicalSwfiRecordHref(href: string | undefined): boolean {
@@ -2841,7 +2682,7 @@ function entityCell(row: Record<string, unknown>): Cell {
     label: brdText(row.name),
     href: dashboardProfileHref(row),
     sourceHref: source || undefined,
-    citationText: entityId ? "SWFI source on file" : "SWFI allocator activity source",
+    citationText: entityId ? "Open in SWFI" : "Allocator activity",
   };
 }
 

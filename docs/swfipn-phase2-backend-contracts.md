@@ -16,6 +16,11 @@ Backend origin used by the public surface: `https://swfipn.activemirror.ai`
 - Every dashboard value must come from an approved backend record or be hidden.
 - Every displayed datum must have an internal audit receipt.
 - Public UI may link users into SWFI auth where required, but backend correctness must not depend on browser-side scraping.
+- Dashboard-originated record navigation must use SWFI core platform/auth destinations when a canonical SWFI record URL or id exists.
+- Do not treat local dashboard detail pages as replacements for SWFI's existing entity, person, transaction, Compass/RFP, research, or report assets.
+- Feedback from one dashboard section is representative of the whole dashboard unless the acceptance contract explicitly scopes it narrower.
+- When a defect pattern is found in one module, check and fix the shared component, mapper, metric contract, or route helper that can affect other modules.
+- Dashboard modules must not present raw database records as the primary experience when the same browsing task already exists in the SWFI platform.
 
 ## Canonical Collections
 
@@ -30,6 +35,8 @@ Backend origin used by the public surface: `https://swfipn.activemirror.ai`
 
 ## Module Contracts
 
+Dashboard metric formulas are defined in `docs/SWFIPN_DASHBOARD_METRIC_DEFINITIONS.md`. If a metric is not defined there, it should not be introduced into the public dashboard.
+
 | Module | Endpoint | Source Collection(s) | Sort | Pagination | Required Freshness Receipt |
 | --- | --- | --- | --- | --- | --- |
 | Dashboard Metrics | `/api/swfi/dashboard-metrics/v1` | `swfi.entities`, `swfi.transactions`, `swfi.compass` | None | None | Packet `generated_at`; card values must be factual. |
@@ -42,6 +49,18 @@ Backend origin used by the public surface: `https://swfipn.activemirror.ai`
 | People List | `/api/source-data/search/v1?collection=people&limit=25&page=1` | `swfi.people` | name/institution/country/region where supported | `limit`, `page` | Packet `generated_at`, people source URL. |
 | News / Intelligence | `/api/source-intelligence/news/v1?limit=25&page=1` | `swfi.news`, `swfi.cms_articles` | `published_at desc`, `updated_at desc`, or source order | `limit`, `page` | Packet `generated_at`, legacy/source identifier. |
 | Reports | `/api/reports/v1?limit=25&page=1` | `swfi.reports` | `published_at desc`, `updated_at desc`, title/type where supported | `limit`, `page` | Packet `generated_at`, report key, and `assets.swfi.com/reports/*.pdf` asset URL. |
+
+## Dashboard Metric Rules
+
+- Do not show a metric unless it maps to a named definition in `docs/SWFIPN_DASHBOARD_METRIC_DEFINITIONS.md`.
+- Apply the dashboard mantra and feedback applicability rules from `docs/SWFIPN_DASHBOARD_METRIC_DEFINITIONS.md` to every dashboard module, not only the section where feedback was first observed.
+- Backend packets should support analytical summaries, rankings, and grouped metrics for dashboard modules, not only flat row dumps for frontend tables.
+- Do not generate synthetic time series from a current snapshot packet.
+- Do not assign sector/category values to geographic regions.
+- Do not sum AUM across mixed or missing currencies.
+- Do not replace missing AUM with unrelated counts.
+- If a true universe-wide total is required, the backend must return the total, currency, as-of date, and inclusion/exclusion basis in the packet.
+- When a metric visual opens a specific record, it must route to the SWFI core platform/auth URL for that record. If the backend cannot provide the record URL/id, the visual should route to dashboard search/discovery instead of a recreated local detail page.
 
 ## Active Allocators Formula
 

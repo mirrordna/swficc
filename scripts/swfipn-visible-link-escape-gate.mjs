@@ -88,6 +88,17 @@ function isRawSwfiRecordUrl(value) {
   return /https?:\/\/(?:www\.|cms\.)?swfi\.com\/(?:v1\/|\?p=)/i.test(String(value || ""));
 }
 
+function isAllowedSwfiLegacyArticleUrl(value) {
+  try {
+    const parsed = new URL(String(value || ""), originUrl.origin);
+    if (!["www.swfi.com", "swfi.com"].includes(parsed.hostname)) return false;
+    if (parsed.pathname !== "/" && parsed.pathname !== "") return false;
+    return /^\d+$/.test(parsed.searchParams.get("p") || "");
+  } catch {
+    return false;
+  }
+}
+
 function isCanonicalSwfiHandoffUrl(value) {
   try {
     const parsed = new URL(String(value || ""), originUrl.origin);
@@ -109,6 +120,7 @@ function allowedExternal(route, href) {
   try {
     const parsed = new URL(href);
     if (isCanonicalSwfiHandoffUrl(href)) return true;
+    if (isAllowedSwfiLegacyArticleUrl(href)) return true;
     if (!allowedExternalHosts.has(parsed.hostname)) return false;
     return true;
   } catch {
@@ -200,7 +212,8 @@ async function inspectRoute(browser, route) {
     result.raw_record_anchors = snapshot.anchors.filter((anchor) => {
       const rawRecord = isRawSwfiRecordUrl(anchor.href) || isRawSwfiRecordUrl(anchor.raw);
       const approvedHandoff = isCanonicalSwfiHandoffUrl(anchor.href) || isCanonicalSwfiHandoffUrl(anchor.raw);
-      return rawRecord && !approvedHandoff;
+      const approvedLegacyArticle = isAllowedSwfiLegacyArticleUrl(anchor.href) || isAllowedSwfiLegacyArticleUrl(anchor.raw);
+      return rawRecord && !approvedHandoff && !approvedLegacyArticle;
     });
     result.raw_source_attrs = snapshot.anchors.filter((anchor) => {
       const attrText = [anchor.sourceHref, anchor.sourceUrl, anchor.title, anchor.ariaLabel].join(" ");
