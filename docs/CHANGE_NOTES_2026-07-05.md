@@ -59,3 +59,37 @@ the next deploy.
   Jaykesh's autocomplete hierarchy list (action 3), icon review (action 4),
   the high-impact requirements document (actions 11–13), KP's repo/backend
   access (actions 15–16).
+
+## Wave 3 — evening 2026-07-05 (in the deploy now running + one follow-up)
+
+10. Search ranks by business hierarchy at EVERY result count (minutes E /
+    actions 2-3). Root cause found: the server had no ranking at all — the
+    first result changed depending on how many you asked for. Now the whole
+    candidate pool is ranked (name match, then SWF > pension > others, then
+    USD size) before cutting the list.
+    Test: /api/v1/public/search?q=Abu%20Dhabi with limit=3 and limit=10 —
+    ADIA is first both times.
+11. List-page charts describe the WHOLE collection, not the visible page
+    (minutes D): "All records by Type/Country" with a coverage note like
+    "12,900 of 13,494 records disclose this field."
+    Test: open Institutions/Transactions and read the chart titles.
+12. Reports vs Intelligence untangled: the Reports page was literally titled
+    "Reports Intelligence" — now "Reports". /research (an identical copy of
+    /intelligence) forwards there.
+13. First click to swfi.com is faster: the browser now pre-opens the secure
+    connection to www.swfi.com while the dashboard loads (saves ~0.9s of
+    connection setup; the remaining wait is swfi.com's own server time).
+
+## Wave 4 — literal minutes sweep (committed, next deploy)
+
+14. Dead "Alerts" tab removed (minutes F: no element without working
+    function). The alerts page was wired to an empty data source — a
+    permanently blank table. The route now says honestly that alerts don't
+    exist yet and points to RFPs / Research / swfi.com.
+15. Account page "Sign In" button pointed at an in-app /login route that
+    does not exist (404). It now goes to the swfi.com sign-in (accounts live
+    on the platform; the dashboard has none).
+16. The in-dashboard record detail component (RecordDetailPage) is deleted
+    outright (minutes J: detailed profiles do not live in the dashboard).
+    It was already unreachable after the redirect change; now the code is
+    gone too.

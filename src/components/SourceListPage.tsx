@@ -37,7 +37,8 @@ const pageLinks = [
   ["Active Allocators", "/allocators"],
   ["Comparisons", "/comparisons"],
   ["RFPs", "/mandates"],
-  ["Alerts", "/alerts"],
+  // Minutes F: no nav element without working function — Alerts has no data
+  // source yet (empty endpoint), so it leaves the nav until it is real.
   ["Reports", "/reports"],
   ["Intelligence", "/intelligence"],
   ["Search", "/search"],
