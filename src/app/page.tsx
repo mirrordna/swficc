@@ -1524,7 +1524,7 @@ function GlobalCapitalMap({ topPacket, topRows, sectorRows }: { topPacket?: Pack
         <div className="absolute left-3 top-3 max-w-[250px] border border-[#D7E3EF] bg-white/95 px-3 py-2 shadow-sm">
           <div className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#7B8996]">Top SWF AUM locations</div>
           <div className="mt-1 text-[21px] font-extrabold leading-none text-[#13283D]">{topCountry ? topCountry.country : "Not disclosed"}</div>
-          <div className="mt-1 text-[10px] font-semibold text-[#667386]">{topCountry?.aum ? `${compactMoney(topCountry.aum)} in loaded SWFI ranking rows` : "Marker size follows available SWFI ranking data"}</div>
+          <div className="mt-1 text-[10px] font-semibold text-[#667386]">{topCountry?.aum ? `${topCountry.aumCurrency === "USD" ? compactMoney(topCountry.aum) : `${topCountry.aumCurrency} ${compactNumber(topCountry.aum)}`} in loaded SWFI ranking rows` : "Marker size follows available SWFI ranking data"}</div>
         </div>
         <div className="absolute right-3 top-3 border border-[#D7E3EF] bg-white/95 px-3 py-2 text-[10px] font-extrabold text-[#0A3A7A] shadow-sm">All Regions</div>
         <div className="absolute bottom-0 left-0 right-0 grid border-t border-[#D7E3EF] bg-white/96 text-[11px] sm:grid-cols-4">
@@ -2129,7 +2129,9 @@ function dashboardMetricCards(packets: Packets, topAumRows: Record<string, unkno
       value: totalAumDisplay(packets.top20, topAumRows),
       note: "Top AUM ranking",
       href: "/profiles/?filter=Sovereign%20Wealth%20Fund",
-      series: seriesFromNumbers(topAumRows.map(aumValue)),
+      // Rank-order AUM values are a distribution, not a time series — drawn
+      // as a line they read as a downtrend that never happened (minutes F).
+      series: [],
       color: "#0A66C2",
       statusLabel: totalAum ? "" : "Not disclosed",
     },
@@ -2146,7 +2148,8 @@ function dashboardMetricCards(packets: Packets, topAumRows: Record<string, unkno
       value: sectorCapital ? compactMoney(sectorCapital) : metricCard(packets.metrics, "transactions"),
       note: "Market activity",
       href: "/deals",
-      series: seriesFromNumbers(sectorRows.map(sectorValue)),
+      // Per-sector totals are a distribution across sectors, not a trend.
+      series: [],
       color: "#5C9BD6",
     },
     {
@@ -2194,6 +2197,7 @@ function MiniIcon({ index }: { index: number }) {
 
 function MiniSparkline({ series, color, large = false }: { series: number[]; color: string; large?: boolean }) {
   const values = seriesFromNumbers(series);
+  if (values.length < 2) return null; // no data -> no line (nothing fabricated)
   const max = Math.max(1, ...values);
   const min = Math.min(...values);
   const spread = Math.max(1, max - min);
@@ -2242,14 +2246,17 @@ function SectorRibbonChart({ rows: sourceRows }: { rows: Record<string, unknown>
           })}
         </svg>
       </div>
-      <div className="grid grid-cols-3 gap-1 text-[9.5px] font-bold text-[#5B6878]">
+      {/* 3 cols at 9.5px truncated sector names to single letters ("I. 46%") —
+          illegible (minutes F: every element must be legible). 2 cols +
+          wrapping labels keep every sector name readable in the same space. */}
+      <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] font-bold text-[#5B6878]">
         {chartRows.slice(0, 6).map((row, index) => {
           const value = sectorValue(row);
           const share = total ? Math.round((value / total) * 100) : 0;
           return (
             <DashboardLink key={`${brdText(row.name || row.value)}-legend`} href={`/deals/?filter=${encodeURIComponent(brdText(row.name || row.value, ""))}`} className="flex min-w-0 items-center gap-1 text-inherit no-underline">
               <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: sectorPalette[index % sectorPalette.length] }} />
-              <span className="truncate">{brdText(row.name || row.value)}</span>
+              <span className="min-w-0 whitespace-normal leading-tight">{brdText(row.name || row.value)}</span>
               <span className="shrink-0 text-[#13283D]">{share ? `${share}%` : brdText(row.count)}</span>
             </DashboardLink>
           );
@@ -2542,6 +2549,7 @@ type CountryMapNode = {
   count: number;
   topRank: number;
   aum: number;
+  aumCurrency: string;
   topName: string;
   topAum: number;
   r: number;
@@ -2549,6 +2557,10 @@ type CountryMapNode = {
 
 function countryMapNodes(rowsToUse: Record<string, unknown>[]): CountryMapNode[] {
   const grouped = new Map<string, CountryMapNode>();
+  // Per-country currency tracking: a country's AUM sum is only meaningful when
+  // every contributing row shares one declared currency (same laundered-number
+  // guard as the headline total — rows arrive in 12 native currencies).
+  const currencies = new Map<string, string | null>();
   for (const row of rowsToUse) {
     const country = brdText(row.country, "");
     const point = countryPoint(country);
@@ -2561,11 +2573,16 @@ function countryMapNodes(rowsToUse: Record<string, unknown>[]): CountryMapNode[]
       count: 0,
       topRank: rank,
       aum: 0,
+      aumCurrency: "",
       topName: brdText(row.name, ""),
       topAum: 0,
       r: 8,
     };
     const rowAum = aumValue(row);
+    const rowCurrency = text(row.aum_currency, "").trim();
+    const seen = currencies.get(country);
+    if (seen === undefined) currencies.set(country, rowCurrency || null);
+    else if (seen !== null && rowCurrency !== seen) currencies.set(country, null);
     current.count += 1;
     current.aum += rowAum;
     if (rank < current.topRank) {
@@ -2575,7 +2592,13 @@ function countryMapNodes(rowsToUse: Record<string, unknown>[]): CountryMapNode[]
     if (rowAum > current.topAum) current.topAum = rowAum;
     grouped.set(country, current);
   }
-  const nodes = [...grouped.values()];
+  const nodes = [...grouped.values()].map((node) => {
+    const currency = currencies.get(node.country);
+    // Mixed or undeclared currencies: zero the sum (marker falls back to row
+    // count; captions fall back to their no-AUM wording) instead of shipping
+    // a cross-currency number.
+    return currency ? { ...node, aumCurrency: currency } : { ...node, aum: 0, aumCurrency: "" };
+  });
   const maxSignal = Math.max(1, ...nodes.map((node) => node.aum || node.count));
   return nodes
     .map((node) => {
@@ -2671,12 +2694,18 @@ function dealGaugePercent(rows: Record<string, unknown>[]) {
 }
 
 function totalAumValue(packet: Packet | undefined, topRows: Record<string, unknown>[]) {
+  // Currency guard (verified 2026-07-05): the top20 fact's total_assets spans
+  // rows in 12 NATIVE currencies with no currency field and no FX data — a
+  // raw cross-currency sum is numerically meaningless (Norway's 2T NOK alone
+  // adds ~1.9T phantom "dollars"). Only trust a total that a single declared
+  // currency backs; otherwise report nothing rather than a laundered number.
   if (isFact(packet)) {
     const data = packetData(packet);
     const direct = numberValue(data.total_assets || data.total_aum || data.aum_total);
-    if (direct) return direct;
+    const currency = text(data.total_assets_currency || data.total_aum_currency || data.aum_total_currency, "").trim();
+    if (direct && currency) return direct;
   }
-  return sumNumbers(topRows.map(aumValue));
+  return commonAumCurrency(topRows) ? sumNumbers(topRows.map(aumValue)) : 0;
 }
 
 function totalAumDisplay(packet: Packet | undefined, topRows: Record<string, unknown>[]) {
@@ -2685,7 +2714,9 @@ function totalAumDisplay(packet: Packet | undefined, topRows: Record<string, unk
     const direct = numberValue(data.total_assets || data.total_aum || data.aum_total);
     const currency = text(data.total_assets_currency || data.total_aum_currency || data.aum_total_currency, "").trim().toUpperCase();
     if (direct && currency) return compactCurrency(direct, currency);
-    if (direct) return compactNumber(direct);
+    // No currency on the fact -> do NOT print a bare magnitude (the old
+    // compactNumber branch rendered the undefined "16.9T" the client
+    // repeatedly questioned). Fall through to the same-currency row total.
   }
   const total = sumNumbers(topRows.map(aumValue));
   const currency = commonAumCurrency(topRows);
@@ -2780,8 +2811,10 @@ function capitalOrCountDisplay(row: Record<string, unknown>) {
 function seriesFromNumbers(values: number[]) {
   const clean = values.filter((value) => Number.isFinite(value) && value > 0);
   if (clean.length >= 2) return clean.slice(0, 8);
-  const seed = clean[0] || 10;
-  return [seed, seed];
+  // Never fabricate a line: the old [seed, seed] fallback drew a flat
+  // sparkline even when there was NO data (seed defaulted to a literal 10).
+  // Minutes F: no chart may exist unless it means something.
+  return [];
 }
 
 function DashboardLink({ href, children, ...props }: AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }) {
@@ -3094,7 +3127,9 @@ function aumDisplay(row: Record<string, unknown>) {
   const numeric = numericSortValue(text(row.aum, ""));
   const currency = text(row.aum_currency, "").trim();
   if (numeric == null || !currency) return "Not disclosed";
-  return `${currency} ${numeric.toLocaleString("en-US")}`;
+  // Sidebar/watchlist columns are ~76px: raw integers (NOK 2,048,995,080,000)
+  // overflow and read as noise — compact to the native currency + magnitude.
+  return `${currency} ${compactNumber(numeric)}`;
 }
 
 function ActionButton({ href, children }: { href: string; children: React.ReactNode }) {
