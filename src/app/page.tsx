@@ -1132,7 +1132,7 @@ function ConceptSidebar({ topRows }: { topRows: Record<string, unknown>[] }) {
         </div>
       </nav>
       <div className="mx-3 mb-4 border border-white/10 bg-[#0A2B56] p-3">
-        <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-white/45">TOTAL AUM ENGAGED</div>
+        <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-white/45">TOP 5 BY AUM</div>
         <div className="grid gap-2">
           {topRows.slice(0, 5).map((row) => (
             <div key={brdText(row.name)} className="border-t border-white/10 pt-2 first:border-t-0 first:pt-0">
@@ -1828,7 +1828,7 @@ function dashboardMetricCards(packets: Packets, topAumRows: Record<string, unkno
   const research = metricNumber(packets.metrics, "news") || packetCountNumber(packets.news) || 0;
   return [
     {
-      label: "TOTAL AUM ENGAGED",
+      label: "TOP-RANKED AUM TOTAL",
       value: totalAumDisplay(packets.top20, topAumRows),
       note: "Top AUM ranking",
       href: "/profiles",
