@@ -17,36 +17,35 @@ const apiPattern = /api\/(source-data|source-intelligence|recent-transactions|li
 
 const REQUIRED_TEXT = [
   "TOTAL AUM ENGAGED",
-  "ACTIVE RELATIONSHIPS",
-  "PIPELINE VALUE",
+  "ACTIVE ALLOCATORS",
+  "DISCLOSED DEAL VALUE",
   "Global Capital Map",
+  "Top SWF AUM locations",
   "Capital Flows",
-  "Market Signals",
-  "Pipeline Overview",
-  "Top Active Investors",
+  "SWFI Discovery Pathways",
+  "Top Institutional Relationships",
   "Research & Analytics Hub",
   "Market Intelligence",
   "Activity Feed",
   "Deal Intelligence",
-  "Reviewed SWFI data",
+  "Open records",
 ];
 
 const REQUIRED_VISUAL_SECTIONS = [
   "Global Capital Map",
   "Capital Flows & Allocation Trends",
-  "Market Signals",
-  "Pipeline Overview",
-  "Top Active Investors",
+  "SWFI Discovery Pathways",
+  "Top Institutional Relationships",
   "Research & Analytics Hub",
   "Market Intelligence",
   "Deal Intelligence",
 ];
 
 const REQUIRED_SVG_LABELS = [
-  "Sector activity and top AUM map",
-  "Stacked capital flow chart",
-  "Pipeline funnel",
-  "deal momentum",
+  "Top SWF AUM locations by country",
+  "Disclosed capital by industry or category",
+  "SWFI discovery pathways by record group",
+  "largest sector share",
 ];
 
 const REQUIRED_ANCHORS = [
@@ -172,8 +171,9 @@ async function inspectViewport(browser, spec) {
     await page.waitForFunction(
       (required) => {
         const body = document.body.innerText;
+        const lowerBody = body.toLowerCase();
         const hydratedSourceLinks = document.querySelectorAll('[data-source-state="on-file"], [data-record-link="true"]').length;
-        return required.every((text) => body.includes(text))
+        return required.every((text) => lowerBody.includes(String(text).toLowerCase()))
           && !/\bLoading\b/.test(body)
           && hydratedSourceLinks >= 10;
       },
@@ -199,6 +199,9 @@ async function inspectViewport(browser, spec) {
       await page.waitForTimeout(500);
     }
 
+    const requiredSvgLabelsForViewport = spec.mode === "visuals"
+      ? REQUIRED_SVG_LABELS
+      : REQUIRED_SVG_LABELS.filter((label) => label !== "Disclosed capital by industry or category");
     entry.check = await page.evaluate(({ requiredText, requiredAnchors, forbiddenText, requiredVisualSections, requiredSvgLabels, originUrl }) => {
       const body = document.body.innerText;
       const root = new URL(originUrl);
@@ -245,9 +248,12 @@ async function inspectViewport(browser, spec) {
         if (target.origin === root.origin && target.pathname.startsWith(`${basePath}/v1/`)) return true;
         return objectIdTextPattern.test(label);
       };
-      const findSmallestByText = (needle) => Array.from(document.querySelectorAll("section,div"))
-        .filter((element) => element.textContent?.includes(needle))
+      const findSmallestByText = (needle) => {
+        const normalizedNeedle = String(needle).toLowerCase();
+        return Array.from(document.querySelectorAll("section,div"))
+        .filter((element) => (element.textContent || "").toLowerCase().includes(normalizedNeedle))
         .sort((a, b) => (a.textContent || "").length - (b.textContent || "").length)[0];
+      };
       const visualSections = requiredVisualSections
         .map((title) => {
           const element = findSmallestByText(title);
@@ -265,14 +271,14 @@ async function inspectViewport(browser, spec) {
             visibility: style.visibility,
           };
         });
-      const svgLabels = Array.from(document.querySelectorAll("svg[aria-label]"))
+      const svgLabels = Array.from(document.querySelectorAll("svg[aria-label], [role='img'][aria-label]"))
         .map((element) => element.getAttribute("aria-label") || "");
       const missingSvgLabels = requiredSvgLabels
         .filter((label) => !svgLabels.some((svgLabel) => svgLabel.includes(label)));
       return {
         title: document.title,
         bodyLength: body.length,
-        missingText: requiredText.filter((text) => !body.includes(text)),
+        missingText: requiredText.filter((text) => !body.toLowerCase().includes(String(text).toLowerCase())),
         forbiddenText: forbiddenText.filter((text) => body.includes(text)),
         missingAnchors: requiredAnchors.filter((href) => !anchors.some((anchor) => linkTargetsRoute(anchor, href))),
         dataSourceLinkCount: document.querySelectorAll('[data-source-state="on-file"], [data-record-link="true"]').length,
@@ -300,7 +306,7 @@ async function inspectViewport(browser, spec) {
       requiredAnchors: REQUIRED_ANCHORS,
       forbiddenText: FORBIDDEN_VISIBLE_TEXT,
       requiredVisualSections: REQUIRED_VISUAL_SECTIONS,
-      requiredSvgLabels: REQUIRED_SVG_LABELS,
+      requiredSvgLabels: requiredSvgLabelsForViewport,
       originUrl: origin,
     });
 

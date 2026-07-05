@@ -25,14 +25,14 @@ Expected behavior:
 
 ## 3. Open Dashboard Sections
 
-Each dashboard section can expand for more detail. Use the `+` or section title to open a section.
+Each dashboard section can expand for more detail. Use the Open/Close control or section title to open a section.
 
 Expected sections include:
 
 - Institution Intelligence Overview
 - Capital Flows by Industry / Category
 - Market Signals
-- Pipeline Overview
+- SWFI Discovery Pathways
 - Top Active Investors
 - Research & Analytics Hub
 - Market Intelligence

@@ -54,7 +54,7 @@ const fixtures = [
       "Tamas Vojnits",
       "Person Details",
       "United Kingdom",
-      "Source Record",
+      "SWFI Page",
     ],
   },
   {

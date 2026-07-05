@@ -10,10 +10,10 @@ const receiptPath = path.join(outputDir, "swfipn-section-visualization-brd-gate-
 fs.mkdirSync(outputDir, { recursive: true });
 
 const ROUTES = [
-  { id: "entities", route: "/profiles/", selector: "[data-brd-section-visualization='profiles']", required: ["Institution Data Visualization", "Records by Category", "Records by Geography", "Top Loaded Records"] },
-  { id: "people", route: "/people/", selector: "[data-brd-section-visualization='people']", required: ["People Data Visualization", "Records by Category", "Records by Geography", "Top Loaded Records"] },
-  { id: "transactions", route: "/transactions/", selector: "[data-brd-section-visualization='transactions']", required: ["Transaction Data Visualization", "Records by Category", "Records by Geography", "Top Loaded Records"] },
-  { id: "deals", route: "/deals/", selector: "[data-brd-section-visualization='deals']", required: ["Transaction Data Visualization", "Records by Category", "Records by Geography", "Top Loaded Records"] },
+  { id: "entities", route: "/profiles/", selector: "[data-brd-section-visualization='profiles']", required: ["Institution Data Visualization", "Records by Category", "Records by Geography", "Highlighted SWFI Pages"] },
+  { id: "people", route: "/people/", selector: "[data-brd-section-visualization='people']", required: ["People Data Visualization", "Records by Category", "Records by Geography", "Highlighted SWFI Pages"] },
+  { id: "transactions", route: "/transactions/", selector: "[data-brd-section-visualization='transactions']", required: ["Transaction Data Visualization", "Records by Category", "Records by Geography", "Highlighted SWFI Pages"] },
+  { id: "deals", route: "/deals/", selector: "[data-brd-section-visualization='deals']", required: ["Transaction Data Visualization", "Records by Category", "Records by Geography", "Highlighted SWFI Pages"] },
   { id: "compass", route: "/mandates/", selector: "[data-brd-compass-visualization='true']", required: ["Compass RFP Analytics", "RFPs by Investment Type", "RFPs by Region", "RFPs Posted Per Month"] },
   { id: "reports", route: "/reports/", selector: "[data-brd-reports-visualization='true']", required: ["Reports / League Tables Visualization", "Reports by Type", "Market Activity by Sector", "League Tables"] },
 ];
@@ -63,7 +63,7 @@ async function checkRoute(page, spec) {
   const screenshot = path.join(outputDir, `swfipn-section-visualization-${spec.id}.png`);
   const failures = [];
   const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 120_000 });
-  await page.waitForFunction(() => /Showing\s+[0-9,]+\s+of\s+[0-9,]+|Reports Intelligence/i.test(document.body.innerText), null, { timeout: 120_000 }).catch(() => null);
+  await page.waitForFunction(() => /This view summarizes\s+[0-9,]+\s+visible items|Reports Intelligence/i.test(document.body.innerText), null, { timeout: 120_000 }).catch(() => null);
   if (spec.id === "reports") {
     await page.waitForFunction(() => /Quarterly Reports[\s\S]*Showing\s+\d+\s+of\s+\d+/i.test(document.body.innerText), null, { timeout: 90_000 }).catch(() => null);
   }
@@ -79,6 +79,11 @@ async function checkRoute(page, spec) {
     failures.push("missing_visualization_button");
   }
   await page.waitForSelector(spec.selector, { timeout: 30_000 }).catch(() => failures.push("missing_visualization_panel"));
+  await page.waitForFunction((selector) => {
+    const panel = document.querySelector(selector);
+    if (!panel) return false;
+    return panel.querySelectorAll("a[href*='filter=']").length > 0 || panel.querySelectorAll("svg").length > 0;
+  }, spec.selector, { timeout: 30_000 }).catch(() => null);
   await page.screenshot({ path: screenshot, fullPage: true });
 
   const body = await page.locator("body").innerText();
@@ -86,9 +91,14 @@ async function checkRoute(page, spec) {
   const missing = spec.required.filter((item) => !body.includes(item));
   const exportCsvButtons = await page.locator(`${spec.selector} button`, { hasText: "Export CSV" }).count();
   const exportPngButtons = await page.locator(`${spec.selector} button`, { hasText: "Export PNG" }).count();
-  const chartFilterLinks = await page.locator(`${spec.selector} a[href*='filter=']`).count();
-  const svgCount = await page.locator(`${spec.selector} svg`).count();
-  const internalLeaks = ["Active Mirror", "source_gap", "backend_http", "undefined", "null"].filter((needle) => panelText.includes(needle));
+  const { chartFilterLinks, svgCount } = await page.evaluate((selector) => {
+    const panel = document.querySelector(selector);
+    return {
+      chartFilterLinks: panel?.querySelectorAll("a[href*='filter=']").length || 0,
+      svgCount: panel?.querySelectorAll("svg").length || 0,
+    };
+  }, spec.selector);
+  const internalLeaks = ["Active Mirror", "source_gap", "backend_http", "undefined", "null", "Loaded Rows", "Top Loaded Records"].filter((needle) => panelText.includes(needle));
 
   if ((response?.status() || 0) >= 400) failures.push(`http_${response?.status() || 0}`);
   if (missing.length) failures.push(`missing_text:${missing.join("|")}`);

@@ -22,8 +22,8 @@ const ROUTE_READY_TEXT = {
   "/intelligence/": "Intelligence",
   "/research/": "Research / News",
   "/search/": "Institution, Person, Strategy",
-  "/source/": "Source Detail",
-  "/provenance/": "Source References",
+  "/source/": "Record Link",
+  "/provenance/": "Record Links",
   "/transactions/": "Showing 5 of",
 };
 

@@ -62,9 +62,9 @@ export default function ProvenancePage() {
             <section className="rounded border border-[#DCE3EA] bg-white p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <h1 className="m-0 text-[19px] font-bold text-[#11314F]">Source References</h1>
+                  <h1 className="m-0 text-[19px] font-bold text-[#11314F]">Record Links</h1>
                   <p className="m-0 mt-1 text-[12px] text-[#7A8A9B]">
-                    Source record links resolve to the corresponding SWFI record/profile page within /swficc where an internal record exists.
+                    Record links open the corresponding SWFI profile, transaction, RFP, person, or research page when a mapped record is available.
                   </p>
                 </div>
                 <a href={safeReturnHref} className="rounded border border-[#DCE3EA] px-3 py-2 text-[12px] text-[#16538C] no-underline">Return</a>
@@ -73,10 +73,10 @@ export default function ProvenancePage() {
 
             {!hasSourceUrl ? (
               <section className="rounded border border-[#DCE3EA] bg-white p-4 text-sm text-[#41566B]">
-                <div className="text-[11px] font-bold uppercase tracking-[0.07em] text-[#7A8A9B]">Source Reference</div>
-                <div className="mt-1 text-[15px] font-semibold text-[#11314F]">Open a record source link to view its SWFI reference.</div>
+                <div className="text-[11px] font-bold uppercase tracking-[0.07em] text-[#7A8A9B]">Record Link</div>
+                <div className="mt-1 text-[15px] font-semibold text-[#11314F]">Open a dashboard record link to view the matching SWFI page.</div>
                 <div className="mt-1 text-[12px] text-[#7A8A9B]">
-                  Records, table rows, and source labels should resolve to the corresponding SWFI record/profile page within /swficc where an internal record exists.
+                  Dashboard rows route to the matching profile, transaction, RFP, person, or research page when available.
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {quickLinks.map(([label, href]) => (
@@ -90,13 +90,13 @@ export default function ProvenancePage() {
                 <a href={mirrorHref} className="mt-1 block text-[15px] font-semibold text-[#16538C] underline">
                   Open SWFI record
                 </a>
-                <div className="mt-1 text-[12px] text-[#7A8A9B]">Open the corresponding SWFI record/profile page within /swficc where an internal record exists.</div>
+                <div className="mt-1 text-[12px] text-[#7A8A9B]">Open the corresponding SWFI platform record through the configured sign-in handoff.</div>
               </section>
             ) : (
               <section className="rounded border border-[#DCE3EA] bg-white p-4 text-sm text-[#41566B]">
                 <div className="text-[11px] font-bold uppercase tracking-[0.07em] text-[#7A8A9B]">Open Record</div>
-                <div className="mt-1 text-[15px] font-semibold text-[#11314F]">No SWFI record is currently available for this source reference.</div>
-                <div className="mt-1 text-[12px] text-[#7A8A9B]">The source reference is on file.</div>
+                <div className="mt-1 text-[15px] font-semibold text-[#11314F]">No matching SWFI page is currently available for this link.</div>
+                <div className="mt-1 text-[12px] text-[#7A8A9B]">Return to the dashboard and open another record.</div>
               </section>
             )}
 
@@ -104,23 +104,23 @@ export default function ProvenancePage() {
               <>
                 <section className="grid gap-3 rounded border border-[#DCE3EA] bg-white p-4 text-sm text-[#41566B]">
                   <div className="grid gap-1">
-                    <div className="text-[11px] font-bold uppercase tracking-[0.07em] text-[#7A8A9B]">Source Type</div>
+                    <div className="text-[11px] font-bold uppercase tracking-[0.07em] text-[#7A8A9B]">Record Type</div>
                     <div className="text-[16px] font-bold text-[#11314F]">{source.type}</div>
                   </div>
                   <div className="grid gap-1">
-                    <div className="text-[11px] font-bold uppercase tracking-[0.07em] text-[#7A8A9B]">Source Reference</div>
-                    <div>{source.host ? "Source reference on file" : "Not disclosed by source"}</div>
+                    <div className="text-[11px] font-bold uppercase tracking-[0.07em] text-[#7A8A9B]">Record Status</div>
+                    <div>{source.host ? "Record link on file" : "Record link unavailable"}</div>
                   </div>
                   <div className="grid gap-1">
-                    <div className="text-[11px] font-bold uppercase tracking-[0.07em] text-[#7A8A9B]">Source Record</div>
+                    <div className="text-[11px] font-bold uppercase tracking-[0.07em] text-[#7A8A9B]">SWFI Page</div>
                     <div data-source-state={params.sourceUrl ? "on-file" : undefined} className="rounded border border-[#DCE3EA] bg-[#F7F9FA] px-3 py-2 text-[13px]">
-                      Source reference on file
+                      Record link on file
                     </div>
                   </div>
                 </section>
 
                 <section className="rounded border border-[#DCE3EA] bg-white px-4 py-3 text-sm text-[#7A8A9B]">
-                  Source links stay within the SWFI workflow.
+                  Record links stay within the SWFI workflow.
                 </section>
               </>
             ) : null}
@@ -142,17 +142,17 @@ function parseSource(value: string) {
       type: classifyPath(path),
     };
   } catch {
-    return { host: "", path: value, type: "SWFI.com source" };
+    return { host: "", path: value, type: "SWFI record" };
   }
 }
 
 function classifyPath(path: string) {
-  if (/\/transactions\//i.test(path)) return "SWFI transaction source";
-  if (/\/compass\//i.test(path)) return "SWFI mandate/RFP source";
-  if (/people|person/i.test(path)) return "SWFI people source";
-  if (/news|article|research|report/i.test(path)) return "SWFI research/news source";
-  if (/profile|entity|entities|fund|ranking/i.test(path)) return "SWFI profile source";
-  return "SWFI.com source";
+  if (/\/transactions\//i.test(path)) return "Transaction";
+  if (/\/compass\//i.test(path)) return "RFP / Mandate";
+  if (/people|person/i.test(path)) return "Person";
+  if (/news|article|research|report/i.test(path)) return "Research / News";
+  if (/profile|entity|entities|fund|ranking/i.test(path)) return "Profile";
+  return "SWFI record";
 }
 
 function isSourceRoute(href: string) {

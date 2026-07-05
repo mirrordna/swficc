@@ -26,12 +26,12 @@ const endpoints = {
 };
 
 const listRoutes = [
-  { id: "profiles", route: "/profiles/", api: "/api/source-data/search/v1", totalAtLeast: 590_000, pattern: /\/swficc\/profiles\/detail\/\?(?=[^#]*(?:slug|name|id)=)/i },
-  { id: "people", route: "/people/", api: "/api/source-data/search/v1", totalAtLeast: 100_000, pattern: /\/swficc\/people\/detail\/\?(?=[^#]*(?:name|id)=)/i },
-  { id: "transactions", route: "/transactions/", api: "/api/transactions/v1", totalAtLeast: 180_000, pattern: /\/swficc\/transactions\/detail\/\?(?=[^#]*(?:title|id)=)/i },
-  { id: "deals", route: "/deals/", api: "/api/transactions/v1", totalAtLeast: 180_000, pattern: /\/swficc\/transactions\/detail\/\?(?=[^#]*(?:title|id)=)/i },
-  { id: "mandates", route: "/mandates/", api: "/api/live-opportunities/v1", totalAtLeast: 30, pattern: /\/swficc\/mandates\/detail\/\?(?=[^#]*(?:title|id)=)/i },
-  { id: "research", route: "/research/", api: "/api/source-intelligence/news/v1", totalAtLeast: 10, pattern: /\/swficc\/research\/detail\/\?(?:[^#]*&)?legacy=\d+/i },
+  { id: "profiles", route: "/profiles/", api: "/api/source-data/search/v1", totalAtLeast: 590_000, kind: "entity", pattern: /\/swficc\/profiles\/detail\/\?(?=[^#]*(?:slug|name|id)=)/i },
+  { id: "people", route: "/people/", api: "/api/source-data/search/v1", totalAtLeast: 100_000, kind: "person", pattern: /\/swficc\/people\/detail\/\?(?=[^#]*(?:name|id)=)/i },
+  { id: "transactions", route: "/transactions/", api: "/api/transactions/v1", totalAtLeast: 180_000, kind: "transaction", pattern: /\/swficc\/transactions\/detail\/\?(?=[^#]*(?:title|id)=)/i },
+  { id: "deals", route: "/deals/", api: "/api/transactions/v1", totalAtLeast: 180_000, kind: "transaction", pattern: /\/swficc\/transactions\/detail\/\?(?=[^#]*(?:title|id)=)/i },
+  { id: "mandates", route: "/mandates/", api: "/api/live-opportunities/v1", totalAtLeast: 30, kind: "compass", pattern: /\/swficc\/mandates\/detail\/\?(?=[^#]*(?:title|id)=)/i },
+  { id: "research", route: "/research/", api: "/api/source-intelligence/news/v1", totalAtLeast: 10, kind: "legacy", pattern: /\/swficc\/research\/detail\/\?(?:[^#]*&)?legacy=\d+/i },
 ];
 
 const forbiddenText = [
@@ -126,11 +126,17 @@ async function waitForDashboard(page) {
         if (href.includes("/swficc/profiles/detail/")) counts.entity += 1;
         if (href.includes("/swficc/transactions/detail/")) counts.transaction += 1;
         if (href.includes("/swficc/mandates/detail/")) counts.compass += 1;
+        if (href.includes("/v1/signin/") && href.includes("redirect=")) {
+          const decoded = decodeURIComponent(href);
+          if (decoded.includes("/v1/entities/")) counts.entity += 1;
+          if (decoded.includes("/v1/transactions/")) counts.transaction += 1;
+          if (decoded.includes("/v1/compass/")) counts.compass += 1;
+        }
       }
       return counts;
     }).catch(() => ({ entity: 0, transaction: 0, compass: 0 }));
     const linksReady = linkKinds.entity >= 4 && linkKinds.transaction >= 3 && linkKinds.compass >= 3;
-    if (/TOP AUM RANKING/i.test(body) && /Institution Intelligence Overview/i.test(body) && /Market\s+Signals/i.test(body) && linksReady && !/\bLoading\b/.test(body)) return body;
+    if (/Top AUM ranking/i.test(body) && /Investment Trends by Sector/i.test(body) && /Recent Activity/i.test(body) && linksReady && !/\bLoading\b/.test(body)) return body;
     await page.waitForTimeout(750);
   }
   return body;
@@ -157,6 +163,16 @@ function swfiRecordKind(href) {
       return "";
     }
     if (!parsed.hostname.endsWith("swfi.com")) return "";
+    if (parsed.pathname.replace(/\/?$/, "/") === "/v1/signin/") {
+      const redirect = parsed.searchParams.get("redirect") || "";
+      if (!redirect || /^https?:\/\//i.test(redirect)) return "";
+      const target = new URL(redirect, "https://www.swfi.com");
+      if (/\/v1\/entities\/[^/]+\/?$/i.test(target.pathname)) return "entity";
+      if (/\/v1\/transactions\/[^/]+\/?$/i.test(target.pathname)) return "transaction";
+      if (/\/v1\/compass\/[^/]+\/?$/i.test(target.pathname)) return "compass";
+      if (/\/v1\/people\/[^/]+\/?$/i.test(target.pathname)) return "person";
+      return "";
+    }
     const parts = parsed.pathname.split("/").filter(Boolean);
     const v1 = parts.indexOf("v1");
     const section = v1 >= 0 ? parts[v1 + 1] : parts[0];
@@ -186,7 +202,7 @@ async function dashboardCheck(browser) {
     const body = await waitForDashboard(page);
     result.first_usable_ms = Date.now() - start;
     if (!response || response.status() >= 400) result.failures.push(`http_${response?.status() || "missing"}`);
-    for (const text of ["SWFI", "TOP AUM RANKING", "Institution Intelligence Overview", "Market Signals", "Pipeline Overview"]) {
+    for (const text of ["SWFI", "Top AUM ranking", "Investment Trends by Sector", "Recent Activity", "Recently Fundraising Institutions"]) {
       if (!body.includes(text)) result.failures.push(`missing_text:${text}`);
     }
     const hits = forbiddenHits(body);
@@ -253,11 +269,20 @@ async function listPageCheck(browser) {
           null,
           { timeout: 120_000 },
         );
-        const body = await page.locator("body").innerText();
+        let body = await page.locator("body").innerText();
+        if ((!body.includes("Filter") || !body.includes("Rows")) && /Visualization-first view/i.test(body)) {
+          await page.getByRole("button", { name: /^Data$/i }).click({ timeout: 10_000 }).catch(() => {});
+          await page.waitForFunction(
+            () => /Filter/i.test(document.body.innerText) && /Rows/i.test(document.body.innerText),
+            null,
+            { timeout: 20_000 },
+          ).catch(() => null);
+          body = await page.locator("body").innerText();
+        }
         row.showing = (body.match(/Showing\s+[^\n]+/) || [""])[0];
         row.rendered_total = numberFromShowing(row.showing);
         const links = await collectLinks(page);
-        row.matching_links = links.filter((link) => spec.pattern.test(link.href)).length;
+        row.matching_links = links.filter((link) => swfiRecordKind(link.href) === spec.kind || spec.pattern.test(link.href)).length;
         row.api_200 = apiResponses.includes(200);
         if (!response || response.status() >= 400) row.failures.push(`http_${response?.status() || "missing"}`);
         if (!row.api_200) row.failures.push(`missing_api_200:${spec.api}`);
@@ -293,19 +318,30 @@ async function firstPartyRecordMirrorCheck(browser) {
     const links = await collectLinks(page);
     const samples = ["entity", "transaction", "compass"].map((kind) => links.find((link) => swfiRecordKind(link.href) === kind)).filter(Boolean);
     for (const link of samples) {
-      const response = await context.request.get(link.href, { timeout: 45_000 });
+      const isSwfiSignin = /^https:\/\/(www\.)?swfi\.com\/v1\/signin\//i.test(link.href);
+      const response = isSwfiSignin
+        ? await context.request.get(link.href, { maxRedirects: 0, timeout: 45_000 })
+        : await context.request.get(link.href, { timeout: 45_000 });
       const body = await response.text().catch(() => "");
       const parsed = new URL(link.href);
       const finalUrl = response.url();
       const final = new URL(finalUrl);
       const row = { kind: swfiRecordKind(link.href), label: link.text, href: link.href, final_url: finalUrl, status: response.status(), ok: true, failures: [] };
       if (response.status() >= 400) row.failures.push(`http_${response.status()}`);
-      if (final.hostname !== originUrl.hostname) row.failures.push(`escaped_destination:${finalUrl}`);
-      if (final.pathname !== parsed.pathname) row.failures.push(`unexpected_terminal_destination:${finalUrl}`);
-      if (/\/v1\/signin\/?$/i.test(final.pathname)) row.failures.push(`unexpected_signin_destination:${finalUrl}`);
-      if (body.trim().length < 200) row.failures.push("blank_or_tiny_swfi_response");
-      const hits = forbiddenHits(body);
-      if (hits.length) row.failures.push(`forbidden_text:${hits.join("|")}`);
+      if (isSwfiSignin) {
+        if (parsed.hostname !== "www.swfi.com") row.failures.push(`unexpected_swfi_host:${parsed.hostname}`);
+        if (parsed.pathname.replace(/\/?$/, "/") !== "/v1/signin/") row.failures.push(`unexpected_swfi_signin_path:${parsed.pathname}`);
+        if ((parsed.searchParams.get("msg") || "") !== "auth") row.failures.push("missing_swfi_auth_msg");
+        if (!/^\/v1\/(entities|transactions|compass)\/[^/]+\/?$/i.test(parsed.searchParams.get("redirect") || "")) {
+          row.failures.push(`missing_swfi_record_redirect:${parsed.searchParams.get("redirect") || ""}`);
+        }
+      } else {
+        if (final.hostname !== originUrl.hostname) row.failures.push(`escaped_destination:${finalUrl}`);
+        if (final.pathname !== parsed.pathname) row.failures.push(`unexpected_terminal_destination:${finalUrl}`);
+        if (body.trim().length < 200) row.failures.push("blank_or_tiny_swfi_response");
+        const hits = forbiddenHits(body);
+        if (hits.length) row.failures.push(`forbidden_text:${hits.join("|")}`);
+      }
       row.ok = row.failures.length === 0;
       result.samples.push(row);
     }
@@ -445,7 +481,7 @@ async function run() {
     matrixLine("Dashboard public, SWFI-like, no internal leakage", checks[0]),
     matrixLine("Data packets fact-backed and fresh", checks[1]),
     matrixLine("List pages count, filter, paginate, canonical-link", checks[2]),
-    matrixLine("Dashboard record links resolve to first-party mirrored record pages", checks[3]),
+    matrixLine("Dashboard record links resolve to SWFI core record handoff pages", checks[3]),
     matrixLine("Credentialed SWFI return-to-record", checks[5]),
     "",
   ].join("\n");

@@ -35,14 +35,14 @@ Top-level dashboard information may render without login.
 
 Every non-public dashboard hyperlink must follow this rule:
 
-- Unauthenticated user: redirect to `/swficc/login/` with `next` set to the intended internal route.
-- Authenticated user: go directly to the intended `/swficc/` record or workflow route.
+- Unauthenticated user: redirect to SWFI sign-in with the intended `/v1/...` platform record target preserved.
+- Authenticated user: go directly to the intended SWFI core platform record or workflow route after SWFI authentication.
 
-Institutional rows must navigate to the matching internal SWFIPN profile detail route:
+Institutional rows must navigate to the matching SWFI platform profile route through the configured handoff:
 
-- `/swficc/profiles/detail/?...`
+- `https://www.swfi.com/v1/signin/?msg=auth&redirect=/v1/entities/{id}`
 
-Transaction, mandate, people, and research rows must navigate to their matching internal detail routes.
+Transaction, mandate, people, and research rows must navigate to the matching SWFI platform record where a canonical SWFI record target exists. Dashboard-only analytical drilldowns may stay inside `/swficc`.
 
 ## Data Presentation
 
@@ -77,7 +77,7 @@ This checklist is the external acceptance standard for the dashboard integration
 - The dashboard look and feel must be consistent with the existing SWFI website, including logo placement, visual design, fonts, color scheme, page layout, and overall user experience.
 - The dashboard must be accessible without requiring users to log in.
 - For unauthenticated users, following a dashboard hyperlink must redirect to the SWFI login page.
-- For authenticated users, following a dashboard hyperlink must take them directly to the appropriate existing SWFI-backed profile or record page inside SWFIPN.
+- For authenticated users, following a dashboard hyperlink must take them directly to the appropriate existing SWFI core platform profile or record page after SWFI authentication.
 - The dashboard must hide all internal technical details, including object IDs, Active Mirror status messages, backend identifiers, source packet fields, and system-level diagnostics.
 - Tabular data rows, including ranked lists, must link to the appropriate existing SWFI-backed page. For unauthenticated users, those row links must redirect to the SWFI login page.
 - Top AUM rankings must match the approved SWFI source packet exactly: values, order, names, countries, entity types, and profile links.
@@ -95,10 +95,10 @@ Acceptance mapping:
 
 - Look and feel: `acceptance:gate:public`, backed by screenshots for desktop and mobile.
 - Public dashboard access: `acceptance:gate:public` unauthenticated browser check.
-- Unauthenticated dashboard link redirect: `acceptance:gate:public` verifies every gated dashboard link points to `/swficc/login/` with `next` preserving the intended internal route, then clicks samples.
+- Unauthenticated dashboard link redirect: `acceptance:gate:public` verifies gated dashboard record links point to SWFI sign-in with the intended `/v1/...` platform target preserved, then clicks samples.
 - Authenticated dashboard link direct navigation: `acceptance:gate:public` with `SWFIPN_AUTH_TEST_USERNAME` and `SWFIPN_AUTH_TEST_PASSWORD`.
 - No internal technical details: `acceptance:gate:public` forbidden-visible checks plus link-token leak checks.
-- Table row navigation: `acceptance:gate:public` verifies dashboard table row links preserve internal SWFIPN record targets.
+- Table row navigation: `acceptance:gate:public` verifies dashboard table row links preserve SWFI core platform record targets.
 - Data parity: `acceptance:gate:public` compares visible dashboard values and Top AUM rows to live SWFI fact packets.
 - Staleness: `acceptance:gate:public` verifies packet `generated_at`, provenance source, and source document receipts.
 - Route/detail/session parity: `acceptance:crawl:public` clicks every visible dashboard link while logged out and logged in.

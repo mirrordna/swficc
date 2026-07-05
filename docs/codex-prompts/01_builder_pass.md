@@ -6,8 +6,8 @@ Loop budget: one builder pass, one internal refinement, no endless rethinking, e
 
 Scope is locked:
 - public `/swficc` dashboard
-- linked Terminal-native SWFI record/profile pages within `/swficc`
-- login-gated navigation from dashboard rows/details
+- dashboard discovery, chart, filter, ranking, and preview pages inside `/swficc`
+- protected dashboard record links hand off to SWFI sign-in with the intended `/v1/...` core-platform target preserved
 - no claim that all external SWFI.com pages are migrated
 - no claim that every future/non-exposed SWFI route is complete
 

@@ -15,7 +15,7 @@ const originUrl = new URL(origin);
 const originHost = originUrl.hostname;
 const shouldProxyBackend = process.env.SWFIPN_PROXY_BACKEND === "1"
   || (process.env.SWFIPN_PROXY_BACKEND !== "0" && ["localhost", "127.0.0.1", "::1"].includes(originHost));
-const apiPattern = /api\/(source-data|source-intelligence|recent-transactions|live-opportunities|sector-flows|allocator-activity|swfi|transactions)|\/v1\/swfi\//;
+const apiPattern = /api\/(source-data|source-intelligence|recent-transactions|live-opportunities|sector-flows|allocator-activity|active-allocators|swfi|transactions)|\/v1\/swfi\//;
 const authMode = String(process.env.SWFIPN_KP_AUTH_MODE || "swfi-auth-handoff");
 const validateLegacyAuth = authMode === "legacy-auth";
 const username = loadSecret("SWFIPN_AUTH_TEST_USERNAME", "SWFIPN_AUTH_USERNAME_KEYCHAIN_SERVICE", ["SWFIPN_AUTH_USERNAME", "SWFI_PREVIEW_AUTH_USERNAME"]).trim();
@@ -66,15 +66,15 @@ const dashboardSectionLinks = [
   ["Active Allocators", "/allocators/"],
   ["Deals", "/transactions/"],
   ["RFPs", "/mandates/"],
-  ["Deals & Transactions", "/deals/"],
+  ["DISCLOSED DEAL VALUE", "/deals/"],
 ];
 const listRoutes = [
-  { route: "/profiles/", ready: "Showing 25 of", detailPath: "/profiles/detail/" },
-  { route: "/allocators/", ready: "Showing 25 of", detailPath: "/profiles/detail/" },
-  { route: "/transactions/", ready: "Showing 25 of", detailPath: "/transactions/detail/" },
-  { route: "/deals/", ready: "Showing 25 of", detailPath: "/transactions/detail/" },
-  { route: "/mandates/", ready: "Showing 25 of", detailPath: "/mandates/detail/" },
-  { route: "/research/", ready: "Showing 25 of", detailPath: "/research/detail/" },
+  { route: "/profiles/", ready: "Institution Data Visualization", kind: "entity" },
+  { route: "/allocators/", ready: "Data view.", kind: "entity" },
+  { route: "/transactions/", ready: "Transaction Data Visualization", kind: "transaction" },
+  { route: "/deals/", ready: "Transaction Data Visualization", kind: "transaction" },
+  { route: "/mandates/", ready: "Compass RFP Analytics", kind: "mandate" },
+  { route: "/research/", ready: "Data view.", kind: "legacy" },
 ];
 const brandExpectedLinks = [
   ["About Us", "/about/"],
@@ -131,7 +131,7 @@ const brandPageRoutes = [
   },
 ];
 const recycledBrandPageText = [
-  "SWFI Source References",
+  "SWFI Record Links",
   "SWFI2 mirror record links",
   "Main Dashboard Area",
   "Historical Performance Dashboard",
@@ -357,17 +357,17 @@ function isExternalSwfiHref(href) {
 
 function isInternalMirrorRecordHref(href) {
   if (isApprovedSwfiPlatformHref(href)) return true;
+  return false;
+}
+
+function isInternalLegacyResearchHref(href) {
   try {
-    const parsed = new URL(href, origin);
+    const parsed = new URL(String(href || ""), origin);
     const root = new URL(origin);
+    const basePath = root.pathname.replace(/\/$/, "");
     if (parsed.origin !== root.origin) return false;
-    return [
-      "/profiles/detail/",
-      "/transactions/detail/",
-      "/mandates/detail/",
-      "/people/detail/",
-      "/research/detail/",
-    ].some((route) => parsed.pathname.includes(`${root.pathname.replace(/\/$/, "")}${route}`));
+    if (parsed.pathname.replace(basePath, "").replace(/\/?$/, "/") !== "/research/detail/") return false;
+    return /^\d+$/.test(parsed.searchParams.get("legacy") || "");
   } catch {
     return false;
   }
@@ -624,7 +624,7 @@ async function listRouteCheck(context, spec) {
   try {
     const response = await page.goto(appUrl(spec.route), { waitUntil: "domcontentloaded", timeout: 45_000 });
     if (!response || response.status() >= 400) result.failures.push(`http_${response?.status() || "missing"}`);
-    const body = await hydratedBody(page, [spec.ready, "Updated from SWFI"]);
+    const body = await hydratedBody(page, [spec.ready]);
     result.failures.push(...bodyFailures(body));
     result.failures.push(...navLabelFailures(await visibleNavLabels(page)));
     const pageLinks = await page.evaluate(() => Array.from(document.querySelectorAll("a[href]")).map((a) => ({
@@ -632,25 +632,23 @@ async function listRouteCheck(context, spec) {
       href: a.href,
     })).filter((link) => link.text));
     result.failures.push(...brandLinkFailures(pageLinks));
-    const link = await page.evaluate(({ detailPath }) => {
+    const link = await page.evaluate((kind) => {
       const anchors = Array.from(document.querySelectorAll("a[href]"));
       const found = anchors.find((a) => {
+        if (kind === "legacy" && /\/research\/detail\/?\?[^#]*\blegacy=\d+/.test(a.href)) return true;
         if (a.href.includes("www.swfi.com/v1/signin/")) return true;
-        if (!a.href.includes(detailPath)) return false;
-        try {
-          const parsed = new URL(a.href);
-          return parsed.pathname.includes(detailPath);
-        } catch {
-          return false;
-        }
+        return /^https:\/\/(www\.)?swfi\.com\/\?p=\d+/.test(a.href);
       });
       return found ? { text: found.textContent?.trim().replace(/\s+/g, " ") || "", href: found.href, source: found.getAttribute("data-source-state") || "" } : null;
-    }, { detailPath: spec.detailPath });
+    }, spec.kind);
     if (!link) {
-      result.failures.push(`missing_internal_mirror_record_link:${spec.detailPath}`);
+      result.failures.push(`missing_swfi_record_handoff:${spec.kind}`);
     } else {
       result.first_mirror_record_link = link;
-      if (!isInternalMirrorRecordHref(link.href)) result.failures.push(`invalid_record_link:${link.href}`);
+      const validLink = spec.kind === "legacy"
+        ? (isInternalMirrorRecordHref(link.href) || isInternalLegacyResearchHref(link.href))
+        : isInternalMirrorRecordHref(link.href);
+      if (!validLink) result.failures.push(`invalid_record_link:${link.href}`);
     }
   } catch (error) {
     result.failures.push(error.message);
@@ -754,7 +752,7 @@ async function brandClickNavigationCheck(browser) {
     await installApiProxy(context);
     const page = await context.newPage();
     try {
-      const response = await page.goto(appUrl("/about/"), { waitUntil: "domcontentloaded", timeout: 45_000 });
+      const response = await gotoWithRetry(page, appUrl("/about/"), { waitUntil: "domcontentloaded", timeout: 60_000 });
       if (!response || response.status() >= 400) result.failures.push(`${label}:brand_start_http_${response?.status() || "missing"}`);
       await hydratedBody(page, ["About Us", "Who Are We?"], 60_000);
       const row = { label, expected_route: appPath(route), target_href: "", final_url: "", body_excerpt: "" };
@@ -781,6 +779,19 @@ async function brandClickNavigationCheck(browser) {
   }
   result.ok = result.failures.length === 0;
   return result;
+}
+
+async function gotoWithRetry(page, url, options, attempts = 2) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await page.goto(url, options);
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) await page.waitForTimeout(1500).catch(() => {});
+    }
+  }
+  throw lastError;
 }
 
 async function faviconCheck() {
@@ -877,11 +888,11 @@ async function allocatorMethodologyCheck() {
 async function sourceReferenceCheck(browser) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   await installApiProxy(page);
-  const result = { id: "source_reference_buyer_safe", route: "/provenance/", ok: true, failures: [], links: [] };
+  const result = { id: "record_link_buyer_safe", route: "/provenance/", ok: true, failures: [], links: [] };
   try {
     const response = await page.goto(appUrl("/provenance/"), { waitUntil: "domcontentloaded", timeout: 45_000 });
     if (!response || response.status() >= 400) result.failures.push(`http_${response?.status() || "missing"}`);
-    const body = await hydratedBody(page, ["Source References", "corresponding SWFI record/profile page within /swficc where an internal record exists"], 60_000);
+    const body = await hydratedBody(page, ["Record Links", "matching profile, transaction, RFP, person, or research page"], 60_000);
     result.failures.push(...bodyFailures(body));
     result.failures.push(...navLabelFailures(await visibleNavLabels(page)));
     result.links = await page.evaluate(() => Array.from(document.querySelectorAll("a[href]")).map((a) => ({

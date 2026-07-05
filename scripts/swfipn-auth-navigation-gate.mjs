@@ -193,7 +193,7 @@ async function unauthenticatedSessionCheck(browser) {
     if (result.status === 404) {
       result.body = { local_session_api: "not_present_phase1_swfi_auth_handoff" };
     } else {
-      if (result.status !== 401) result.failures.push(`expected_401_or_404_got_${result.status}`);
+      if (![200, 401].includes(result.status)) result.failures.push(`expected_200_401_or_404_got_${result.status}`);
       if (result.body?.authenticated !== false) result.failures.push("unauthenticated_body_not_false");
     }
   } catch (error) {

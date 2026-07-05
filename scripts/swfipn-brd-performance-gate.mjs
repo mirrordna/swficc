@@ -49,8 +49,8 @@ async function main() {
   const committedMs = Date.now() - started;
   await page.waitForLoadState("domcontentloaded", { timeout: 120_000 });
   const domContentLoadedMs = Date.now() - started;
-  await page.waitForSelector("text=Discover", { timeout: 120_000 });
-  const discoverMs = Date.now() - started;
+  await page.waitForSelector("text=Global Capital Map", { timeout: 120_000 });
+  const overviewVisibleMs = Date.now() - started;
   await page.waitForSelector("text=Recent Activity", { timeout: 120_000 });
   const newestDataMs = Date.now() - started;
   await page.waitForSelector("text=Top 10", { timeout: 120_000 });
@@ -85,7 +85,7 @@ async function main() {
     summary: {
       navigation_commit_ms: committedMs,
       dom_content_loaded_ms: domContentLoadedMs,
-      discover_visible_ms: discoverMs,
+      overview_visible_ms: overviewVisibleMs,
       newest_data_visible_ms: newestDataMs,
       top_10_visible_ms: topTenMs,
       dashboard_tti_ms: dashboardTtiMs,

@@ -7,8 +7,8 @@ Try to find any blocker that could cause Premjit, KP, Michael, QA, or a stakehol
 Criteria:
 1. Dashboard look/feel is consistent with SWFI.
 2. Public `/swficc` dashboard renders without login.
-3. Unauthenticated dashboard hyperlinks redirect to `/swficc/login/?next=...`.
-4. Authenticated dashboard hyperlinks route to the corresponding SWFI record/profile page within `/swficc` where an internal record exists.
+3. Unauthenticated dashboard record hyperlinks redirect to SWFI sign-in with the intended `/v1/...` target preserved.
+4. Authenticated dashboard record hyperlinks route to the corresponding SWFI core platform record/profile page after SWFI authentication.
 5. No internal technical details are visible.
 6. Table rows link to correct SWFI record/profile pages.
 7. Public API/frontend payloads do not expose restricted/private/internal data.

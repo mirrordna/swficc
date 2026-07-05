@@ -10,6 +10,15 @@ const origin = normalizeOrigin(process.env.SWFIPN_ORIGIN || "http://127.0.0.1:83
 const backendRepo = process.env.SWFI2_BACKEND_REPO || "/Users/mirror-pro/repos/SWFI2.0-final";
 const minRecordLinks = Number(process.env.SWFIPN_PHASE1_MIN_RECORD_LINKS || 8);
 
+const requiredDashboardText = [
+  "Total AUM Engaged",
+  "Institution Intelligence Overview",
+  "Top Active Investors",
+  "Recent Activity",
+  "Investment Trends by Sector",
+  "Recently Fundraising Institutions",
+];
+
 const forbiddenVisible = [
   "Active Mirror",
   "Object ID",
@@ -163,12 +172,21 @@ async function requestNoCustomAuth(context) {
   if (!session?.error) {
     result.session_status = session.status();
     result.session_body = (await session.text().catch(() => "")).slice(0, 400);
-    if (result.session_status === 200 && /dashboard_access|entitlements|authenticated/i.test(result.session_body)) {
-      result.failures.push("custom_session_status_api_active");
+    if (result.session_status === 200) {
+      const body = safeJson(result.session_body);
+      if (body.authenticated !== false) result.failures.push("custom_session_status_authenticated_without_bridge");
     }
   }
   result.ok = result.failures.length === 0;
   return result;
+}
+
+function safeJson(value) {
+  try {
+    return JSON.parse(value || "{}");
+  } catch {
+    return {};
+  }
 }
 
 function validateSwfiSigninBridge(result, location, expectedPath, label) {
@@ -221,6 +239,12 @@ function swfiRecordKind(href) {
   try {
     const parsed = new URL(href);
     if (!parsed.hostname.endsWith("swfi.com")) return "";
+    if (parsed.pathname.replace(/\/?$/, "/") === "/v1/signin/") {
+      const redirect = parsed.searchParams.get("redirect") || "";
+      if (!redirect || /^https?:\/\//i.test(redirect)) return "";
+      const target = new URL(redirect, "https://www.swfi.com");
+      return swfiRecordKind(target.href);
+    }
     const parts = parsed.pathname.split("/").filter(Boolean);
     const v1Index = parts.indexOf("v1");
     const section = v1Index >= 0 ? parts[v1Index + 1] : parts[0];
@@ -248,7 +272,11 @@ async function swfiUnauthRedirectCheck(browser, href, label, kind) {
     if (!final.hostname.endsWith("swfi.com")) result.failures.push(`not_swfi_destination:${result.final_url}`);
     if (!(/\/v1\/signin\/?$/i.test(final.pathname) || final.pathname === new URL(href).pathname)) result.failures.push(`not_swfi_signin_or_record:${result.final_url}`);
     const redirect = final.searchParams.get("redirect") || "";
-    if (/\/v1\/signin\/?$/i.test(final.pathname) && kind !== "legacy" && redirect && !redirect.includes(new URL(href).pathname)) result.failures.push(`wrong_swfi_redirect:${redirect}`);
+    const requested = new URL(href);
+    const expectedPath = /\/v1\/signin\/?$/i.test(requested.pathname)
+      ? requested.searchParams.get("redirect") || ""
+      : requested.pathname;
+    if (/\/v1\/signin\/?$/i.test(final.pathname) && kind !== "legacy" && redirect && expectedPath && !redirect.includes(expectedPath)) result.failures.push(`wrong_swfi_redirect:${redirect}`);
     result.body_excerpt = body.slice(0, 500);
     if (/\/v1\/signin\/?$/i.test(final.pathname) && !/sign\s*in|login|email|password/i.test(body)) result.failures.push("signin_body_not_detected");
   } catch (error) {
@@ -322,7 +350,10 @@ async function browserContract() {
       return acc;
     }, {});
     if (!/\/swficc\/?$/.test(new URL(result.final_url).pathname)) result.failures.push(`dashboard_not_public_root:${result.final_url}`);
-    if (!body.includes("KPI CARDS") || !body.includes("INSIGHTS")) result.failures.push("dashboard_core_sections_missing");
+    const normalizedBody = body.toLowerCase();
+    const missingSections = requiredDashboardText.filter((text) => !normalizedBody.includes(text.toLowerCase()));
+    result.dashboard_sections = requiredDashboardText.map((text) => ({ text, present: !missingSections.includes(text) }));
+    if (missingSections.length) result.failures.push(`dashboard_core_sections_missing:${missingSections.join("|")}`);
     if (result.visible_hits.length) result.failures.push(`visible_forbidden_terms:${result.visible_hits.join(",")}`);
     if (result.forbidden_network_hits.length) result.failures.push(`forbidden_network_hits:${result.forbidden_network_hits.length}`);
     if (result.storage.localStorage !== 0 || result.storage.sessionStorage !== 0) result.failures.push("browser_storage_used");

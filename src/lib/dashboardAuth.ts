@@ -14,6 +14,7 @@ const READABLE_SESSION_COOKIE_NAMES = new Set([
 type SessionStatus = {
   authenticated?: unknown;
   dashboard_access?: unknown;
+  display_name?: unknown;
 };
 
 export function dashboardNavigationTarget(anchor: HTMLAnchorElement | null): string | null {
@@ -82,6 +83,47 @@ export async function hasSubscriberSession(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+export function useDashboardSessionDisplayName(): string {
+  const [displayName, setDisplayName] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    async function check() {
+      try {
+        const response = await fetch(SESSION_STATUS_PATH, {
+          cache: "no-store",
+          credentials: "include",
+          headers: { Accept: "application/json" },
+        });
+        if (!response.ok) {
+          if (active) setDisplayName("");
+          return;
+        }
+        const status = await response.json() as SessionStatus;
+        const rawName = typeof status.display_name === "string" ? status.display_name.trim() : "";
+        if (active) setDisplayName(status.authenticated === true ? safeDisplayName(rawName) : "");
+      } catch {
+        if (active) setDisplayName("");
+      }
+    }
+    void check();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  return displayName;
+}
+
+function safeDisplayName(value: string): string {
+  return value
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/[<>]/g, "")
+    .trim()
+    .slice(0, 60);
 }
 
 function hasReadableSessionCookie(): boolean {

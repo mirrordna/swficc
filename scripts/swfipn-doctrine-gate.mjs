@@ -39,7 +39,9 @@ const routes = [
     mode: "public",
     required: [
       "SWFI",
-      "Discover",
+      "Here's your intelligence and pipeline overview.",
+      "Global Capital Map",
+      "AI Insights",
       "Recent Activity",
       "Transactions",
       "MARKET FOCUS",
@@ -47,13 +49,13 @@ const routes = [
       "SWF Buys by Sector",
     ],
   },
-  { path: "/profiles/", mode: "public", required: ["Institutions", "Current platform records.", "Select any row to view details"] },
-  { path: "/people/", mode: "public", required: ["People", "Current platform records.", "Select any row to view details"] },
-  { path: "/transactions/", mode: "public", required: ["Transactions", "Current platform records.", "Select any row to view details"] },
-  { path: "/mandates/", mode: "public", required: ["RFPs / Mandates", "Current platform records.", "Select any row to view details"] },
+  { path: "/profiles/", mode: "public", required: ["Institutions", "Institution Data Visualization", "Highlighted SWFI Pages"] },
+  { path: "/people/", mode: "public", required: ["People", "People Data Visualization", "Highlighted SWFI Pages"] },
+  { path: "/transactions/", mode: "public", required: ["Transactions", "Transaction Data Visualization", "Highlighted SWFI Pages"] },
+  { path: "/mandates/", mode: "public", required: ["RFPs / Mandates", "Compass RFP Analytics", "RFPs by Investment Type"] },
   { path: "/reports/", mode: "public", required: ["Reports Intelligence", "AUM Rankings"] },
   { path: "/search/", mode: "public", required: ["Smart Search", "Results are ranked for institutional relevance", "TYPE"] },
-  { path: "/research/", mode: "public", required: ["Research / News", "Current platform records.", "Select any row to view details"] },
+  { path: "/research/", mode: "public", required: ["Research / News", "Data view.", "Use this only when you need records"] },
 ];
 
 const viewportChecks = [
@@ -225,7 +227,9 @@ async function collectViewport(page, base, viewport, receipt) {
     const root = document.documentElement;
     const bodyText = document.body.innerText;
     const primaryText = [
-      "Discover",
+      "Here's your intelligence and pipeline overview.",
+      "Global Capital Map",
+      "AI Insights",
       "Recent Activity",
       "Transactions",
       "MARKET FOCUS",

@@ -364,7 +364,7 @@ function writeReceipt(steps) {
     acceptance_matrix: [
       matrixRow("Public dashboard loads", "public_access", steps, ["release_marker"]),
       matrixRow("DO runtime current release and containers are healthy", "runtime_truth", steps, target === "public" ? ["remote_current_release", "remote_container_health", "runtime_staleness"] : []),
-      matrixRow("Rows resolve to first-party SWFIPN record/detail pages", "route_parity", steps, ["closeout", "map_leakage"]),
+      matrixRow("Rows resolve to SWFI core record handoff pages", "route_parity", steps, ["closeout", "map_leakage"]),
       matrixRow("No internal/source/debug language leaks in rendered routes", "leakage", steps, ["map_leakage", "link_escape"]),
       matrixRow("KP acceptance criteria pass", "kp_acceptance", steps, ["kp_acceptance"]),
       matrixRow("Full acceptance criteria pass", "acceptance_criteria", steps, ["acceptance_criteria"]),
@@ -539,6 +539,14 @@ async function main() {
     });
     writeReceipt(steps);
     if (includeShare) {
+      fs.rmSync(path.join(outputDir, "swfipn-public-gc1-link-proof-latest.json"), { force: true });
+      fs.rmSync(path.join(outputDir, "swfipn-public-gc1-link-proof.png"), { force: true });
+      steps.push(runCommand(
+        "gc1_link_proof",
+        "node",
+        ["scripts/swfipn-gc1-link-proof.mjs"],
+        { env: { SWFIPN_ORIGIN: publicOrigin }, timeout: 120_000 }
+      ));
       steps.push(npmGate("share_gate", "share:gate:public", "swfipn-share-gate-latest.json", { SWFIPN_ORIGIN: publicOrigin }));
     }
 

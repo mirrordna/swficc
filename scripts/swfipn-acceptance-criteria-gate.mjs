@@ -66,14 +66,16 @@ const forbiddenVisible = [
 const requiredHeaderLinks = ["Dashboard", "News", "Entities", "People", "Transactions", "Compass", "Reports"];
 const requiredDashboardText = [
   "SWFI",
-  "Discover",
+  "Here's your intelligence and pipeline overview.",
+  "Global Capital Map",
+  "AI Insights",
   "Recent Activity",
   "Transactions",
   "Market Focus",
   "Compass Investment Types",
   "SWF Buys by Sector",
 ];
-const requiredDashboardHydrationText = ["Discover", "Recent Activity", "Top 10"];
+const requiredDashboardHydrationText = ["Here's your intelligence and pipeline overview.", "Global Capital Map", "AI Insights"];
 const leakPattern = /(?:[?&]source=|%3Fsource%3D|%26source%3D|source_gap|source_filter|schema_version|result_qualifier|backend|active mirror)/i;
 const dashboardPlaceholderPattern = /\b(Source gap|source_gap|Loading|No source selected|No internal record mapping|citation-only)\b/i;
 
@@ -661,7 +663,11 @@ async function authenticatedNavigationCheck(browser) {
     result.swfi_auth_handoff_checked = result.failures.length === 0;
     const session = await context.request.get(rootOriginUrl("/api/session/status/v1"), { timeout: 30_000 });
     result.session_status = session.status();
-    if (![401, 404].includes(session.status())) result.failures.push(`unexpected_local_session_status_${session.status()}`);
+    if (![200, 401, 404].includes(session.status())) result.failures.push(`unexpected_local_session_status_${session.status()}`);
+    if (session.status() === 200) {
+      const sessionBody = await session.json().catch(() => null);
+      if (sessionBody?.authenticated !== false) result.failures.push("unexpected_authenticated_session_without_bridge");
+    }
     await page.goto(appUrl("/"), { waitUntil: "domcontentloaded", timeout: 90_000 });
     await hydratedBody(page, requiredDashboardHydrationText, 90_000);
     result.click_final_url = await page.locator('a[data-record-link="true"]').first().getAttribute("href", { timeout: 60_000 }) || "";

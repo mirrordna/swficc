@@ -36,7 +36,7 @@ const pageLinks = [
 const ENDPOINTS = {
   metrics: "/api/swfi/dashboard-metrics/v1",
   top20: "/v1/swfi/top20?limit=100",
-  allocators: "/api/allocator-activity/v1?days=90&limit=100&sort=deal_count&direction=desc",
+  allocators: "/api/active-allocators/v1?days=90&limit=100&sort=activity_count&direction=desc",
   rfps: "/api/live-opportunities/v1?limit=100&page=1",
   transactions: "/api/recent-transactions/v1?days=90&limit=100&page=1",
   sectorFlows: "/api/sector-flows/v1?days=365",
@@ -83,11 +83,13 @@ export default function PdfDoctrinePage() {
       clean(row.entity_type || row.type),
       clean(row.country),
       clean(row.region),
-      clean(row.deal_count || row.activity_count),
-      cleanMoney(row.total_deal_value || row.capital_deployed || row.amount_usd),
-      cleanDate(row.latest_transaction_date || row.last_transaction_date || row.closed_at),
+      clean(row.activity_reason),
+      clean(row.activity_count),
+      cleanDate(row.most_recent_activity_date || row.last_updated),
+      cleanMoney(row.assets || row.aum),
+      cleanMoney(row.managed_assets || row.assets_managed),
     ] as TableCell[])
-    .filter((row) => displayText(row[0]) && displayText(row[4]));
+    .filter((row) => displayText(row[0]) && displayText(row[5]));
 
   const mandateRows = rows(packets.rfps)
     .map((row) => [
@@ -225,7 +227,7 @@ export default function PdfDoctrinePage() {
             <Section title="Active Allocators">
               <ReportTable
                 filename="swfi-active-allocators.csv"
-                headers={["Entity Name", "Entity Type", "Country", "Region", "Number of Deals", "Total Deal Value", "Last Transaction Date"]}
+                headers={["Entity Name", "Entity Type", "Country", "Region", "Activity Reason", "Activity Count", "Most Recent Activity Date", "AUM", "Managed Assets"]}
                 rows={allocatorRows}
                 empty="No active allocator rows available."
               />

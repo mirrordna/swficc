@@ -44,7 +44,7 @@ const routeExpectations = {
   "/profiles/": { entities: 5 },
   "/profiles/?filter=GC1%20Ventures": {
     entities: 1,
-    exact: [{ text: /GC1 Ventures/i, redirect: "/profiles/detail/?id=5e39a581fcbe7e8ca723278c" }],
+    exact: [{ text: /GC1 Ventures/i, redirect: "/v1/entities/5e39a581fcbe7e8ca723278c" }],
   },
   "/people/": { people: 5 },
   "/transactions/": { transactions: 5 },
@@ -191,8 +191,6 @@ function linkFailures(route, links) {
   const failures = [];
   const rawRecords = links.filter((link) => link.family === "raw_swfi_record");
   if (rawRecords.length) failures.push(`raw_swfi_record_links:${rawRecords.slice(0, 6).map((link) => link.text || link.raw).join("|")}`);
-  const legacy = links.filter((link) => link.family === "raw_legacy_article");
-  if (legacy.length) failures.push(`raw_legacy_article_links:${legacy.slice(0, 6).map((link) => link.text || link.raw).join("|")}`);
   const badSignin = links.filter((link) => link.family === "swfi_signin" && (!/Sign In/i.test(link.text || "") || link.invalidRedirect || link.absoluteRedirect));
   if (badSignin.length) failures.push(`non_record_swfi_signin_links:${badSignin.slice(0, 6).map((link) => link.text || link.raw).join("|")}`);
   const absoluteRecordRedirects = links.filter((link) => link.family === "swfi_record_handoff" && link.absoluteRedirect);
@@ -291,27 +289,31 @@ async function inspectRoute(browser, route) {
           }
         });
         const hasKind = (kind) => {
-          if (kind === "research") return hrefs.some((anchor) => /\/swficc\/research\/detail\/?\?/i.test(anchor.href) || /\/research\/detail\/?\?/i.test(anchor.href));
+          if (kind === "research") {
+            return hrefs.some((anchor) => {
+              if (/\/swficc\/research\/detail\/?\?/i.test(anchor.href) || /\/research\/detail\/?\?/i.test(anchor.href)) return true;
+              try {
+                const parsed = new URL(anchor.href);
+                return ["www.swfi.com", "swfi.com", "cms.swfi.com"].includes(parsed.hostname) && Boolean(parsed.searchParams.get("p"));
+              } catch {
+                return false;
+              }
+            });
+          }
           const handoffPath = {
             entities: "/v1/entities/",
             transactions: "/v1/transactions/",
             compass: "/v1/compass/",
             people: "/v1/people/",
           }[kind];
-          if (handoffPath && hrefs.some((anchor) => /https:\/\/www\.swfi\.com\/v1\/signin\/\?/i.test(anchor.href) && anchor.href.includes(handoffPath))) {
+          if (handoffPath && hrefs.some((anchor) => /https:\/\/www\.swfi\.com\/v1\/signin\/\?/i.test(anchor.href) && decodeURIComponent(anchor.href).includes(handoffPath))) {
             return true;
           }
-          const recordPath = {
-            entities: "/profiles/detail/?id=",
-            transactions: "/transactions/detail/?id=",
-            compass: "/mandates/detail/?id=",
-            people: "/people/detail/?id=",
-          }[kind];
-          return recordPath ? hrefs.some((anchor) => anchor.href.includes(recordPath)) : false;
+          return false;
         };
         const hasExact = (exact) => hrefs.some((anchor) => {
           const pattern = new RegExp(exact.text, "i");
-          return pattern.test(anchor.text) && anchor.href.includes(exact.redirect);
+          return pattern.test(anchor.text) && decodeURIComponent(anchor.href).includes(exact.redirect);
         });
         return expectation.kinds.every(hasKind) && expectation.exact.every(hasExact);
       }, {

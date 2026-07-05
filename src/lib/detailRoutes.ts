@@ -1,5 +1,5 @@
 import { text } from "@/lib/sourcePackets";
-import { isAllowedSwfiHost } from "@/lib/selfContainedLinks";
+import { isAllowedSwfiHost, swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
 
 type Row = Record<string, unknown>;
 export type DashboardDetailType =
@@ -102,46 +102,28 @@ function profileDetailUrl(row: Row, options: DashboardDetailOptions): string {
   const handoff = swfiRecordHandoffUrl("entities", row, options, ["entity_id", "entityID", "id", "source_record_id"]);
   if (handoff) return handoff;
   const label = text(row.name || row.institution, "");
-  const slug = text(options.slug || row.slug || row.profile_slug, "");
-  const id = rowRecordId("entities", row, options, ["entity_id", "entityID", "id", "source_record_id"]);
-  const params = new URLSearchParams();
-  if (slug) params.set("slug", slug);
-  if (options.label || label) params.set("name", options.label || label);
-  if (!slug && !(options.label || label) && id) params.set("id", id);
-  return `/profiles/detail/?${params.toString()}`;
+  return discoveryFallback(options.label || label);
 }
 
 function transactionDetailUrl(row: Row, options: DashboardDetailOptions): string {
   const handoff = swfiRecordHandoffUrl("transactions", row, options, ["transaction_id", "transactionID", "id", "source_record_id"]);
   if (handoff) return handoff;
   const label = text(options.label || row.title || row.name || row.institution, "");
-  const id = rowRecordId("transactions", row, options, ["transaction_id", "transactionID", "id", "source_record_id"]);
-  const params = new URLSearchParams();
-  if (label) params.set("title", label);
-  if (!label && id) params.set("id", id);
-  return `/transactions/detail/?${params.toString()}`;
+  return discoveryFallback(label);
 }
 
 function mandateDetailUrl(row: Row, options: DashboardDetailOptions): string {
   const handoff = swfiRecordHandoffUrl("compass", row, options, ["compass_id", "mandate_id", "rfp_id", "id", "source_record_id"]);
   if (handoff) return handoff;
   const label = text(options.label || row.title || row.name || row.institution, "");
-  const id = rowRecordId("compass", row, options, ["compass_id", "mandate_id", "rfp_id", "id", "source_record_id"]);
-  const params = new URLSearchParams();
-  if (label) params.set("title", label);
-  if (!label && id) params.set("id", id);
-  return `/mandates/detail/?${params.toString()}`;
+  return discoveryFallback(label);
 }
 
 function personDetailUrl(row: Row, options: DashboardDetailOptions): string {
   const handoff = swfiRecordHandoffUrl("people", row, options, ["person_id", "personID", "id", "source_record_id"]);
   if (handoff) return handoff;
   const label = text(options.label || row.name || row.title, "");
-  const id = rowRecordId("people", row, options, ["person_id", "personID", "id", "source_record_id"]);
-  const params = new URLSearchParams();
-  if (label) params.set("name", label);
-  if (!label && id) params.set("id", id);
-  return `/people/detail/?${params.toString()}`;
+  return discoveryFallback(label);
 }
 
 export function legacyPostId(sourceUrl: string | undefined): string {
@@ -158,22 +140,20 @@ export function legacyPostId(sourceUrl: string | undefined): string {
 function researchDetailUrl(row: Row, options: DashboardDetailOptions): string {
   const label = text(options.label || row.title || row.name, "");
   const legacy = legacyPostId(options.sourceUrl) || text(row.legacy_post || row.legacy_post_id || row.post_id || row.wordpress_id, "");
+  if (legacy) return `/research/detail/?${new URLSearchParams({ legacy }).toString()}`;
+  return discoveryFallback(label);
+}
+
+function discoveryFallback(label: string): string {
   const params = new URLSearchParams();
-  if (label) params.set("title", label);
-  if (legacy) params.set("legacy", legacy);
-  return `/research/detail/?${params.toString()}`;
+  if (label) params.set("q", label);
+  return `/search/${params.toString() ? `?${params.toString()}` : ""}`;
 }
 
 function swfiRecordHandoffUrl(section: SwfiSection, row: Row, options: DashboardDetailOptions, idKeys: string[]): string {
   const id = rowRecordId(section, row, options, idKeys);
   if (!id) return "";
-  const routeBySection: Record<SwfiSection, string> = {
-    entities: "/profiles/detail/",
-    people: "/people/detail/",
-    transactions: "/transactions/detail/",
-    compass: "/mandates/detail/",
-  };
-  return `${routeBySection[section]}?${new URLSearchParams({ id }).toString()}`;
+  return swfiAuthHandoffHref(`https://www.swfi.com/v1/${section}/${id}`);
 }
 
 function rowRecordId(section: SwfiSection, row: Row, options: DashboardDetailOptions, idKeys: string[]): string {

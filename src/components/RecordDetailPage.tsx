@@ -335,7 +335,7 @@ function ProfileRecord({ record, sourceUrl }: { record: Row; sourceUrl: string }
     ["Website", text(record.website)],
   ];
   const sourceFields = [
-    ["Source Record", sourceUrl || text(record.source_url || record.swfi_url) ? "SWFI record" : ""],
+    ["SWFI Page", sourceUrl || text(record.source_url || record.swfi_url) ? "SWFI record" : ""],
   ];
   return (
     <section className="grid gap-4 rounded border border-[#DCE3EA] bg-white p-4">
@@ -396,7 +396,7 @@ function TransactionRecord({ record, sourceUrl }: { record: Row; sourceUrl: stri
     ["Buyer Count", text(record.buyer_count)],
   ];
   const sourceFields = [
-    ["Source Record", sourceUrl || text(record.source_url || record.swfi_url) ? "SWFI record" : ""],
+    ["SWFI Page", sourceUrl || text(record.source_url || record.swfi_url) ? "SWFI record" : ""],
   ];
 
   return (
@@ -414,10 +414,10 @@ function TransactionRecord({ record, sourceUrl }: { record: Row; sourceUrl: stri
       <EntitySection title="Seller Entities" entities={sellerEntities} emptyLabel={text(record.seller_entity, NOT_DISCLOSED)} />
 
       <section className="grid gap-2 rounded border border-[#DCE3EA] p-3">
-        <div className="text-[11px] font-bold uppercase tracking-[0.07em] text-[#7A8A9B]">Source Record</div>
+        <div className="text-[11px] font-bold uppercase tracking-[0.07em] text-[#7A8A9B]">SWFI Page</div>
         <div className="grid gap-2">
           {sourceFields.map(([label, value]) => (
-            <DetailRow key={label} label={label} value={value} sourceUrl={label === "Source Record" ? sourceUrl : ""} />
+            <DetailRow key={label} label={label} value={value} sourceUrl={label === "SWFI Page" ? sourceUrl : ""} />
           ))}
         </div>
       </section>
@@ -447,7 +447,7 @@ function MandateRecord({ record, sourceUrl }: { record: Row; sourceUrl: string }
     ["Relevant Date", text(record.relevant_date || record.relevantDate)],
   ];
   const sourceFields = [
-    ["Source Record", sourceUrl || text(record.source_url || record.swfi_url) ? "SWFI record" : ""],
+    ["SWFI Page", sourceUrl || text(record.source_url || record.swfi_url) ? "SWFI record" : ""],
   ];
 
   return (
@@ -506,7 +506,7 @@ function PersonRecord({ record, sourceUrl }: { record: Row; sourceUrl: string })
     ["Overview", "#overview"],
     ["Contact", "#contact"],
     ...(verifiedLinks.length ? [["Verified Links", "#verified-links"] as [string, string]] : []),
-    ["Source", "#source-record"],
+    ["SWFI Page", "#source-record"],
   ];
   const fields = [
     ["Name", text(record.name || record.title)],
@@ -518,7 +518,7 @@ function PersonRecord({ record, sourceUrl }: { record: Row; sourceUrl: string })
     ["LinkedIn", linkedIn],
   ];
   const sourceFields = [
-    ["Source Record", sourceUrl || text(record.source_url || record.swfi_url) ? "SWFI record" : ""],
+    ["SWFI Page", sourceUrl || text(record.source_url || record.swfi_url) ? "SWFI record" : ""],
   ];
 
   return (
@@ -575,7 +575,7 @@ function VerifiedPeopleLinks({ links }: { links: VerifiedPeopleLink[] }) {
             <div className="font-semibold text-[#11314F]">{link.label}</div>
             <div className="break-words text-[#41566B]">
               <a href={sourceMirrorHref(link.href, "/people/detail/")} data-source-state="on-file" className="text-[#16538C] underline">
-                {link.label === "SWFI source record" ? "SWFI record" : link.label}
+                {link.label === "SWFI source record" ? "SWFI page" : link.label}
               </a>
               <div className="mt-1 text-[12px] text-[#7A8A9B]">Verified by {link.source}</div>
             </div>
@@ -596,7 +596,7 @@ function ReportRecord({ record, sourceUrl }: { record: Row; sourceUrl: string })
     ["Report Asset", assetUrl ? "Report asset on file" : ""],
   ];
   const sourceFields = [
-    ["Source Record", sourceUrl || assetUrl ? "SWFI report record" : ""],
+    ["SWFI Page", sourceUrl || assetUrl ? "SWFI report record" : ""],
   ];
 
   return (
@@ -617,10 +617,10 @@ function ReportRecord({ record, sourceUrl }: { record: Row; sourceUrl: string })
 function SourceRecordSection({ fields, sourceUrl, returnRoute }: { fields: string[][]; sourceUrl: string; returnRoute: string }) {
   return (
     <section id="source-record" className="grid gap-2 rounded border border-[#DCE3EA] p-3">
-      <div className="text-[11px] font-bold uppercase tracking-[0.07em] text-[#7A8A9B]">Source Record</div>
+      <div className="text-[11px] font-bold uppercase tracking-[0.07em] text-[#7A8A9B]">SWFI Page</div>
       <div className="grid gap-2">
         {fields.map(([label, value]) => (
-          <DetailRow key={label} label={label} value={value} sourceUrl={label.includes("Source") || label.includes("URL") ? sourceUrl : ""} returnRoute={returnRoute} />
+          <DetailRow key={label} label={label} value={value} sourceUrl={label.includes("SWFI Page") || label.includes("URL") ? sourceUrl : ""} returnRoute={returnRoute} />
         ))}
       </div>
     </section>

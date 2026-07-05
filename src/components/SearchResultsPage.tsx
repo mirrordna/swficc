@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import SwfiBrandHeader from "@/components/SwfiBrandHeader";
 import type { Packet } from "@/lib/sourcePackets";
 import { fetchPacket, isFact, money, rows, text } from "@/lib/sourcePackets";
-import { appHref, isSwfiPlatformRecordHref, selfContainedHref } from "@/lib/selfContainedLinks";
+import { appHref, isSwfiPlatformRecordHref, selfContainedHref, swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
+import { businessSearchQueryVariants, dedupeSearchRecords, rankSearchRecords, searchRelevanceScore as businessSearchRelevanceScore } from "@/lib/searchRelevance";
 
 const SEARCH_PREFETCH_CACHE_PREFIX = "swfipn.search.prefetch.v1:";
 
@@ -34,7 +35,11 @@ function cachedPacket(query: string): Packet | null {
 export default function SearchResultsPage() {
   const [query, setQuery] = useState("");
   const [packet, setPacket] = useState<Packet | null>(null);
+  const [entityPackets, setEntityPackets] = useState<Packet[]>([]);
   const [loading, setLoading] = useState(false);
+  const [rowLimit, setRowLimit] = useState(25);
+  const [sortKey, setSortKey] = useState<"relevance" | "type" | "result" | "source" | "detail">("relevance");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   useEffect(() => {
     const currentQuery = queryFromUrl();
@@ -54,13 +59,27 @@ export default function SearchResultsPage() {
         controller.abort();
       };
     }
-    void fetchPacket(`/api/v1/public/search?q=${encodeURIComponent(currentQuery)}&limit=25`, 20_000, {
+    const publicSearch = fetchPacket(`/api/v1/public/search?q=${encodeURIComponent(currentQuery)}&limit=25`, 20_000, {
       signal: controller.signal,
       attempts: 2,
     }).then((nextPacket) => {
       if (!active) return;
       if (isFact(nextPacket)) setPacket(nextPacket);
-      setLoading(false);
+    });
+    const entitySearch = Promise.all(businessSearchQueryVariants(currentQuery).map((variant) => (
+      fetchPacket(`/api/source-data/search/v1?collection=entities&q=${encodeURIComponent(variant)}&limit=25`, 25_000, {
+        signal: controller.signal,
+        attempts: 2,
+      })
+    ))).then((nextPackets) => {
+      if (!active) return;
+      setEntityPackets(nextPackets.filter(isFact));
+    }).catch(() => {
+      if (!active) return;
+      setEntityPackets([]);
+    });
+    void Promise.allSettled([publicSearch, entitySearch]).then(() => {
+      if (active) setLoading(false);
     });
     return () => {
       active = false;
@@ -71,12 +90,23 @@ export default function SearchResultsPage() {
 
   const resultRows = useMemo(() => {
     const packetRows = packet && isFact(packet) ? rows(packet, "results") : [];
-    return rankSearchRows(packetRows, query);
-  }, [packet, query]);
+    const entityRows = entityPackets.flatMap((entityPacket) => rows(entityPacket, "results"));
+    return rankSearchRows(dedupeSearchRecords([...entityRows, ...packetRows]), query);
+  }, [entityPackets, packet, query]);
+  const sortedRows = useMemo(() => sortSearchRows(resultRows, sortKey, sortDir), [resultRows, sortDir, sortKey]);
+  const visibleRows = sortedRows.slice(0, rowLimit);
   const count = resultRows.length;
   const showingText = query
-    ? `Showing ${count.toLocaleString("en-US")} of ${count.toLocaleString("en-US")}`
+    ? `Showing ${visibleRows.length.toLocaleString("en-US")} of ${count.toLocaleString("en-US")}`
     : "Awaiting search";
+  function changeSort(nextKey: typeof sortKey) {
+    if (sortKey === nextKey) {
+      setSortDir((current) => (current === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setSortKey(nextKey);
+    setSortDir("asc");
+  }
 
   return (
     <div className="min-h-screen bg-[#F2F4F6] font-sans text-[#1B2733]">
@@ -95,18 +125,33 @@ export default function SearchResultsPage() {
         </section>
 
         <section className="overflow-hidden rounded border border-[#DCE3EA] bg-white">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#DCE3EA] bg-[#FBFCFD] px-3 py-2 text-[12px] text-[#41566B]">
+            <div>{showingText}</div>
+            <label className="flex items-center gap-2">
+              <span className="font-semibold">Rows</span>
+              <select
+                value={rowLimit}
+                onChange={(event) => setRowLimit(Number(event.target.value))}
+                className="rounded border border-[#DCE3EA] bg-white px-2 py-1"
+              >
+                {[5, 10, 25, 50, 100].map((value) => (
+                  <option key={value} value={value}>{value}</option>
+                ))}
+              </select>
+            </label>
+          </div>
           <table className="w-full border-collapse text-left text-[13px]">
             <thead className="bg-[#F7F9FB] text-[11px] uppercase tracking-[0.04em] text-[#5B6A78]">
               <tr>
-                <th className="border-b border-[#DCE3EA] px-3 py-2">Type</th>
-                <th className="border-b border-[#DCE3EA] px-3 py-2">Result</th>
-                <th className="border-b border-[#DCE3EA] px-3 py-2">Source</th>
-                <th className="border-b border-[#DCE3EA] px-3 py-2">Detail</th>
+                <SortableHeader label="Type" active={sortKey === "type"} direction={sortDir} onClick={() => changeSort("type")} />
+                <SortableHeader label="Result" active={sortKey === "result"} direction={sortDir} onClick={() => changeSort("result")} />
+                <SortableHeader label="Source" active={sortKey === "source"} direction={sortDir} onClick={() => changeSort("source")} />
+                <SortableHeader label="Detail" active={sortKey === "detail"} direction={sortDir} onClick={() => changeSort("detail")} />
                 <th className="border-b border-[#DCE3EA] px-3 py-2">Record</th>
               </tr>
             </thead>
             <tbody>
-              {resultRows.length ? resultRows.map((row, index) => {
+              {visibleRows.length ? visibleRows.map((row, index) => {
                 const source = sourceHref(row);
                 return (
                   <tr key={`${text(row.name, "Result")}-${index}`} className="align-top">
@@ -138,35 +183,54 @@ function sourceHref(row: Record<string, unknown>): string {
   return text(row.source_url || row.swfi_url || row.url || row.href, "");
 }
 
+function SortableHeader({
+  label,
+  active,
+  direction,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  direction: "asc" | "desc";
+  onClick: () => void;
+}) {
+  return (
+    <th className="border-b border-[#DCE3EA] px-3 py-2">
+      <button type="button" onClick={onClick} className="w-full bg-transparent text-left font-semibold">
+        {label}{active ? ` ${direction}` : ""}
+      </button>
+    </th>
+  );
+}
+
+function sortSearchRows(rowsToSort: Record<string, unknown>[], sortKey: "relevance" | "type" | "result" | "source" | "detail", sortDir: "asc" | "desc") {
+  if (sortKey === "relevance") return rowsToSort;
+  const direction = sortDir === "asc" ? 1 : -1;
+  return [...rowsToSort].sort((a, b) => compareSearchRows(a, b, sortKey) * direction);
+}
+
+function compareSearchRows(a: Record<string, unknown>, b: Record<string, unknown>, sortKey: "type" | "result" | "source" | "detail") {
+  return searchSortValue(a, sortKey).localeCompare(searchSortValue(b, sortKey), undefined, { numeric: true, sensitivity: "base" });
+}
+
+function searchSortValue(row: Record<string, unknown>, sortKey: "type" | "result" | "source" | "detail") {
+  if (sortKey === "type") return "Institution";
+  if (sortKey === "result") return text(row.name, "");
+  if (sortKey === "source") return "SWFI";
+  return [text(row.type, ""), text(row.country || row.region, ""), money(row.aum || row.assets)].filter(Boolean).join(" / ");
+}
+
 function rankSearchRows(sourceRows: Record<string, unknown>[], query: string) {
-  const clean = query.trim();
-  if (!clean) return sourceRows;
-  return [...sourceRows].sort((a, b) => searchScore(b, clean) - searchScore(a, clean));
+  return rankSearchRecords(sourceRows, query, "entity");
 }
 
 function searchScore(row: Record<string, unknown>, query: string) {
-  const clean = query.trim().toLowerCase();
-  const name = text(row.name || row.title || row.institution, "").toLowerCase();
-  const type = text(row.type || row.entity_type, "").toLowerCase();
-  const country = text(row.country || row.region, "").toLowerCase();
-  const all = Object.values(row).filter((value) => typeof value === "string").join(" ").toLowerCase();
-  const terms = clean.split(/\s+/).filter(Boolean);
-  let score = 0;
-  if (name === clean) score += 1000;
-  if (name.startsWith(clean)) score += 700;
-  if (name.includes(clean)) score += 520;
-  if (terms.length && terms.every((term) => name.includes(term))) score += 320;
-  if (terms.length && terms.every((term) => all.includes(term))) score += 180;
-  if (country.includes(clean)) score += 60;
-  if (/sovereign wealth fund|central bank|public pension|pension|investment authority|asset owner/i.test(type)) score += 180;
-  if (/\b(adia|abu dhabi investment authority)\b/i.test(name) && /abu|dhabi|adia/.test(clean)) score += 500;
-  if (/\b(mubadala|adia|adq|abu dhabi)\b/i.test(name) && /abu|dhabi|uae|united arab emirates/.test(clean)) score += 180;
-  return score;
+  return businessSearchRelevanceScore(row, query, "entity");
 }
 
 function productHref(href: string | undefined, fallback = "/"): string {
   if (!href) return appHref(fallback);
-  if (isSwfiPlatformRecordHref(href)) return selfContainedHref(href, fallback);
+  if (isSwfiPlatformRecordHref(href)) return swfiAuthHandoffHref(href);
   if (href.startsWith("http://") || href.startsWith("https://")) return href;
   return selfContainedHref(href, fallback);
 }

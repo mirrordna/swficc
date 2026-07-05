@@ -15,6 +15,7 @@ const autocompleteTargetMs = Number(process.env.SWFIPN_SEARCH_AUTOCOMPLETE_TARGE
 const resultsTargetMs = Number(process.env.SWFIPN_SEARCH_RESULTS_TARGET_MS || 800);
 const requiredTabs = ["All", "Entities", "RFPs & Opportunities", "Transactions", "News & Articles"];
 const requiredGroups = ["Entities", "Transactions", "People", "News & Articles"];
+const expectedResult = expectedResultForQuery(query);
 
 async function main() {
   const browser = await chromium.launch({ headless: true });
@@ -28,7 +29,7 @@ async function main() {
 
   const dashboardStarted = Date.now();
   await page.goto(origin, { waitUntil: "domcontentloaded", timeout: 120_000 });
-  await page.waitForSelector("text=Discover", { timeout: 120_000 });
+  await page.waitForSelector("text=Global Capital Map", { timeout: 120_000 });
   await page.waitForSelector("[aria-label=\"Open Global Search\"]", { timeout: 120_000 });
   await page.waitForFunction(() => !document.body.innerText.includes("Loading"), null, { timeout: 120_000 }).catch(() => {});
   await page.bringToFront();
@@ -49,12 +50,20 @@ async function main() {
     const text = dialog.textContent || "";
     return text.includes("Entities") || text.includes("No visible dashboard matches.");
   }, null, { timeout: 10_000 });
+  if (expectedResult) {
+    await page.waitForFunction((expected) => {
+      const dialog = document.querySelector("[role='dialog']");
+      if (!dialog) return false;
+      return (dialog.textContent || "").includes(String(expected));
+    }, expectedResult, { timeout: Math.max(10_000, autocompleteTargetMs) }).catch(() => {});
+  }
   const autocompleteMs = Date.now() - autocompleteStarted;
   await page.screenshot({ path: screenshotPath, fullPage: true });
 
   const modalText = await page.locator("[role=\"dialog\"]").innerText();
   const tabsMissing = requiredTabs.filter((tab) => !modalText.includes(tab));
   const groupsMissing = requiredGroups.filter((group) => !modalText.includes(group));
+  const modalHasExpectedResult = expectedResult ? modalText.includes(expectedResult) : true;
   const clearButtonVisible = await page.locator("button", { hasText: "Clear" }).count().then((count) => count > 0);
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Escape");
@@ -73,6 +82,7 @@ async function main() {
   const resultsPageMs = Date.now() - resultsStarted;
   const resultsBody = await page.locator("body").innerText();
   const resultsHasRowsOrEmptyState = /Showing\s+\d+\s+of\s+[\d,]+/.test(resultsBody) || resultsBody.includes("Not disclosed");
+  const resultsHasExpectedResult = expectedResult ? resultsBody.includes(expectedResult) : true;
   const searchApiResponses = network.items().filter((item) => /api\/(v1\/public\/search|source-data\/search|transaction-drilldown)/.test(item.url));
   const serverRenderedSearch = String(resultsResponse?.headers()?.["x-swfipn-search-render"] || "").toLowerCase() === "server";
   const apiOk = serverRenderedSearch || searchApiResponses.some((item) => item.status === 200);
@@ -83,6 +93,8 @@ async function main() {
   if (groupsMissing.length) failures.push(`missing_groups:${groupsMissing.join("|")}`);
   if (!clearButtonVisible) failures.push("clear_button_missing_after_query");
   if (!modalClosed) failures.push("escape_did_not_close_modal");
+  if (!modalHasExpectedResult) failures.push(`modal_missing_expected_result:${expectedResult}`);
+  if (!resultsHasExpectedResult) failures.push(`results_missing_expected_result:${expectedResult}`);
   if (autocompleteMs > autocompleteTargetMs) failures.push(`autocomplete_${autocompleteMs}_gt_${autocompleteTargetMs}`);
   if (resultsPageMs > resultsTargetMs) failures.push(`results_page_${resultsPageMs}_gt_${resultsTargetMs}`);
   if (!resultsHasRowsOrEmptyState) failures.push("results_page_missing_rows_or_empty_state");
@@ -108,6 +120,9 @@ async function main() {
       autofocus,
       clear_button_visible: clearButtonVisible,
       modal_closed: modalClosed,
+      expected_result: expectedResult || "",
+      modal_has_expected_result: modalHasExpectedResult,
+      results_has_expected_result: resultsHasExpectedResult,
       results_has_rows_or_empty_state: resultsHasRowsOrEmptyState,
       search_api_200: apiOk,
       server_rendered_search: serverRenderedSearch,
@@ -151,6 +166,16 @@ function createNetworkRecorder(page) {
 
 function normalizeOrigin(value) {
   return value.endsWith("/") ? value : `${value}/`;
+}
+
+function expectedResultForQuery(value) {
+  const key = String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const expected = new Map([
+    ["pif", "Public Investment Fund"],
+    ["abu dhabi", "Abu Dhabi Investment Authority"],
+    ["zurich insurance group", "Zurich Insurance Group"],
+  ]);
+  return expected.get(key) || "";
 }
 
 main().catch((error) => {

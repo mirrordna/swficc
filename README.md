@@ -1,4 +1,17 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# SWFI Dashboard
+
+Current canonical dashboard:
+
+https://dashboard.swfi.com/swficc/
+
+Start here:
+
+- [SWFI Dashboard Wiki](./docs/wiki/README.md)
+- [Current Version](./docs/wiki/current-version.md)
+- [Requirements Control](./docs/wiki/requirements-control.md)
+- [Acceptance And Release](./docs/wiki/acceptance-and-release.md)
+
+This repo is governed by the SWFI dashboard wiki and receipt-backed acceptance process. Do not treat the default Next.js setup notes below as the project operating model.
 
 ## Getting Started
 

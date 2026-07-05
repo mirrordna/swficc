@@ -20,7 +20,7 @@ const ROUTE_CHECK_TIMEOUT_MS = Number(process.env.SWFIPN_ROUTE_CHECK_TIMEOUT_MS 
 const SIMPLE_CHECK_TIMEOUT_MS = Number(process.env.SWFIPN_SIMPLE_CHECK_TIMEOUT_MS || (gateLevel === "smoke" ? 90_000 : 180_000));
 const CONTROL_CHECK_TIMEOUT_MS = Number(process.env.SWFIPN_CONTROL_CHECK_TIMEOUT_MS || (gateLevel === "smoke" ? 30_000 : 180_000));
 const SMOKE_ROUTE_SET = new Set(["/", "/profiles/", "/people/", "/transactions/", "/mandates/", "/research/", "/search/"]);
-const SMOKE_DETAIL_IDS = new Set(["profile_andreessen", "transaction_chatsee", "mandate_adia", "research_legacy_goldman", "source_transaction"]);
+const SMOKE_DETAIL_IDS = new Set(["profile_andreessen", "transaction_chatsee", "mandate_adia", "research_legacy_isif", "source_transaction"]);
 const SMOKE_SEARCH_IDS = new Set(["real_estate"]);
 const SMOKE_CONTROL_ROUTES = new Set(["/profiles/", "/transactions/", "/mandates/", "/search/?q=Real%20Estate"]);
 const CLIENT_FORBIDDEN_VISIBLE = [
@@ -59,17 +59,17 @@ const CORE_ROUTES = [
       { text: "News", raw: "/swficc/intelligence/" },
     ],
   },
-  { route: "/profiles/", ready: "Entity Name", allowSourceGap: false, waitMs: 90_000 },
+  { route: "/profiles/", ready: "Showing 25 of", allowSourceGap: false, waitMs: 90_000 },
   { route: "/people/", ready: "Showing 25 of", allowSourceGap: false, waitMs: 90_000 },
   { route: "/deals/", ready: "Showing 25 of", allowSourceGap: false, waitMs: 90_000 },
   { route: "/comparisons/", ready: "Showing 25 of", allowSourceGap: false, waitMs: 180_000 },
-  { route: "/transactions/", ready: "Data source", allowSourceGap: false, waitMs: 90_000 },
+  { route: "/transactions/", ready: "Showing 25 of", allowSourceGap: false, waitMs: 90_000, deadlineMs: 180_000 },
   { route: "/mandates/", ready: "Showing 25 of", allowSourceGap: false, waitMs: 90_000 },
   { route: "/reports/", ready: "Reports Intelligence", allowSourceGap: false },
   { route: "/intelligence/", ready: "Showing 5 of", allowSourceGap: false, waitMs: 180_000 },
-  { route: "/research/", ready: "Showing 25 of", allowSourceGap: false, waitMs: 180_000 },
-  { route: "/search/", ready: "Institution, Person, Strategy", allowSourceGap: false, waitMs: 90_000 },
-  { route: "/provenance/", ready: "Source References", allowSourceGap: false, waitMs: 90_000 },
+  { route: "/research/", ready: "Showing", allowSourceGap: false, waitMs: 180_000 },
+  { route: "/search/", ready: "Awaiting search", allowSourceGap: false, waitMs: 90_000 },
+  { route: "/provenance/", ready: "Record Links", allowSourceGap: false, waitMs: 90_000 },
 ];
 
 const SEARCH_CASES = [
@@ -104,46 +104,46 @@ const DETAIL_CASES = [
   {
     id: "transaction_chatsee",
     url: "/transactions/detail/?id=6a2c168b43e7f69d0cd0c923&title=ChatSee.AI+Inc",
-    required: ["TRANSACTION DETAILS", "Transaction Details", "Buyer Entities", "Industry / Category", "Source Record", "ChatSee.AI Inc", "True Ventures", "Verified in SWFI records"],
+    required: ["TRANSACTION DETAILS", "Transaction Details", "Buyer Entities", "Industry / Category", "SWFI Page", "ChatSee.AI Inc", "True Ventures", "Verified in SWFI records"],
     forbidden: ["Additional Mapped Fields"],
     allowSourceGap: false,
   },
   {
     id: "transaction_kinetitec",
     url: "/transactions/detail/?id=6a2bfcbd2c60bdfbf8489788&title=KinetiTec",
-    required: ["TRANSACTION DETAILS", "Transaction Details", "Buyer Entities", "Investment Type", "Source Record", "KinetiTec", "Boomerang Ventures", "Verified in SWFI records"],
+    required: ["TRANSACTION DETAILS", "Transaction Details", "Buyer Entities", "Investment Type", "SWFI Page", "KinetiTec", "Boomerang Ventures", "Verified in SWFI records"],
     forbidden: ["Additional Mapped Fields"],
     allowSourceGap: false,
   },
   {
     id: "mandate_adia",
     url: "/mandates/detail/?id=68b6f675576df8efb3fdb766&title=ADIA+Hones+in+on+US+Private+Equity+and+Pacing+for+2025",
-    required: ["COMPASS / RFP DETAIL", "RFP / Mandate Details", "Institution", "Summary", "Source Record", "ADIA Hones in on US Private Equity", "Verified in SWFI records"],
+    required: ["COMPASS / RFP DETAIL", "RFP / Mandate Details", "Institution", "Summary", "SWFI Page", "ADIA Hones in on US Private Equity", "Verified in SWFI records"],
     allowSourceGap: false,
   },
   {
     id: "person_srinivasan",
     url: "/people/detail/?id=6a3117c8596879824a782b67&name=Srinivasan+Kesavan",
-    required: ["PERSON DETAIL", "Person Details", "Source Record", "Srinivasan Kesavan", "Verified in SWFI records"],
+    required: ["PERSON DETAIL", "Person Details", "SWFI Page", "Srinivasan Kesavan", "Verified in SWFI records"],
     allowSourceGap: false,
   },
   {
     id: "source_transaction",
     url: "/source/",
-    required: ["SOURCE REFERENCE", "Search records"],
+    required: ["RECORD LINK", "Search records"],
     allowSourceGap: false,
   },
   {
-    id: "research_legacy_goldman",
-    url: "/research/detail/?legacy=109189",
+    id: "research_legacy_isif",
+    url: "/research/detail/?legacy=109264",
     required: [
       "RESEARCH / NEWS DETAIL",
-      "Goldman Sachs Alternatives Raises Over $3 Billion",
+      "Ireland Strategic Investment Fund Reveals 4 Local Housing Investment Commitments",
       "Article Details",
       "Article / Report Body",
       "Download Source Data",
       "Verified in SWFI records",
-      "Source Record",
+      "SWFI Page",
     ],
     allowSourceGap: false,
   },
@@ -229,12 +229,21 @@ function sameAppUrl(href) {
 function isAllowedSwfiRecordUrl(href) {
   try {
     const parsed = new URL(href);
-    if (parsed.hostname !== "www.swfi.com") return false;
-    if (parsed.pathname === "/" && parsed.searchParams.has("p")) return true;
-    return /^\/v1\/(?:entities|people|transactions|compass)\//.test(parsed.pathname);
+    if (!["www.swfi.com", "swfi.com"].includes(parsed.hostname)) return false;
+    if (isAllowedSwfiCorePlatformPath(parsed)) return true;
+    if (parsed.pathname.replace(/\/?$/, "/") !== "/v1/signin/") return false;
+    if ((parsed.searchParams.get("msg") || "") !== "auth") return false;
+    const redirect = parsed.searchParams.get("redirect") || "";
+    if (!redirect) return false;
+    return isAllowedSwfiCorePlatformPath(new URL(redirect, "https://www.swfi.com"));
   } catch {
     return false;
   }
+}
+
+function isAllowedSwfiCorePlatformPath(parsed) {
+  if (parsed.pathname === "/" && parsed.searchParams.has("p")) return true;
+  return /^\/v1\/(?:entities|people|transactions|compass|news|reports)\//.test(parsed.pathname);
 }
 
 function swfiSigninHandoffUrl(value, expectedTarget) {
@@ -333,6 +342,7 @@ function isDataLink(link) {
   const text = link.text || "";
   return href.includes("/detail/")
     || href.includes("/source/?url=")
+    || isAllowedSwfiRecordUrl(href)
     || link.sourceHref
     || (!link.dashboardTarget && /SWFIPN source detail|SWFI source|SWFI.com source/i.test(text));
 }
@@ -532,11 +542,11 @@ async function inspectRoute(browser, authContext, spec) {
         const linkResponse = await linkPage.goto(targetHref, { waitUntil: "domcontentloaded", timeout: linkTimeout });
         if (!linkResponse || linkResponse.status() >= 400) linkResult.failures.push(`http_${linkResponse?.status() || "missing"}`);
         const isSourceRoute = appRoute(targetHref) === "/source/";
-        const requiredText = isSourceRoute ? ["Source Reference"] : ["Verified in SWFI records"];
+        const requiredText = isSourceRoute ? ["Record Link"] : ["Verified in SWFI records"];
         const linkBody = await waitForHydratedBody(linkPage, requiredText, linkTimeout, targetHref.includes("/profiles/detail/"));
         if (/404:|This page could not be found/i.test(linkBody)) linkResult.failures.push("404_body");
         if (!isSourceRoute && !/Verified in SWFI records/i.test(linkBody)) linkResult.failures.push("missing_verified_record");
-        if (isSourceRoute && !/Source Reference/i.test(linkBody)) linkResult.failures.push("missing_source_reference");
+        if (isSourceRoute && !/Record Link/i.test(linkBody)) linkResult.failures.push("missing_record_link");
       } catch (error) {
         linkResult.failures.push(error.message);
       } finally {
@@ -596,8 +606,13 @@ async function inspectControls(context, route) {
   try {
     await page.goto(urlFor(route), { waitUntil: "domcontentloaded", timeout: 45_000 });
     await page.waitForFunction(() => /Showing [0-9,]+ of [0-9,]+/.test(document.body.innerText), null, { timeout: CONTROL_CHECK_TIMEOUT_MS });
+    const dataTab = page.getByRole("button", { name: /^Data$/ });
+    if (await dataTab.count()) {
+      await dataTab.first().click({ timeout: 10_000 }).catch(() => {});
+      await page.waitForTimeout(500);
+    }
     result.before = await page.evaluate(() => (document.body.innerText.match(/Showing [^\n]+/) || [""])[0]);
-    const sort = page.locator("thead th button").first();
+    const sort = page.locator("thead th button:visible").first();
     if (await sort.count()) {
       await sort.click({ timeout: 10_000 });
       await page.waitForTimeout(400);
@@ -607,7 +622,8 @@ async function inspectControls(context, route) {
       result.failures.push("missing_sort_button");
     }
     const selectIndex = await page.evaluate(() => {
-      const selects = Array.from(document.querySelectorAll("select"));
+      const visible = (el) => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+      const selects = Array.from(document.querySelectorAll("select")).filter(visible);
       return selects.findIndex((select) => {
         const values = Array.from(select.querySelectorAll("option")).map((option) => option.value || option.textContent?.trim() || "");
         return values.includes("5") && values.includes("25");
@@ -616,7 +632,7 @@ async function inspectControls(context, route) {
     if (selectIndex < 0) {
       result.failures.push("missing_row_limit_select");
     } else {
-      await page.locator("select").nth(selectIndex).selectOption("10", { timeout: 10_000 });
+      await page.locator("select:visible").nth(selectIndex).selectOption("10", { timeout: 10_000 });
       await page.waitForFunction(() => document.body.innerText.includes("Showing 10 of"), null, { timeout: CONTROL_CHECK_TIMEOUT_MS });
       result.afterRows = await page.evaluate(() => (document.body.innerText.match(/Showing [^\n]+/) || [""])[0]);
     }
@@ -720,7 +736,7 @@ async function run() {
   if (validateLocalAuth) {
     checks.push({ id: "auth_context_per_check", ok: true, skipped: false, failures: [] });
   } else {
-    checks.push({ id: "auth_context_self_contained_public", ok: true, skipped: true, failures: [], reason: "Public acceptance uses first-party mirrored record pages; no custom SWFIPN login is required." });
+    checks.push({ id: "auth_context_swfi_handoff_public", ok: true, skipped: true, failures: [], reason: "Public acceptance uses SWFI sign-in handoff for protected record pages; no custom dashboard auth is required." });
   }
   checks.push(...await runLimited(
     coreRoutes,

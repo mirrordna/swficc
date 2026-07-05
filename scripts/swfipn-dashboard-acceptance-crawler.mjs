@@ -219,10 +219,9 @@ async function waitForDashboard(page, timeout = 90_000) {
       const legacyDashboard = body.includes("KPI CARDS")
         && body.includes("INSIGHTS")
         && body.includes("TOP AUM RANKING");
-      const brdDashboard = body.includes("Discover")
-        && body.includes("Recent Activity")
-        && body.includes("Top 10")
-        && body.includes("MARKET FOCUS");
+      const brdDashboard = body.includes("Here's your intelligence and pipeline overview.")
+        && body.includes("Global Capital Map")
+        && body.includes("AI Insights");
       return (legacyDashboard || brdDashboard) && !body.includes("Loading");
     },
     null,
@@ -791,9 +790,9 @@ async function run() {
     const unauthP95Ms = percentile(receipt.unauthenticated.map((row) => row.elapsed_ms), 95);
     const mobileFailures = [];
     const mobileHasLegacyData = mobileBody.includes("KPI CARDS") && mobileBody.includes("INSIGHTS");
-    const mobileHasBrdData = mobileBody.includes("Discover")
-      && mobileBody.includes("Recent Activity")
-      && mobileBody.includes("MARKET FOCUS");
+    const mobileHasBrdData = mobileBody.includes("Here's your intelligence and pipeline overview.")
+      && mobileBody.includes("Global Capital Map")
+      && mobileBody.includes("AI Insights");
     if (!mobileHasLegacyData && !mobileHasBrdData) mobileFailures.push("missing_mobile_top_level_data");
     if (mobileMetrics.searchCount < 1) mobileFailures.push("missing_mobile_search");
     if (mobileMetrics.scrollWidth > mobileMetrics.clientWidth + 2) mobileFailures.push(`mobile_horizontal_overflow:${mobileMetrics.scrollWidth}>${mobileMetrics.clientWidth}`);

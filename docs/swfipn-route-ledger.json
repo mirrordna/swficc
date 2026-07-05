@@ -4,7 +4,7 @@
   "product_truth": {
     "fact_rail": "Mongo/backend SWFI records",
     "provenance_rail": "SWFI.com source URLs",
-    "navigation_rule": "Dashboard rows and record actions resolve to the corresponding SWFI record/profile page within /swficc where an internal record exists; external protected SWFI access remains delegated to SWFI-owned auth/profile surfaces.",
+    "navigation_rule": "Dashboard discovery, chart, filter, and ranking actions may stay within /swficc; dashboard record rows and protected record actions hand off to SWFI sign-in with the intended /v1/... SWFI core platform target preserved.",
     "public_rule": "Top-level dashboard, discovery lists, Terminal-native detail pages, and brand pages may render publicly when backed by internal records."
   },
   "forbidden_visible_text": [

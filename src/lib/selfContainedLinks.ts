@@ -78,10 +78,18 @@ export function appRouteForHref(href: string | undefined, fallback = "/"): strin
   }
 }
 
+function legacyResearchRoute(postId: string): string {
+  return `/research/detail/?${new URLSearchParams({ legacy: postId }).toString()}`;
+}
+
 export function swfiMirrorHref(sourceUrl: string | undefined): string {
   if (!sourceUrl) return appHref("/");
   try {
-    const mirrored = swfiMirrorRoute(new URL(sourceUrl));
+    const parsed = new URL(sourceUrl);
+    if (swfiRecordPathFromHref(sourceUrl)) return swfiAuthHandoffHref(sourceUrl);
+    const legacyPostId = legacyPostIdFromHref(sourceUrl);
+    if (legacyPostId) return appHref(legacyResearchRoute(legacyPostId));
+    const mirrored = swfiMirrorRoute(parsed);
     return appHref(mirrored || `/source/?${new URLSearchParams({ url: sourceUrl }).toString()}`);
   } catch {
     return appHref("/");
@@ -91,7 +99,11 @@ export function swfiMirrorHref(sourceUrl: string | undefined): string {
 export function resolvedSwfiMirrorHref(sourceUrl: string | undefined): string {
   if (!sourceUrl) return "";
   try {
-    const mirrored = swfiMirrorRoute(new URL(sourceUrl));
+    const parsed = new URL(sourceUrl);
+    if (swfiRecordPathFromHref(sourceUrl)) return swfiAuthHandoffHref(sourceUrl);
+    const legacyPostId = legacyPostIdFromHref(sourceUrl);
+    if (legacyPostId) return appHref(legacyResearchRoute(legacyPostId));
+    const mirrored = swfiMirrorRoute(parsed);
     return mirrored ? appHref(mirrored) : "";
   } catch {
     return "";
@@ -99,6 +111,9 @@ export function resolvedSwfiMirrorHref(sourceUrl: string | undefined): string {
 }
 
 export function selfContainedHref(href: string | undefined, fallback = "/"): string {
+  if (swfiRecordPathFromHref(href)) return swfiAuthHandoffHref(href);
+  const legacyPostId = legacyPostIdFromHref(href);
+  if (legacyPostId) return appHref(legacyResearchRoute(legacyPostId));
   return appHref(appRouteForHref(href, fallback));
 }
 
@@ -117,7 +132,7 @@ export function sourceProvenanceHref(href: string | undefined): string | undefin
 }
 
 export function isSwfiPlatformRecordHref(href: string | undefined): boolean {
-  return Boolean(swfiRecordPathFromHref(href)) || Boolean(legacyPostIdFromHref(href));
+  return Boolean(swfiRecordPathFromHref(href));
 }
 
 export function swfiRecordPathFromHref(href: string | undefined): string {
@@ -174,7 +189,11 @@ export function normalizeSwfiPlatformHref(href: string): string {
 export function sourceDetailHref(sourceUrl: string | undefined, returnRoute = "/"): string {
   if (!sourceUrl) return appHref(returnRoute);
   try {
-    const mirrored = swfiMirrorRoute(new URL(sourceUrl));
+    const parsed = new URL(sourceUrl);
+    if (swfiRecordPathFromHref(sourceUrl)) return swfiAuthHandoffHref(sourceUrl);
+    const legacyPostId = legacyPostIdFromHref(sourceUrl);
+    if (legacyPostId) return appHref(legacyResearchRoute(legacyPostId));
+    const mirrored = swfiMirrorRoute(parsed);
     if (mirrored) return appHref(mirrored);
   } catch {
     return appHref(returnRoute);

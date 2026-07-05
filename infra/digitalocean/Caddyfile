@@ -2,7 +2,7 @@
 	email {$ACME_EMAIL}
 }
 
-{$SWFIPN_DOMAIN} {
+{$SWFIPN_SITE_ADDRESSES:swfipn.activemirror.ai} {
 	encode zstd gzip
 
 	header {

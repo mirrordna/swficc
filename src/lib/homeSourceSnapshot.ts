@@ -26,11 +26,11 @@ export const HOME_PACKET_SNAPSHOT = {
         "allocators": {
           "label": "Active Allocators",
           "value": 2412,
-          "sub": "completed buyer/acquirer transactions in last 90 days",
+          "sub": "assets or managed assets updated in last 90 days",
           "qualifier": "fact",
-          "basis": "swfi.transactions.completed_or_closed_last_90d.buyer_or_acquirer_entities",
+          "basis": "swfi_mongo.entities.assetsUpdatedAt_or_managedAssetsUpdatedAt.90d",
           "window_days": 90,
-          "formula": "count unique buyer/acquirer entities participating in completed transactions within the selected period"
+          "formula": "(assets > 0 AND assetsUpdatedAt >= cutoff) OR ((managedAssets/assetsManaged) > 0 AND managedAssetsUpdatedAt >= cutoff)"
         },
         "rfps": {
           "label": "Live RFPs / Mandates",

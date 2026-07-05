@@ -6,7 +6,9 @@ import path from "node:path";
 const repoRoot = process.cwd();
 const outputDir = path.join(repoRoot, "output");
 const origin = normalizeOrigin(process.env.SWFIPN_ORIGIN || "https://swfipn.activemirror.ai/swficc/");
-const expected = new URL("profiles/detail/?id=5e39a581fcbe7e8ca723278c", origin).href;
+const expectedRedirect = "/v1/entities/5e39a581fcbe7e8ca723278c";
+const expected = new URL(`/v1/signin/?${new URLSearchParams({ msg: "auth", redirect: expectedRedirect }).toString()}`, "https://www.swfi.com").href;
+const forbidden = new URL("profiles/detail/?id=5e39a581fcbe7e8ca723278c", origin).href;
 const url = new URL("profiles/?filter=GC1%20Ventures", origin).href;
 const receiptPath = path.join(outputDir, "swfipn-public-gc1-link-proof-latest.json");
 const screenshot = path.join(outputDir, "swfipn-public-gc1-link-proof.png");
@@ -36,7 +38,8 @@ async function main() {
         raw: a.getAttribute("href") || "",
       })));
     await page.screenshot({ path: screenshot, fullPage: true });
-    const ok = links.some((link) => link.href === expected || link.raw === expected);
+    const ok = links.some((link) => link.href === expected || link.raw === expected)
+      && !links.some((link) => link.href === forbidden || link.raw === forbidden);
     receipt = {
       schema_version: "swfipn.public_gc1_link_proof.v1",
       generated_at: new Date().toISOString(),
@@ -44,6 +47,8 @@ async function main() {
       url,
       http_status: response?.status() || 0,
       expected,
+      expected_redirect: expectedRedirect,
+      forbidden,
       links,
       screenshot,
     };

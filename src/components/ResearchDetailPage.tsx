@@ -121,7 +121,7 @@ export default function ResearchDetailPage() {
             <DetailRow label="Title" value={title} />
             <DetailRow label="Published At" value={text(record.published_at, DATE_NOT_PROVIDED)} />
             <DetailRow label="Updated At" value={text(record.updated_at, DATE_NOT_PROVIDED)} />
-            <DetailRow label="Source Record" value={sourceUrl ? "SWFI record" : NOT_DISCLOSED} />
+            <DetailRow label="SWFI Page" value={sourceUrl ? "SWFI record" : NOT_DISCLOSED} />
           </dl>
         </section>
 
@@ -186,7 +186,7 @@ function renderTextExport(record: Row) {
   const sourceLinks = normalizeSourceLinks(record.source_links);
   return [
     `Title: ${text(record.title || record.name, NOT_DISCLOSED)}`,
-    `Source Record: ${text(record.source_url, "") ? "SWFI record" : NOT_DISCLOSED}`,
+    `SWFI Page: ${text(record.source_url, "") ? "SWFI record" : NOT_DISCLOSED}`,
     sourceLinks.length ? `Source Links: ${sourceLinks.length} references on file` : "",
     "",
     text(record.content || record.excerpt, NOT_DISCLOSED),

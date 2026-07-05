@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 import argparse
 import base64
+import datetime
 import hashlib
 import hmac
 import json
+import math
 import mimetypes
 import os
 import posixpath
@@ -43,6 +45,17 @@ SESSION_COOKIE_NAME = "__swfipn_session"
 SESSION_TTL_SECONDS = int(os.environ.get("SWFIPN_AUTH_SESSION_TTL_SECONDS", str(12 * 60 * 60)))
 PUBLIC_JSON_PATH_PREFIXES = ("/api/", "/v1/")
 PUBLIC_SEARCH_CACHE_TTL_SECONDS = int(os.environ.get("SWFIPN_PUBLIC_SEARCH_CACHE_TTL_SECONDS", "300"))
+SEARCH_QUERY_SYNONYMS = {
+    "adia": ["Abu Dhabi Investment Authority"],
+    "adq": ["Abu Dhabi Developmental Holding Company"],
+    "cic": ["China Investment Corporation"],
+    "gpfg": ["Government Pension Fund Global"],
+    "gpif": ["Government Pension Investment Fund Japan"],
+    "pif": ["Public Investment Fund"],
+    "qia": ["Qatar Investment Authority"],
+    "safe": ["State Administration of Foreign Exchange"],
+}
+SHORT_SEARCH_QUERY_MAX = 3
 PUBLIC_RESTRICTED_KEYS = {
     "_id",
     "id",
@@ -87,6 +100,185 @@ def safe_equal(left, right):
 
 def escape_html(value):
     return str(value or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("'", "&#039;")
+
+
+def sanitized_display_name(value):
+    text = re.sub(r"[\r\n\t]+", " ", str(value or ""))
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"[<>]", "", text)
+    if "@" in text:
+        return ""
+    return text[:60]
+
+
+def search_text(value):
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", str(value or "").lower().replace("&", " and "))).strip()
+
+
+def search_query_variants(query):
+    clean = str(query or "").strip()
+    if not clean:
+        return []
+    seen = set()
+    variants = []
+    for value in [clean, *SEARCH_QUERY_SYNONYMS.get(search_text(clean), [])]:
+        variant = str(value or "").strip()
+        key = search_text(variant)
+        if not variant or key in seen:
+            continue
+        seen.add(key)
+        variants.append(variant)
+    return variants[:3]
+
+
+def search_record_key(row):
+    source = str(row.get("source_url") or row.get("swfi_url") or row.get("url") or row.get("profile_url") or "").strip()
+    if source:
+        return search_text(source)
+    record_id = str(row.get("entity_id") or row.get("person_id") or row.get("transaction_id") or row.get("compass_id") or row.get("source_record_id") or row.get("id") or "").strip()
+    if record_id:
+        return search_text(record_id)
+    return search_text("|".join(str(row.get(key) or "") for key in ("name", "title", "institution", "country", "type")))
+
+
+def dedupe_search_rows(rows):
+    seen = set()
+    deduped = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        key = search_record_key(row)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
+
+
+def acronym_for_name(value):
+    stop_words = {"and", "of", "the", "for", "in", "group", "company", "corporation", "corp", "limited", "ltd", "llc", "plc"}
+    return "".join(part[:1].upper() for part in search_text(value).split() if part and part not in stop_words)
+
+
+def token_starts_with(value, query):
+    return any(part.startswith(query) for part in search_text(value).split())
+
+
+def numeric_sort_value(value):
+    text = str(value or "").strip()
+    if not text or re.search(r"not disclosed|unavailable", text, re.I):
+        return None
+    compact = re.sub(r"\b(usd|us\$|aum|deals?|rows?|source matches?)\b", "", text, flags=re.I).strip()
+    unit_match = re.search(r"(-?[0-9][0-9,]*(?:\.[0-9]+)?)\s*([KMBT])\b", compact, re.I)
+    if unit_match:
+        unit = unit_match.group(2).upper()
+        multiplier = {"K": 1_000, "M": 1_000_000, "B": 1_000_000_000, "T": 1_000_000_000_000}.get(unit, 1)
+        return float(unit_match.group(1).replace(",", "")) * multiplier
+    numeric_match = re.search(r"-?[0-9][0-9,]*(?:\.[0-9]+)?", compact)
+    if not numeric_match:
+        return None
+    try:
+        return float(numeric_match.group(0).replace(",", ""))
+    except ValueError:
+        return None
+
+
+def business_hierarchy_score(type_text):
+    value = search_text(type_text)
+    if "sovereign wealth fund" in value:
+        return 900
+    if re.search(r"public pension|pension fund|pension", value):
+        return 780
+    if re.search(r"government fund|investment authority", value):
+        return 680
+    if "central bank" in value:
+        return 560
+    if "development bank" in value:
+        return 500
+    if re.search(r"state owned enterprise|state-owned enterprise", value):
+        return 380
+    if re.search(r"asset manager|fund manager|advisor", value):
+        return 260
+    if re.search(r"insurance|bank", value):
+        return 160
+    if "government" in value:
+        return 120
+    return 0
+
+
+def business_name_score(name):
+    value = search_text(name)
+    if "investment authority" in value:
+        return 300
+    if "developmental holding" in value:
+        return 220
+    if "public investment fund" in value:
+        return 160
+    if "pension fund" in value:
+        return 80
+    if "investment council" in value:
+        return 50
+    return 0
+
+
+def capital_scale_score(row):
+    value = numeric_sort_value(row.get("aum") or row.get("assets") or row.get("managed_assets") or row.get("amount") or row.get("capital") or "")
+    if not value or value <= 0:
+        return 0
+    return min(240, round(math.log10(value + 1) * 18))
+
+
+def search_relevance_score(row, query):
+    clean = search_text(query)
+    if not clean:
+        return 0
+    name = search_text(row.get("name") or row.get("title") or row.get("institution") or row.get("buyer_entity") or "")
+    slug = search_text(str(row.get("slug") or "").replace("-", " "))
+    type_text = search_text(row.get("type") or row.get("entity_type") or row.get("asset_class_or_strategy") or row.get("strategy") or "")
+    country = search_text(row.get("country") or "")
+    region = search_text(row.get("region") or "")
+    all_text = search_text(" ".join(str(value) for value in row.values() if isinstance(value, str)))
+    terms = [term for term in clean.split() if term]
+    short_query = len(clean) <= SHORT_SEARCH_QUERY_MAX
+    alias_targets = [search_text(target) for target in SEARCH_QUERY_SYNONYMS.get(clean, [])]
+
+    base_score = 0
+    if name == clean:
+        base_score += 3000
+    if slug == clean:
+        base_score += 2600
+    if any(target and name == target for target in alias_targets):
+        base_score += 2800
+    if short_query and acronym_for_name(name) == clean.upper():
+        base_score += 2400
+    if short_query and token_starts_with(name, clean):
+        base_score += 700
+    if not short_query and name.startswith(clean):
+        base_score += 1000
+    if not short_query and clean in name:
+        base_score += 620
+    if terms and all(term in name for term in terms):
+        base_score += 700
+    if not short_query and terms and all(term in all_text for term in terms):
+        base_score += 240
+    if clean in country or clean in region:
+        base_score += 120
+
+    if base_score <= 0:
+        return 0
+    return base_score + business_hierarchy_score(type_text) + business_name_score(name) + capital_scale_score(row)
+
+
+def rank_search_rows(rows, query):
+    if not str(query or "").strip():
+        return rows
+    ranked = []
+    for index, row in enumerate(rows):
+        score = search_relevance_score(row, query)
+        if score > 0:
+            ranked.append((score, index, row))
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    return [row for _score, _index, row in ranked]
 
 
 def is_legacy_article_url(value):
@@ -510,7 +702,7 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
         return path in {"/auth/bridge", "/auth/bridge/", "/swficc/auth/bridge", "/swficc/auth/bridge/"}
 
     def is_session_status_path(self, path):
-        return False
+        return path in {"/api/session/status/v1", "/swficc/api/session/status/v1"}
 
     def requires_record_auth(self, path):
         if os.environ.get("SWFIPN_REQUIRE_RECORD_AUTH", "").strip().lower() not in {"1", "true", "yes", "on"}:
@@ -749,11 +941,12 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
                 "entitlements": ["dashboard"],
                 "dashboard_access": True,
                 "auth_source": session.get("source") or "local_session",
+                "display_name": self.session_display_name(session),
             }
             self.send_json(HTTPStatus.OK, body, head=head)
             return
         body = {"authenticated": False, "pending": False, "entitlements": [], "dashboard_access": False}
-        self.send_json(HTTPStatus.UNAUTHORIZED, body, head=head)
+        self.send_json(HTTPStatus.OK, body, head=head)
 
     def handle_swfi_session_bridge(self, parsed):
         params = urllib.parse.parse_qs(parsed.query)
@@ -866,6 +1059,33 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
                 return candidate
         return ""
 
+    def bridge_display_name(self, payload):
+        if not isinstance(payload, dict):
+            return ""
+        first = sanitized_display_name(payload.get("given_name") or payload.get("first_name"))
+        last = sanitized_display_name(payload.get("family_name") or payload.get("last_name"))
+        for candidate in (
+            payload.get("display_name"),
+            payload.get("name"),
+            payload.get("full_name"),
+            f"{first} {last}".strip(),
+            first,
+        ):
+            display = sanitized_display_name(candidate)
+            if display:
+                return display
+        return ""
+
+    def session_display_name(self, session):
+        if not isinstance(session, dict):
+            return ""
+        display = sanitized_display_name(session.get("display_name"))
+        if display:
+            return display
+        if session.get("source") == "local_session":
+            return sanitized_display_name(session.get("u"))
+        return ""
+
     def bridge_roles(self, payload):
         roles = payload.get("roles") if isinstance(payload, dict) else []
         if isinstance(roles, str):
@@ -908,6 +1128,7 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
             "u": user_id,
             "sub": str(payload.get("sub") or user_id).strip()[:128],
             "email": str(payload.get("email") or "").strip()[:128],
+            "display_name": self.bridge_display_name(payload),
             "roles": self.bridge_roles(payload),
             "source": "swfi_session_bridge",
             "iat": now,
@@ -1006,6 +1227,9 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
             target = f"{target}?{backend_query}"
         try:
             request_method = method or ("HEAD" if head else "GET")
+            if self.should_serve_enhanced_public_search(request_method, backend_path):
+                self.serve_enhanced_public_search(backend_query, head=head)
+                return
             cache_key = self.public_search_cache_key(request_method, backend_path, backend_query)
             if cache_key and not head:
                 cached = self.server.public_search_cache.get(cache_key)
@@ -1120,6 +1344,59 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
             if not head:
                 self.write_body(body)
 
+    def should_serve_enhanced_public_search(self, request_method, backend_path):
+        if request_method != "GET" or backend_path != "/api/v1/public/search":
+            return False
+        return str(self.headers.get("X-SWFIPN-Internal") or self.headers.get("X-SWFI-Internal") or "").lower() not in {"1", "true", "yes"}
+
+    def serve_enhanced_public_search(self, backend_query, head=False):
+        params = urllib.parse.parse_qs(backend_query or "", keep_blank_values=False)
+        query = (params.get("q") or [""])[0].strip()[:120]
+        limit = (params.get("limit") or ["25"])[0].strip() or "25"
+        try:
+            safe_limit = max(1, min(50, int(limit)))
+        except ValueError:
+            safe_limit = 25
+        cache_key = f"enhanced-public-search:{query.casefold()}:{safe_limit}"
+        if not query:
+            body = json.dumps({
+                "status": "ok",
+                "fact": True,
+                "generated_at": datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                "data": {"results": [], "query": "", "count": 0},
+            }, separators=(",", ":")).encode("utf-8")
+        else:
+            cached = self.server.public_search_cache.get(cache_key)
+            if cached and time.time() - cached["stored_at"] <= PUBLIC_SEARCH_CACHE_TTL_SECONDS:
+                body = cached["body"]
+            else:
+                search_rows = []
+                for variant in search_query_variants(query):
+                    search_rows.extend(self.rows_from_public_search_packet(self.public_search_packet(variant, limit=str(safe_limit))))
+                    search_rows.extend(self.rows_from_source_data_packet(self.source_entity_search_packet(variant, limit=str(safe_limit))))
+                ranked = rank_search_rows(dedupe_search_rows(search_rows), query)[:safe_limit]
+                body = json.dumps({
+                    "status": "ok",
+                    "fact": True,
+                    "generated_at": datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                    "data": {
+                        "results": ranked,
+                        "query": query,
+                        "count": len(ranked),
+                        "count_basis": "ranked_public_plus_entity_variants",
+                    },
+                }, separators=(",", ":")).encode("utf-8")
+                self.server.public_search_cache[cache_key] = {"stored_at": time.time(), "body": body}
+        self.send_response(HTTPStatus.OK)
+        self.send_security_headers()
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "public, max-age=60, s-maxage=300, stale-while-revalidate=300")
+        self.send_header("X-SWFIPN-Search-Render", "enhanced")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if not head:
+            self.write_body(body)
+
     def public_search_cache_key(self, request_method, backend_path, backend_query):
         if request_method != "GET" or backend_path != "/api/v1/public/search":
             return ""
@@ -1141,12 +1418,7 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
 
     def serve_search_results(self, parsed, head=False):
         query = (urllib.parse.parse_qs(parsed.query).get("q") or [""])[0].strip()[:120]
-        packet = self.public_search_packet(query, limit="25")
-        rows = []
-        if isinstance(packet, dict) and packet.get("fact") is True:
-            data = packet.get("data") if isinstance(packet.get("data"), dict) else {}
-            results = data.get("results") if isinstance(data.get("results"), list) else []
-            rows = [item for item in results if isinstance(item, dict)]
+        rows = self.search_result_rows(query, limit="25")
         body = self.search_results_html(query, rows).encode("utf-8")
         self.send_response(HTTPStatus.OK)
         self.send_security_headers()
@@ -1157,6 +1429,29 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
         self.end_headers()
         if not head:
             self.write_body(body)
+
+    def search_result_rows(self, query, limit="25"):
+        rows = []
+        for variant in search_query_variants(query):
+            packet = self.public_search_packet(variant, limit=limit)
+            rows.extend(self.rows_from_public_search_packet(packet))
+        return rank_search_rows(dedupe_search_rows(rows), query)[:int(str(limit or "25"))]
+
+    def rows_from_public_search_packet(self, packet):
+        if not isinstance(packet, dict) or packet.get("fact") is not True:
+            return []
+        data = packet.get("data") if isinstance(packet.get("data"), dict) else {}
+        results = data.get("results") if isinstance(data.get("results"), list) else []
+        return [item for item in results if isinstance(item, dict)]
+
+    def rows_from_source_data_packet(self, packet):
+        if not isinstance(packet, dict) or packet.get("fact") is not True:
+            return []
+        data = packet.get("data") if isinstance(packet.get("data"), dict) else {}
+        results = data.get("rows") if isinstance(data.get("rows"), list) else data.get("results")
+        if not isinstance(results, list):
+            return []
+        return [item for item in results if isinstance(item, dict)]
 
     def public_search_packet(self, query, limit="25"):
         cache_key = f"public-search:{query.casefold()}:{limit}"
@@ -1174,12 +1469,41 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
         request.add_header("Connection", "close")
         if self.server.backend_token:
             request.add_header("Authorization", f"Bearer {self.server.backend_token}")
-        with urllib.request.urlopen(request, timeout=self.server.backend_timeout) as response:
-            raw_body = response.read()
-            body = public_api_body("/api/v1/public/search", raw_body)
-            if response.status == 200:
-                self.server.public_search_cache[cache_key] = {"stored_at": time.time(), "body": body}
-            return json.loads(body.decode("utf-8") or "{}")
+        try:
+            with urllib.request.urlopen(request, timeout=self.server.backend_timeout) as response:
+                raw_body = response.read()
+                body = public_api_body("/api/v1/public/search", raw_body)
+                if response.status == 200:
+                    self.server.public_search_cache[cache_key] = {"stored_at": time.time(), "body": body}
+                return json.loads(body.decode("utf-8") or "{}")
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError):
+            return {"status": "blocked", "fact": False, "data": {"results": []}}
+
+    def source_entity_search_packet(self, query, limit="25"):
+        cache_key = f"entity-search:{query.casefold()}:{limit}"
+        cached = self.server.public_search_cache.get(cache_key)
+        if cached and time.time() - cached["stored_at"] <= PUBLIC_SEARCH_CACHE_TTL_SECONDS:
+            try:
+                return json.loads(cached["body"].decode("utf-8") or "{}")
+            except Exception:
+                pass
+        backend = self.server.backend.rstrip("/")
+        target = f"{backend}/api/source-data/search/v1?{urllib.parse.urlencode({'collection': 'entities', 'q': query, 'limit': limit, 'page': '1'})}"
+        request = urllib.request.Request(target, method="GET")
+        request.add_header("Accept", "application/json")
+        request.add_header("X-SWFIPN-Public", "1")
+        request.add_header("Connection", "close")
+        if self.server.backend_token:
+            request.add_header("Authorization", f"Bearer {self.server.backend_token}")
+        try:
+            with urllib.request.urlopen(request, timeout=self.server.backend_timeout) as response:
+                raw_body = response.read()
+                body = public_api_body("/api/source-data/search/v1", raw_body)
+                if response.status == 200:
+                    self.server.public_search_cache[cache_key] = {"stored_at": time.time(), "body": body}
+                return json.loads(body.decode("utf-8") or "{}")
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError):
+            return {"status": "blocked", "fact": False, "data": {"rows": []}}
 
     def search_results_html(self, query, rows):
         row_html = []
@@ -1189,7 +1513,7 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
             detail = escape_html(" / ".join(str(part) for part in [row.get("type") or "", row.get("country") or row.get("region") or "", row.get("aum") or row.get("assets") or ""] if str(part or "").strip()))
             href = escape_html(self.swficc_record_href_from_source(source) or "/swficc/profiles/")
             row_html.append(f"""
-              <tr>
+              <tr data-relevance="{len(row_html)}">
                 <td>Institution</td>
                 <td><a href="{href}">{name}</a></td>
                 <td>SWFI</td>
@@ -1197,7 +1521,12 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
                 <td><a href="{href}">Open</a></td>
               </tr>""")
         if not row_html:
-            row_html.append('<tr><td colspan="5" class="empty">Not disclosed</td></tr>')
+            row_html.append(
+                '<tr><td colspan="5" class="empty">'
+                "No matching SWFI records were returned for this query. "
+                "Try another institution, person, strategy, country, region, sector, or entity type."
+                "</td></tr>"
+            )
         count = len(rows)
         return f"""<!doctype html>
 <html lang="en">
@@ -1223,7 +1552,10 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
     table{{width:100%;border-collapse:collapse;background:#fff;font-size:13px}}
     th{{background:#f7f9fb;color:#5b6a78;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.04em}}
     th,td{{border-bottom:1px solid #edf1f5;padding:9px 12px;vertical-align:top}}
+    th button{{width:100%;border:0;background:transparent;padding:0;text-align:left;color:inherit;font:inherit;font-weight:700;cursor:pointer}}
     a{{color:#16538c;text-decoration:underline;font-weight:600}}
+    .tablebar{{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;border:1px solid #dce3ea;border-bottom:0;background:#fbfcfd;padding:8px 12px;color:#41566b;font-size:12px}}
+    .tablebar select{{border:1px solid #dce3ea;background:#fff;padding:4px 8px}}
     .empty{{text-align:center;color:#6b7a89;padding:32px}}
   </style>
 </head>
@@ -1234,8 +1566,48 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
   </header>
   <main>
     <section class="top"><div><h1>Smart Search</h1><p>Results are ranked for institutional relevance. Select any row to continue.</p></div><div class="count">Showing {count:,} of {count:,}</div></section>
-    <table><thead><tr><th>Type</th><th>Result</th><th>Source</th><th>Detail</th><th>Record</th></tr></thead><tbody>{''.join(row_html)}</tbody></table>
+    <div class="tablebar"><div id="search-count">Showing {min(count, 25):,} of {count:,}</div><label><strong>Rows</strong> <select id="row-limit"><option>5</option><option>10</option><option selected>25</option><option>50</option><option>100</option></select></label></div>
+    <table><thead><tr><th><button type="button" data-sort-key="0">Type</button></th><th><button type="button" data-sort-key="1">Result</button></th><th><button type="button" data-sort-key="2">Source</button></th><th><button type="button" data-sort-key="3">Detail</button></th><th>Record</th></tr></thead><tbody>{''.join(row_html)}</tbody></table>
   </main>
+  <script>
+    (() => {{
+      const tbody = document.querySelector("tbody");
+      const count = document.getElementById("search-count");
+      const limit = document.getElementById("row-limit");
+      const buttons = Array.from(document.querySelectorAll("thead button[data-sort-key]"));
+      const total = {count};
+      let rows = Array.from(tbody.querySelectorAll("tr"));
+      let sortKey = "";
+      let sortDir = "asc";
+      function setCount() {{
+        const visible = rows.filter((row) => row.style.display !== "none").length;
+        count.textContent = `Showing ${{visible.toLocaleString("en-US")}} of ${{total.toLocaleString("en-US")}}`;
+      }}
+      function applyLimit() {{
+        const max = Number(limit.value || 25);
+        rows.forEach((row, index) => {{ row.style.display = index < max ? "" : "none"; }});
+        setCount();
+      }}
+      function sortRows(key) {{
+        sortDir = sortKey === key && sortDir === "asc" ? "desc" : "asc";
+        sortKey = key;
+        rows.sort((left, right) => {{
+          const l = (left.children[Number(key)]?.innerText || "").trim();
+          const r = (right.children[Number(key)]?.innerText || "").trim();
+          return l.localeCompare(r, undefined, {{ numeric: true, sensitivity: "base" }}) * (sortDir === "asc" ? 1 : -1);
+        }});
+        rows.forEach((row) => tbody.appendChild(row));
+        buttons.forEach((button) => {{
+          const base = button.textContent.replace(/\\s+(asc|desc)$/i, "");
+          button.textContent = button.dataset.sortKey === key ? `${{base}} ${{sortDir}}` : base;
+        }});
+        applyLimit();
+      }}
+      buttons.forEach((button) => button.addEventListener("click", () => sortRows(button.dataset.sortKey || "0")));
+      limit.addEventListener("change", applyLimit);
+      applyLimit();
+    }})();
+  </script>
 </body>
 </html>"""
 
@@ -1257,12 +1629,13 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
                 return f"/swficc/research/detail/?{urllib.parse.urlencode({'legacy': legacy})}"
             return ""
         route_by_section = {
-            "entities": "/swficc/profiles/detail/",
-            "people": "/swficc/people/detail/",
-            "transactions": "/swficc/transactions/detail/",
-            "compass": "/swficc/mandates/detail/",
+            "entities": "/v1/entities/",
+            "people": "/v1/people/",
+            "transactions": "/v1/transactions/",
+            "compass": "/v1/compass/",
         }
-        return f"{route_by_section[match.group(1)]}?{urllib.parse.urlencode({'id': match.group(2)})}"
+        redirect = f"{route_by_section[match.group(1)]}{match.group(2)}"
+        return f"https://www.swfi.com/v1/signin/?{urllib.parse.urlencode({'msg': 'auth', 'redirect': redirect})}"
 
     def backend_source_data_alias(self, backend_path, query):
         if backend_path != "/api/source-data/search/v1":

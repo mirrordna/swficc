@@ -15,7 +15,7 @@ import {
   SOURCE_GAP,
   text,
 } from "@/lib/sourcePackets";
-import { appHref, isSwfiPlatformRecordHref, selfContainedHref, sourceProvenanceHref } from "@/lib/selfContainedLinks";
+import { appHref, isSwfiPlatformRecordHref, selfContainedHref, sourceProvenanceHref, swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
 import { legacyPostId, mandateDetailHref, personDetailHref, profileDetailHref, researchDetailHref, sourceRecordIdFor, transactionDetailHref } from "@/lib/detailRoutes";
 import SwfiBrandHeader from "@/components/SwfiBrandHeader";
 import AlertsRuleManager from "@/components/AlertsRuleManager";
@@ -98,8 +98,8 @@ const CONFIG: Record<Kind, { title: string; endpoint: string; columns: string[];
   },
   allocators: {
     title: "Active Allocators",
-    endpoint: "/api/allocator-activity/v1?days=90&limit=100",
-    columns: ["Entity Name", "Entity Type", "Country", "Region", "Number of Deals", "Total Deal Value", "Last Transaction Date", "AUM"],
+    endpoint: "/api/active-allocators/v1?days=90&limit=100",
+    columns: ["Entity Name", "Entity Type", "Country", "Region", "Activity Reason", "Activity Count", "Most Recent Activity Date", "AUM", "Managed Assets"],
   },
   comparisons: {
     title: "Peer Comparisons",
@@ -143,10 +143,11 @@ function rowCells(kind: Kind, row: Row): Cell[] {
       text(row.entity_type || row.type, NOT_DISCLOSED),
       text(row.country, NOT_DISCLOSED),
       text(row.region, NOT_DISCLOSED),
-      text(row.activity_count || row.deal_count, "0"),
-      disclosedMoney(row.total_deal_value),
-      text(row.latest_transaction_date || row.most_recent_activity_date, NOT_DISCLOSED),
+      text(row.activity_reason, NOT_DISCLOSED),
+      text(row.activity_count, "0"),
+      text(row.most_recent_activity_date || row.last_updated, NOT_DISCLOSED),
       disclosedMoney(row.aum || row.assets),
+      disclosedMoney(row.managed_assets || row.assets_managed),
     ];
   }
   if (kind === "people") return [personCell(row), text(row.title), text(row.institution), text(row.country), citation(href, "/people/")];
@@ -171,18 +172,17 @@ function rowCells(kind: Kind, row: Row): Cell[] {
 }
 
 const allocatorSortOptions = [
-  ["activity_count", "Number of Deals"],
-  ["total_deal_value", "Total Deal Value"],
-  ["most_recent_activity_date", "Last Transaction Date"],
+  ["activity_count", "Activity Count"],
+  ["most_recent_activity_date", "Most Recent Activity Date"],
   ["name", "Entity Name"],
   ["aum", "AUM"],
+  ["managed_assets", "Managed Assets"],
   ["country", "Country"],
   ["entity_type", "Entity Type"],
-  ["last_updated", "Last Updated"],
 ] as const;
 
 function defaultSortColumn(kind: Kind): number {
-  return kind === "allocators" ? 4 : 0;
+  return kind === "allocators" ? 5 : 0;
 }
 
 function defaultSortDir(kind: Kind): "asc" | "desc" {
@@ -194,27 +194,24 @@ function allocatorSortParamForColumn(column: string): string {
   if (normalized === "entity name") return "name";
   if (normalized === "entity type") return "entity_type";
   if (normalized === "country") return "country";
-  if (normalized === "number of deals" || normalized === "activity count") return "activity_count";
-  if (normalized === "total deal value") return "total_deal_value";
-  if (normalized === "last transaction date" || normalized === "most recent activity date") return "most_recent_activity_date";
+  if (normalized === "activity count") return "activity_count";
+  if (normalized === "most recent activity date") return "most_recent_activity_date";
   if (normalized === "aum") return "aum";
+  if (normalized === "managed assets") return "managed_assets";
   return "activity_count";
 }
 
 function allocatorColumnIndexForSort(sortKey: string, columns: string[]): number {
   const columnBySort: Record<string, string> = {
-    activity_count: "Number of Deals",
-    total_deal_value: "Total Deal Value",
-    most_recent_activity_date: "Last Transaction Date",
+    activity_count: "Activity Count",
+    most_recent_activity_date: "Most Recent Activity Date",
     name: "Entity Name",
     aum: "AUM",
+    managed_assets: "Managed Assets",
     country: "Country",
     entity_type: "Entity Type",
-    number_of_investments: "Number of Deals",
-    deal_count: "Number of Deals",
   };
-  if (sortKey === "last_updated") return -1;
-  return columns.indexOf(columnBySort[sortKey] || "Number of Deals");
+  return columns.indexOf(columnBySort[sortKey] || "Activity Count");
 }
 
 export default function SourceListPage({ kind }: { kind: Kind }) {
@@ -226,9 +223,9 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
   const [tableFilter, setTableFilter] = useState("");
   const [sortColumn, setSortColumn] = useState(() => defaultSortColumn(kind));
   const [sortDir, setSortDir] = useState<"asc" | "desc">(() => defaultSortDir(kind));
-  const [allocatorSort, setAllocatorSort] = useState("deal_count");
+  const [allocatorSort, setAllocatorSort] = useState("activity_count");
   const [selectedDealEntityTypes, setSelectedDealEntityTypes] = useState<string[]>([]);
-  const [sectionView, setSectionView] = useState<"data" | "visualization">("data");
+  const [sectionView, setSectionView] = useState<"data" | "visualization">(() => supportsSectionVisualization(kind) ? "visualization" : "data");
   const [rowLimit, setRowLimit] = useState(25);
   const [pageIndex, setPageIndex] = useState(0);
   const [comparisonPackets, setComparisonPackets] = useState<Record<string, Packet>>({});
@@ -260,14 +257,14 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
       }
       if (kind === "allocators") {
         const allocatorQuery = serverFilterTerm ? `&q=${encodeURIComponent(serverFilterTerm)}` : "";
-        return { main: `/api/allocator-activity/v1?days=90&limit=${serverRowLimit}&page=${serverPageIndex + 1}${allocatorQuery}&sort=${encodeURIComponent(allocatorSort)}&direction=${serverSortDir}` };
+        return { main: `/api/active-allocators/v1?days=90&limit=${serverRowLimit}&page=${serverPageIndex + 1}${allocatorQuery}&sort=${encodeURIComponent(allocatorSort)}&direction=${serverSortDir}` };
       }
       if (kind === "mandates") return { main: `/api/live-opportunities/v1?limit=${serverRowLimit}&page=${serverPageIndex + 1}` };
       if (kind === "alerts") {
         return {
           deals: "/api/recent-transactions/v1?days=30&limit=100&page=1",
           mandates: "/api/live-opportunities/v1?limit=100&page=1",
-          allocators: "/api/allocator-activity/v1?days=90&limit=100&sort=deal_count&direction=desc",
+          allocators: "/api/active-allocators/v1?days=90&limit=100&sort=activity_count&direction=desc",
         };
       }
       if (kind === "research" || kind === "intelligence") {
@@ -357,6 +354,8 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
 
   const packet = packets.main;
   const sourceKeys = Object.keys(sources);
+  const hasSectionVisualization = supportsSectionVisualization(kind);
+  const showRecordData = !hasSectionVisualization || sectionView === "data";
   const searchPacketsComplete = kind === "search" && sourceKeys.length > 0 && sourceKeys.every((key) => packets[key]);
   const searchHasRenderableRows = kind === "search" && sourceKeys.some((key) => {
     const item = packets[key];
@@ -471,7 +470,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h1 className="m-0 text-[19px] font-bold text-[#11314F]">{config.title}</h1>
-	                  <p className="m-0 mt-1 text-[12px] text-[#7A8A9B]">Use filters, sorting, and row links to move from dashboard insight into the matching record view.</p>
+	                  <p className="m-0 mt-1 text-[12px] text-[#7A8A9B]">Use filters, sorting, and row links to move from dashboard insight into the matching SWFI page.</p>
                 </div>
                 <div className="rounded border border-[#DCE3EA] px-3 py-2 text-[12px] text-[#41566B]">
                   {waitingForSearch
@@ -527,17 +526,17 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
           <SavedSearchManager />
         ) : null}
 
-        {supportsSectionVisualization(kind) ? (
+        {hasSectionVisualization ? (
           <section data-gsap-reveal className="rounded border border-[#DCE3EA] bg-white px-4 py-3">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="m-0 text-[16px] font-bold text-[#11314F]">{sectionVisualizationTitle(kind)}</h2>
-                <p className="m-0 mt-1 text-[12px] text-[#7A8A9B]">Current records with data and visualization views.</p>
+                <p className="m-0 mt-1 text-[12px] text-[#7A8A9B]">Visualization-first view. Select Data for records, filters, and pagination.</p>
               </div>
               <div className="flex rounded border border-[#C7D2DD] bg-[#F7F9FA] p-1 text-sm">
                 {[
-                  ["data", "Data"],
                   ["visualization", "Visualization"],
+                  ["data", "Data"],
                 ].map(([value, label]) => (
                   <button
                     key={value}
@@ -558,12 +557,12 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
           </section>
         ) : null}
 
-        <section data-gsap-reveal className="rounded border border-[#DCE3EA] bg-white px-4 py-3 text-sm text-[#41566B]">
-	          <strong className="text-[#11314F]">Current platform records.</strong>
-	          <span className="mt-1 block text-[#7A8A9B]">Select any row to view details, compare activity, or continue analysis.</span>
+        <section data-gsap-reveal className={`rounded border border-[#DCE3EA] bg-white px-4 py-3 text-sm text-[#41566B] ${showRecordData ? "" : "hidden"}`}>
+		          <strong className="text-[#11314F]">Data view.</strong>
+		          <span className="mt-1 block text-[#7A8A9B]">Use this only when you need records, filters, sorting, and pagination.</span>
         </section>
 
-        <section data-gsap-reveal className={`grid gap-2 rounded border border-[#DCE3EA] bg-white px-4 py-3 text-sm sm:items-center ${kind === "allocators" ? "sm:grid-cols-[minmax(0,1fr)_180px_150px_190px]" : kind === "deals" ? "sm:grid-cols-[minmax(0,1fr)_180px_210px_150px]" : "sm:grid-cols-[minmax(0,1fr)_180px_150px]"}`}>
+        <section data-gsap-reveal className={`grid gap-2 rounded border border-[#DCE3EA] bg-white px-4 py-3 text-sm sm:items-center ${showRecordData ? "" : "hidden"} ${kind === "allocators" ? "sm:grid-cols-[minmax(0,1fr)_180px_150px_190px]" : kind === "deals" ? "sm:grid-cols-[minmax(0,1fr)_180px_210px_150px]" : "sm:grid-cols-[minmax(0,1fr)_180px_150px]"}`}>
           <div className="font-semibold text-[#11314F]">
             {waitingForSearch
               ? "Enter an institution, person, or strategy"
@@ -649,7 +648,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
           ) : null}
         </section>
 
-        <div data-gsap-reveal className="grid gap-3 sm:hidden">
+        <div data-gsap-reveal className={`grid gap-3 sm:hidden ${showRecordData ? "" : "hidden"}`}>
           {visibleRows.length ? visibleRows.map((row, rowIndex) => (
             <article key={rowIndex} className="rounded border border-[#DCE3EA] bg-white px-3 py-2.5 shadow-[0_1px_0_rgba(17,49,79,0.03)]">
               <div className="min-w-0 text-[15px] font-semibold leading-snug text-[#11314F]">
@@ -669,7 +668,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
           )}
         </div>
 
-        <div data-gsap-reveal className="hidden overflow-x-auto rounded border border-[#DCE3EA] bg-white sm:block">
+        <div data-gsap-reveal className={showRecordData ? "hidden overflow-x-auto rounded border border-[#DCE3EA] bg-white sm:block" : "hidden"}>
           <table className="w-full min-w-[720px] border-collapse text-left text-[14px]">
             <thead>
               <tr className="bg-[#F7F9FA]">
@@ -709,7 +708,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
             </tbody>
           </table>
         </div>
-        {pageCount > 1 ? (
+        {showRecordData && pageCount > 1 ? (
         <div data-gsap-reveal className="flex flex-wrap items-center justify-between gap-2 rounded border border-[#DCE3EA] bg-white px-4 py-3 text-sm text-[#41566B]">
           <div>Page {(safePageIndex + 1).toLocaleString("en-US")} of {pageCount.toLocaleString("en-US")}</div>
           <div className="flex gap-2">
@@ -748,7 +747,8 @@ function displayCell(value?: Cell) {
           if (!link.href) {
             return <span key={`${link.label}-${index}`}>{link.label}</span>;
           }
-          const target = productHref(link.href, "/");
+          const preferredHref = link.sourceHref && isSwfiPlatformRecordHref(link.sourceHref) ? link.sourceHref : link.href;
+          const target = productHref(preferredHref, "/");
           return (
             <span key={`${link.label}-${index}`} className="grid gap-1">
               <a href={target} onClick={(event) => hardNavigateSameRouteFilter(event, target)} title={link.sourceHref ? "View details" : undefined} data-record-link={isFirstPartyRecordHref(target) ? "true" : undefined} data-source-state={link.sourceHref ? "on-file" : undefined} className="text-[#16538C] underline">{link.label}</a>
@@ -762,7 +762,8 @@ function displayCell(value?: Cell) {
   if (!label || label === SOURCE_GAP || label === "Not disclosed") return NOT_DISCLOSED;
   if (href) {
     const sourceHref = typeof value === "object" && value ? value.sourceHref || sourceProvenanceHref(label) : sourceProvenanceHref(label);
-    const target = productHref(href, "/");
+    const preferredHref = sourceHref && isSwfiPlatformRecordHref(sourceHref) ? sourceHref : href;
+    const target = productHref(preferredHref, "/");
     return (
       <span className="grid gap-1">
         <a href={target} onClick={(event) => hardNavigateSameRouteFilter(event, target)} title={sourceHref ? "View details" : undefined} data-record-link={isFirstPartyRecordHref(target) ? "true" : undefined} data-source-state={sourceHref ? "on-file" : undefined} className="text-[#16538C] underline">{label}</a>
@@ -803,7 +804,7 @@ function hardNavigateSameRouteFilter(event: MouseEvent<HTMLAnchorElement>, targe
 function productHref(href: string | undefined, fallback = "/"): string {
   if (!href) return appHref(fallback);
   if (isSwfiPlatformRecordHref(href)) {
-    return selfContainedHref(href, fallback);
+    return swfiAuthHandoffHref(href);
   }
   if (href.startsWith("http://") || href.startsWith("https://")) return href;
   return selfContainedHref(href, fallback);
@@ -888,9 +889,9 @@ function alertsRowsFromPackets(packets: Record<string, Packet>): Cell[][] {
       const href = sourceHref(row);
       results.push([
         allocatorProfileCell(row),
-        "Investor activity",
+        "Allocator data update",
         compactParts([row.country, row.region]),
-        text(row.latest_transaction_date || row.most_recent_activity_date || row.last_transaction_date),
+        text(row.most_recent_activity_date || row.last_updated),
         citation(href, "/allocators/"),
       ]);
     });
@@ -968,7 +969,7 @@ function profileCell(row: Row): Cell {
         label,
         href: profileDetailHref(row, provenance),
         sourceHref: provenance,
-        citationText: provenance ? `SWFI entity source: ${provenance}` : undefined,
+        citationText: provenance ? "SWFI profile on file" : undefined,
       }
     : NOT_DISCLOSED;
 }
@@ -993,7 +994,7 @@ function transactionCell(row: Row, label = text(row.title || row.name)): Cell {
     label,
     href: transactionDetailHref(row, provenance),
     sourceHref: provenance,
-    citationText: provenance ? `SWFI transaction source: ${provenance}` : undefined,
+    citationText: provenance ? "SWFI transaction on file" : undefined,
   };
 }
 
@@ -1002,7 +1003,7 @@ function dealProfileCell(row: Row): Cell {
   if (!label) return NOT_DISCLOSED;
   const slug = text(row.slug || row.profile_slug, "");
   const source = sourceHref(row);
-  if (source) return { label, href: source, sourceHref: source, citationText: "SWFI profile source on file" };
+  if (source) return { label, href: source, sourceHref: source, citationText: "SWFI profile on file" };
   return { label, href: `/profiles/?filter=${encodeURIComponent(label)}`, citationText: "SWFI profile lookup" };
 }
 
@@ -1026,7 +1027,7 @@ function personCell(row: Row): Cell {
     label: text(row.name || row.title),
     href: personDetailHref(row, provenance),
     sourceHref: provenance,
-    citationText: provenance ? `SWFI people source: ${provenance}` : undefined,
+    citationText: provenance ? "SWFI person on file" : undefined,
   };
 }
 
@@ -1118,7 +1119,7 @@ function mandateCell(row: Row): Cell {
     label: text(row.title || row.name),
     href: mandateDetailHref(row, provenance),
     sourceHref: provenance,
-    citationText: provenance ? `SWFI Compass source: ${provenance}` : undefined,
+    citationText: provenance ? "SWFI RFP / mandate on file" : undefined,
   };
 }
 
@@ -1255,17 +1256,17 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
   const trendRows = bucketRows(sourceRows, (row) => monthBucket(row.closed_at || row.announced_at || row.published_at || row.updated_at || row.created_at || row.last_updated)).reverse();
   const topRows = [...sourceRows].slice(0, 8);
   const summary = [
-    ["Total Records", totalRows.toLocaleString("en-US")],
-    ["Loaded Rows", sourceRows.length.toLocaleString("en-US")],
-    ["Top Category", categoryRows[0]?.label || NOT_DISCLOSED],
+    ["Total in SWFI", totalRows.toLocaleString("en-US")],
+    ["Items in View", sourceRows.length.toLocaleString("en-US")],
+    ["Leading Category", categoryRows[0]?.label || NOT_DISCLOSED],
   ] as const;
 
   return (
     <div className="grid gap-4" data-brd-section-visualization={kind}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="grid gap-1 text-[12px] text-[#7A8A9B]">
-          <span>Updated from SWFI</span>
-          <span>Showing {sourceRows.length.toLocaleString("en-US")} loaded rows from {totalRows.toLocaleString("en-US")} total records.</span>
+          <span>SWFI platform data</span>
+          <span>This view summarizes {sourceRows.length.toLocaleString("en-US")} visible items from {totalRows.toLocaleString("en-US")} total items.</span>
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={() => downloadSectionCsv(kind, sourceRows)} className="rounded border border-[#C7D2DD] bg-white px-3 py-1.5 text-sm font-semibold text-[#16538C]">Export CSV</button>
@@ -1355,8 +1356,8 @@ function SectionTopRecords({ kind, rows: topRows }: { kind: Kind; rows: Row[] })
   return (
     <div className="rounded border border-[#DCE3EA] bg-white p-3">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <h3 className="m-0 text-[13px] font-bold text-[#11314F]">Top Loaded Records</h3>
-        <a href={appHref(routeByKind[kind])} className="text-sm text-[#16538C] underline">Open Data View</a>
+        <h3 className="m-0 text-[13px] font-bold text-[#11314F]">Highlighted SWFI Pages</h3>
+        <span className="text-sm font-semibold text-[#7A8A9B]">Use Data for the analytical table</span>
       </div>
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
         {topRows.length ? topRows.map((row, index) => {

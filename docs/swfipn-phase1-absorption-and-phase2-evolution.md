@@ -17,9 +17,9 @@ The following Phase 1 behaviors are treated as invariants:
 - SWFI brand shell, red header, logo placement, public navigation, and dashboard layout remain recognizable as SWFI.
 - Public dashboard exposes only top-level, whitelisted information.
 - Public UI does not expose object IDs, backend names, Active Mirror labels, raw diagnostics, API labels, or source receipt internals.
-- Row/action links must either stay inside `/swficc/` or use the approved SWFI auth handoff where that is explicitly the scoped behavior.
-- Dashboard rows must resolve to the corresponding SWFI record/profile page within `/swficc` where an internal record exists.
-- SWFI.com URLs are retained as provenance/source references, not as a reason to eject the user from the SWFIPN workflow.
+- Row/action links must either stay inside `/swficc/` for dashboard discovery or use the approved SWFI auth handoff for protected SWFI platform records.
+- Dashboard record rows must preserve the corresponding SWFI `/v1/...` target through sign-in handoff.
+- SWFI.com URLs are used for the approved platform/auth handoff, not as arbitrary external escapes or debug provenance pages.
 
 Latest baseline receipt:
 
@@ -80,7 +80,7 @@ The route bridge fix is intentionally narrow:
 - `/swficc/v1/transactions/{id}` redirects to `/swficc/transactions/detail/?id={id}&source=https://www.swfi.com/v1/transactions/{id}`
 - `/swficc/v1/compass/{id}` redirects to `/swficc/mandates/detail/?id={id}&source=https://www.swfi.com/v1/compass/{id}`
 
-This keeps users inside the SWFIPN record workflow while preserving SWFI.com as provenance.
+Historical note: this internal record-workflow bridge has been superseded for dashboard-originated record clicks. The current team direction is for the public dashboard to remain a curated preview and hand protected record clicks to SWFI sign-in with the intended `/v1/...` platform record redirect preserved.
 
 ## Remaining Caveat
 
@@ -88,16 +88,16 @@ Reports are still excluded from Phase 2 backend-complete status until a dedicate
 
 Do not call reports backend-complete until that contract exists and passes the same list/detail/source receipt checks.
 
-Authenticated navigation is not yet fully automated in the acceptance harness. The public gate passes with auth checks skipped because `/swficc/login` currently hands off to SWFI.com sign-in, while the existing harness still targets an internal login form.
+Authenticated navigation is tested as SWFI sign-in handoff unless a target runtime explicitly enables local authenticated validation. The dashboard must not introduce custom auth for Phase 1 preview access.
 
 ## Required Language
 
 Use:
 
-> corresponding SWFI record/profile page within `/swficc` where an internal record exists
+> corresponding SWFI core platform record/profile page through SWFI sign-in handoff
 
 Do not claim:
 
-> all existing SWFI.com profile pages are migrated
+> all existing SWFI.com profile pages are mirrored inside SWFIPN
 
 unless a separate route-universe receipt proves that exact claim.

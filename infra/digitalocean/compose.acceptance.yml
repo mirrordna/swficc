@@ -104,6 +104,7 @@ services:
       - "443:443"
     environment:
       SWFIPN_DOMAIN: ${SWFIPN_DOMAIN:-swfipn.activemirror.ai}
+      SWFIPN_SITE_ADDRESSES: ${SWFIPN_SITE_ADDRESSES:-swfipn.activemirror.ai}
       SWFIPN_API_DOMAIN: ${SWFIPN_API_DOMAIN:-api.swfi.com}
       ACME_EMAIL: ${ACME_EMAIL:-admin@activemirror.ai}
     volumes:

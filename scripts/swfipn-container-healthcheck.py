@@ -13,7 +13,7 @@ required = [
     "Top AUM & Sector Activity",
     "Capital Flows",
     "Market Signals",
-    "Pipeline Overview",
+    "SWFI Discovery Pathways",
     "Top Active Allocators (Last 90 Days)",
     "Deal Intelligence",
     "Updated from SWFI",
