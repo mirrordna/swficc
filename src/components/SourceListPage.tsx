@@ -1258,7 +1258,35 @@ function sectionVisualizationTitle(kind: Kind): string {
   return "Data Visualization";
 }
 
+type FacetBlock = { field: string; label: string; rows: { label: string; count: number }[]; covered: number; disclosed_of_total: number };
+
+const FACET_COLLECTIONS: Partial<Record<Kind, string>> = {
+  profiles: "entities",
+  comparisons: "entities",
+  people: "people",
+  transactions: "transactions",
+  deals: "transactions",
+  mandates: "compass",
+};
+
 function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kind; rows: Row[]; totalRows: number }) {
+  // Minutes item D: distributions computed source-side over the WHOLE
+  // collection. Current-page charts remain only as the disclosed fallback
+  // while facets are pending or unavailable.
+  const facetCollection = FACET_COLLECTIONS[kind];
+  const [facetPacket, setFacetPacket] = useState<Packet | undefined>(undefined);
+  useEffect(() => {
+    if (!facetCollection) return;
+    const controller = new AbortController();
+    void fetchPacket(`/api/source-data/facets/v1?collection=${facetCollection}`, 120_000, { signal: controller.signal, attempts: 2 }).then((packet) => {
+      if (!controller.signal.aborted) setFacetPacket(packet ?? null);
+    });
+    return () => controller.abort();
+  }, [facetCollection]);
+  const facetData = facetPacket && isFact(facetPacket) ? (packetData(facetPacket) as { total?: number; facets?: FacetBlock[] }) : undefined;
+  const universeFacets = (facetData?.facets || []).filter((facet) => facet.rows.length > 0);
+  const universeTotal = typeof facetData?.total === "number" ? facetData.total : 0;
+
   const categoryRows = bucketRows(sourceRows, (row) => sectionCategoryLabel(kind, row));
   const geographyRows = bucketRows(sourceRows, (row) => businessText(row.country || row.region || row.buyer_region || row.seller_region));
   const trendRows = bucketRows(sourceRows, (row) => monthBucket(row.closed_at || row.announced_at || row.published_at || row.updated_at || row.created_at || row.last_updated)).reverse();
@@ -1289,21 +1317,42 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
           </div>
         ))}
       </div>
-      {/* NEVER_LYING: these charts describe the CURRENT PAGE of records, not
-          the whole universe — say so in the titles, and don't draw a "trend"
-          from a handful of dated rows (a 3-point line across years reads as
-          market history that never happened). */}
-      <div className="grid gap-4 lg:grid-cols-3">
-        <SectionBarChart kind={kind} title="Records by Category (current page)" rows={categoryRows} />
-        <SectionBarChart kind={kind} title="Records by Geography (current page)" rows={geographyRows} />
-        {trendRows.length >= 4 ? (
-          <SectionLineChart title="Records by Month (current page)" rows={trendRows} />
-        ) : (
-          <div className="grid place-items-center rounded border border-[#DCE3EA] bg-[#F7F9FA] px-3 py-3 text-center text-[12px] text-[#7A8A9B]">
-            Too few dated records on this page for a meaningful monthly view — open Data for the records themselves.
+      {universeFacets.length > 0 ? (
+        <div className="grid gap-4" data-brd-universe-facets={kind}>
+          <div className="text-[12px] text-[#7A8A9B]">
+            Distributions below cover all {universeTotal.toLocaleString("en-US")} records in SWFI (computed at source), not just this page. Top 12 values shown; blanks excluded and disclosed per chart.
           </div>
-        )}
-      </div>
+          <div className="grid gap-4 lg:grid-cols-2">
+            {universeFacets.slice(0, 2).map((facet) => (
+              <div key={facet.field} className="grid gap-1">
+                <SectionBarChart kind={kind} title={`All records by ${facet.label}`} rows={facet.rows} />
+                {facet.covered < facet.disclosed_of_total ? (
+                  <div className="text-[11px] text-[#7A8A9B]">
+                    {facet.covered.toLocaleString("en-US")} of {facet.disclosed_of_total.toLocaleString("en-US")} records disclose {facet.label.toLowerCase()}.
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        /* NEVER_LYING: without source-side facets these charts describe the
+           CURRENT PAGE of records, not the whole universe — say so in the
+           titles, and don't draw a "trend" from a handful of dated rows (a
+           3-point line across years reads as market history that never
+           happened). */
+        <div className="grid gap-4 lg:grid-cols-3">
+          <SectionBarChart kind={kind} title="Records by Category (current page)" rows={categoryRows} />
+          <SectionBarChart kind={kind} title="Records by Geography (current page)" rows={geographyRows} />
+          {trendRows.length >= 4 ? (
+            <SectionLineChart title="Records by Month (current page)" rows={trendRows} />
+          ) : (
+            <div className="grid place-items-center rounded border border-[#DCE3EA] bg-[#F7F9FA] px-3 py-3 text-center text-[12px] text-[#7A8A9B]">
+              Too few dated records on this page for a meaningful monthly view — open Data for the records themselves.
+            </div>
+          )}
+        </div>
+      )}
       <SectionTopRecords kind={kind} rows={topRows} />
     </div>
   );

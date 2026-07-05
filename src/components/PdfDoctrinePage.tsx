@@ -163,8 +163,8 @@ export default function PdfDoctrinePage() {
             <section data-gsap-reveal className="rounded border border-[#DCE3EA] bg-white p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <h1 className="m-0 text-[19px] font-bold text-[#11314F]">Reports Intelligence</h1>
-                  <p className="m-0 mt-1 text-[12px] text-[#7A8A9B]">Rankings, allocator activity, transactions, mandates, and market-flow tables.</p>
+                  <h1 className="m-0 text-[19px] font-bold text-[#11314F]">Reports</h1>
+                  <p className="m-0 mt-1 text-[12px] text-[#7A8A9B]">Downloadable rankings, allocator activity, transactions, mandates, and market-flow tables. For the live news feed, see Research &amp; Analytics.</p>
                 </div>
                 <a href="/swficc/" className="rounded border border-[#DCE3EA] px-3 py-2 text-[12px] text-[#16538C] no-underline">Dashboard</a>
               </div>
