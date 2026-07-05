@@ -1289,10 +1289,20 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
           </div>
         ))}
       </div>
+      {/* NEVER_LYING: these charts describe the CURRENT PAGE of records, not
+          the whole universe — say so in the titles, and don't draw a "trend"
+          from a handful of dated rows (a 3-point line across years reads as
+          market history that never happened). */}
       <div className="grid gap-4 lg:grid-cols-3">
-        <SectionBarChart kind={kind} title="Records by Category" rows={categoryRows} />
-        <SectionBarChart kind={kind} title="Records by Geography" rows={geographyRows} />
-        <SectionLineChart title="Records by Month" rows={trendRows} />
+        <SectionBarChart kind={kind} title="Records by Category (current page)" rows={categoryRows} />
+        <SectionBarChart kind={kind} title="Records by Geography (current page)" rows={geographyRows} />
+        {trendRows.length >= 4 ? (
+          <SectionLineChart title="Records by Month (current page)" rows={trendRows} />
+        ) : (
+          <div className="grid place-items-center rounded border border-[#DCE3EA] bg-[#F7F9FA] px-3 py-3 text-center text-[12px] text-[#7A8A9B]">
+            Too few dated records on this page for a meaningful monthly view — open Data for the records themselves.
+          </div>
+        )}
       </div>
       <SectionTopRecords kind={kind} rows={topRows} />
     </div>
@@ -1753,6 +1763,19 @@ function DealEngineTable({ title, columns, rows: tableRows }: { title: string; c
   );
 }
 
+function comparisonStrategyText(row: Row): string {
+  // KP's ask (minutes 2026-07-03 item K): investment strategy belongs in the
+  // fund-comparison view. The profile packet ships it at
+  // modules.strategy.fields.Strategy; strip markup, never invent.
+  const modules = row.modules as Record<string, unknown> | undefined;
+  const strategyModule = modules?.strategy as Record<string, unknown> | undefined;
+  const fields = strategyModule?.fields as Record<string, unknown> | undefined;
+  const raw = typeof fields?.Strategy === "string" ? fields.Strategy : "";
+  const clean = raw.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  if (!clean) return NOT_DISCLOSED;
+  return clean.length > 220 ? `${clean.slice(0, 220)}…` : clean;
+}
+
 function ComparisonWorkbench({ records, packets }: { records: Row[]; packets: Record<string, Packet> }) {
   const hydrated = records.map((record) => comparisonHydratedRecord(record, packets));
   const metrics = [
@@ -1762,6 +1785,7 @@ function ComparisonWorkbench({ records, packets }: { records: Row[]; packets: Re
     ["AUM", (row: Row) => disclosedMoney(row.aum || row.assets)],
     ["AUM Date", (row: Row) => businessText(row.aum_date)],
     ["Managed Assets", (row: Row) => disclosedMoney(row.managed_assets)],
+    ["Investment Strategy", (row: Row) => comparisonStrategyText(row)],
     ["Peer Group", (row: Row) => businessText(row.type || row.entity_type)],
     ["Source", (row: Row) => sourceHref(row) ? "View details" : NOT_DISCLOSED],
   ] as const;

@@ -250,7 +250,7 @@ export default function DashboardPage() {
   return (
     <div ref={rootRef} data-dashboard-ready={dashboardReady ? "true" : "false"} className="min-h-screen bg-[#F4F6F8] font-sans text-[#101827]">
       <div className="min-h-screen xl:grid xl:grid-cols-[238px_minmax(0,1fr)]">
-        <BrdCommandCenterSidebar topRows={topAumRows} />
+        <BrdCommandCenterSidebar topRows={topAumRows} pending={packets.top20 === undefined} />
         <div className="min-w-0">
           <BrdTopNavigation onSearchOpen={() => setSearchOpen(true)} dataAsOfLabel={dataAsOfLabel} displayName={sessionDisplayName} />
           <VisualExecutiveOverview
@@ -298,17 +298,22 @@ export default function DashboardPage() {
   );
 }
 
-function BrdCommandCenterSidebar({ topRows }: { topRows: Record<string, unknown>[] }) {
+function BrdCommandCenterSidebar({ topRows, pending = false }: { topRows: Record<string, unknown>[]; pending?: boolean }) {
   const sidebarNav = [
+    // Minutes F: every nav item needs a distinct, truthful destination. The
+    // old list sent two labels to /deals and called the RFP page "Events &
+    // Forums". One label per page, SWFIPN vocabulary (minutes M-1), and the
+    // two core pages the sidebar was missing (Allocators, Comparisons) added.
     ["Executive Overview", "/"],
     ["Contacts & Relationships", "/people"],
     ["Institutions", "/profiles"],
-    ["Deals & Pipelines", "/transactions"],
-    ["Capital Flows", "/deals"],
+    ["Deals & Pipelines", "/deals"],
+    ["Transactions", "/transactions"],
+    ["Active Allocators", "/allocators"],
+    ["Peer Comparisons", "/comparisons"],
     ["Research & Analytics", "/intelligence"],
-    ["Events & Forums", "/mandates"],
+    ["RFPs & Mandates", "/mandates"],
     ["Reports & Dashboards", "/reports"],
-    ["Market Intelligence", "/deals"],
     ["Settings", "/account"],
   ] as const;
   const watched = topRows.slice(0, 4);
@@ -344,7 +349,7 @@ function BrdCommandCenterSidebar({ topRows }: { topRows: Record<string, unknown>
               <span className="text-right text-[11px] font-bold text-[#071F48]">{aumDisplay(row)}</span>
             </DataLink>
           )) : (
-            <div className="rounded-[6px] bg-[#F6F8FA] px-3 py-2 text-[11px] font-semibold text-[#657282]">No current watchlist rows</div>
+            <div className="rounded-[6px] bg-[#F6F8FA] px-3 py-2 text-[11px] font-semibold text-[#657282]">{pending ? "Loading…" : "No current watchlist rows"}</div>
           )}
         </div>
       </div>
@@ -489,6 +494,7 @@ function VisualExecutiveOverview({
               expanded={expandedPanel === "institution-overview"}
               onToggle={onTogglePanel}
               detail={<TotalAumInsightDetail topRows={topRows} institutionTypeRows={institutionTypeRows} transactionRows={transactionRows} rfpRows={rfpRows} sectorRows={sectorRows} />}
+              explain="Where SWFI's top-ranked institutions are headquartered. Bubble number = country rank by loaded rows; AUM shows only when one currency backs it. Click a bubble → that country's profiles; Open records → ranked institutions."
             >
               <GlobalCapitalMap topPacket={packets.top20} topRows={topRows} sectorRows={sectorRows} />
             </ExpandablePanel>
@@ -499,6 +505,7 @@ function VisualExecutiveOverview({
               expanded={expandedPanel === "capital-flows"}
               onToggle={onTogglePanel}
               detail={<ExpandedSectorRows rows={sectorRows} controls={controls} />}
+              explain="Disclosed transaction value grouped by sector, from the records loaded on this page. Click a sector → deals filtered to it."
             >
               <CapitalFlowPanel rows={sectorRows} />
             </ExpandablePanel>
@@ -509,6 +516,7 @@ function VisualExecutiveOverview({
               expanded={expandedPanel === "ai-insights"}
               onToggle={onTogglePanel}
               detail={<ExpandedUnifiedInsightRows rows={unifiedRows} controls={controls} />}
+              explain="Auto-drafted highlights from the data already on this page (top investors, deals, fundraising, news) — nothing generated beyond it. Each line links to its source list."
             >
               <AiInsightsPanel topInvestors={allocatorRows} marketRows={transactionRows} fundraisingRows={rfpRows} newsRows={newsRows} />
             </ExpandablePanel>
@@ -521,6 +529,7 @@ function VisualExecutiveOverview({
               expanded={expandedPanel === "pipeline"}
               onToggle={onTogglePanel}
               detail={<PipelineInsightDetail transactionRows={transactionRows} rfpRows={rfpRows} sectorRows={sectorRows} />}
+              explain="Shortcuts into common SWFI research journeys, sized by the records currently loaded. Click a step → the matching SWFI list."
             >
               <PipelineFunnelPanel packets={packets} topRows={topRows} marketRows={transactionRows} fundraisingRows={rfpRows} />
             </ExpandablePanel>
@@ -531,6 +540,7 @@ function VisualExecutiveOverview({
               expanded={expandedPanel === "relationships"}
               onToggle={onTogglePanel}
               detail={<ExpandedInvestorRows rows={allocatorRows} controls={controls} />}
+              explain="Most-active institutions from the last 90 days of recorded allocator activity. Click a name → its SWFI profile."
             >
               <RelationshipPanel rows={allocatorRows} />
             </ExpandablePanel>
@@ -541,6 +551,7 @@ function VisualExecutiveOverview({
               expanded={expandedPanel === "research-hub"}
               onToggle={onTogglePanel}
               detail={<ExpandedNewsRows rows={newsRows} controls={controls} />}
+              explain="Latest SWFI intelligence articles. Click a headline → the article; Open records → the intelligence list."
             >
               <ResearchHubPanel rows={newsRows} />
             </ExpandablePanel>
@@ -552,6 +563,7 @@ function VisualExecutiveOverview({
                 expanded={expandedPanel === "market-intelligence"}
                 onToggle={onTogglePanel}
                 detail={<ExpandedSectorRows rows={sectorRows} controls={controls} />}
+                explain="Sector activity summary from loaded transaction records. Click a sector → filtered deals."
               >
                 <MarketIntelligencePanel rows={sectorRows} />
               </ExpandablePanel>
@@ -562,6 +574,7 @@ function VisualExecutiveOverview({
                 expanded={expandedPanel === "deal-intelligence"}
                 onToggle={onTogglePanel}
                 detail={<ExpandedDealRows rows={transactionRows} controls={controls} />}
+                explain="Most recent recorded transactions. Click a deal → its SWFI record (login handoff for gated detail)."
               >
                 <DealIntelligencePanel rows={transactionRows} sectorRows={sectorRows} />
               </ExpandablePanel>
@@ -575,6 +588,7 @@ function VisualExecutiveOverview({
               expanded={expandedPanel === "engagements"}
               onToggle={onTogglePanel}
               detail={<ExpandedMandateRows rows={rfpRows} controls={controls} />}
+              explain="Open RFPs and mandates presented as engagement opportunities (this card is RFP data, not an events calendar). Click → the RFP on SWFI."
             >
               <EngagementCards rows={rfpRows} />
             </ExpandablePanel>
@@ -585,6 +599,7 @@ function VisualExecutiveOverview({
               expanded={expandedPanel === "activity-feed"}
               onToggle={onTogglePanel}
               detail={<ExpandedDealRows rows={transactionRows} controls={controls} />}
+              explain="Latest recorded activity across deals, news, and fundraising, newest first. Each line links to its source record."
             >
               <ActivityFeedPanel marketRows={transactionRows} newsRows={newsRows} fundraisingRows={rfpRows} />
             </ExpandablePanel>
@@ -1407,7 +1422,7 @@ function ConceptTopBar({ dataAsOfLabel, packets }: { dataAsOfLabel: string; pack
   );
 }
 
-function ConceptKpiCard({ label, value, note, href, series, color, statusLabel = "", sourceLabel = "" }: {
+function ConceptKpiCard({ label, value, note, href, series, color, statusLabel = "", sourceLabel = "", explain = "" }: {
   label: string;
   value: string;
   note: string;
@@ -1416,9 +1431,10 @@ function ConceptKpiCard({ label, value, note, href, series, color, statusLabel =
   color: string;
   statusLabel?: string;
   sourceLabel?: string;
+  explain?: string;
 }) {
   return (
-    <DashboardLink href={href} data-qa-min="150" className="min-w-0 border border-[#C9D3DE] bg-white px-3 py-2.5 text-inherit no-underline shadow-[0_1px_2px_rgba(20,44,70,0.05)] hover:border-[#D51E29]/50">
+    <DashboardLink href={href} title={explain || undefined} data-qa-min="150" className="min-w-0 border border-[#C9D3DE] bg-white px-3 py-2.5 text-inherit no-underline shadow-[0_1px_2px_rgba(20,44,70,0.05)] hover:border-[#D51E29]/50">
       <div className="text-[9px] font-extrabold uppercase tracking-[0.12em] text-[#7B8996]">{label}</div>
       <div className="mt-1 flex items-end justify-between gap-2">
         <div className="break-words text-[20px] font-extrabold leading-none text-[#13283D]">{value}</div>
@@ -1433,7 +1449,7 @@ function ConceptKpiCard({ label, value, note, href, series, color, statusLabel =
   );
 }
 
-function ExpandablePanel({ id, title, href, expanded, onToggle, children, detail, className = "" }: {
+function ExpandablePanel({ id, title, href, expanded, onToggle, children, detail, explain, className = "" }: {
   id: string;
   title: string;
   href: string;
@@ -1441,6 +1457,7 @@ function ExpandablePanel({ id, title, href, expanded, onToggle, children, detail
   onToggle: (id: string) => void;
   children: ReactNode;
   detail?: ReactNode;
+  explain?: string;
   className?: string;
 }) {
   return (
@@ -1452,6 +1469,8 @@ function ExpandablePanel({ id, title, href, expanded, onToggle, children, detail
         </button>
         <DashboardLink href={href} className="border border-[#C9D3DE] bg-white px-2 py-1 text-[10px] font-bold text-[#0A3A7A] no-underline">Open records</DashboardLink>
       </div>
+      {/* Minutes F: every box carries a one-line meaning + destination. */}
+      {explain ? <div className="border-b border-[#EEF2F5] bg-[#FBFCFE] px-3 py-1 text-[10px] leading-snug text-[#7B8996]">{explain}</div> : null}
       <div className="p-3">{children}</div>
       {expanded && detail ? (
         <div id={`${id}-detail`} className="border-t border-[#EEF2F5] bg-[#F8FAFC] p-3">{detail}</div>
@@ -1514,12 +1533,19 @@ function GlobalCapitalMap({ topPacket, topRows, sectorRows }: { topPacket?: Pack
                 {countryIndex >= 0 && countryIndex < 5 ? (
                   <text x={node.x} y={node.y + 4} textAnchor="middle" fill={isLead ? "#B90D12" : "#071F48"} fontSize="11" fontWeight="950">{countryIndex + 1}</text>
                 ) : null}
+                {/* Minutes F: a numbered bubble alone explains nothing — name
+                    the country (and its same-currency AUM when it exists). */}
+                {countryIndex >= 0 && countryIndex < 5 ? (
+                  <text x={node.x} y={node.y + node.r + 12} textAnchor="middle" fill="#41566B" fontSize="8.5" fontWeight="800">
+                    {node.country}{node.aum && node.aumCurrency ? ` · ${node.aumCurrency} ${compactNumber(node.aum)}` : ""}
+                  </text>
+                ) : null}
               </g>
             );
           })}
         </svg>
         ) : (
-          <CapitalSignalFallback sectorRows={sectorRows} />
+          <CapitalSignalFallback sectorRows={sectorRows} pending={topPacket === undefined} />
         )}
         <div className="absolute left-3 top-3 max-w-[250px] border border-[#D7E3EF] bg-white/95 px-3 py-2 shadow-sm">
           <div className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#7B8996]">Top SWF AUM locations</div>
@@ -1545,14 +1571,14 @@ function GlobalCapitalMap({ topPacket, topRows, sectorRows }: { topPacket?: Pack
   );
 }
 
-function CapitalSignalFallback({ sectorRows }: { sectorRows: Record<string, unknown>[] }) {
+function CapitalSignalFallback({ sectorRows, pending = false }: { sectorRows: Record<string, unknown>[]; pending?: boolean }) {
   const rowsToShow = sectorRows.slice(0, 6);
   const max = Math.max(1, ...rowsToShow.map(sectorValue));
   return (
     <div className="absolute inset-0 grid content-center px-5 pb-16 pt-20" role="img" aria-label="Top SWF AUM locations by country">
       <div className="grid gap-3 border border-white/16 bg-[#071F48]/78 p-4 shadow-[0_16px_38px_rgba(0,0,0,0.22)]">
         <div>
-          <div className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#B9D7F0]">Country distribution unavailable</div>
+          <div className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#B9D7F0]">{pending ? "Loading map…" : "Country distribution unavailable"}</div>
           <div className="mt-1 text-[16px] font-extrabold text-white">Showing disclosed market activity instead</div>
         </div>
         <div className="grid gap-2">
@@ -2123,58 +2149,69 @@ function dashboardMetricCards(packets: Packets, topAumRows: Record<string, unkno
   const rfps = metricNumber(packets.metrics, "rfps") || packetCountNumber(packets.rfps) || 0;
   const swfs = metricNumber(packets.metrics, "swfs") || 0;
   const research = metricNumber(packets.metrics, "news") || packetCountNumber(packets.news) || 0;
+  // Pending ≠ absent: while a card's backing packet has not resolved yet,
+  // say "Loading…" — "Not disclosed" is reserved for loaded-but-undisclosable
+  // (a fetched packet whose value cannot be honestly shown).
+  const LOADING_LABEL = "Loading…";
+  const settled = (packet: Packet | undefined, display: string) => (packet === undefined ? LOADING_LABEL : display);
   return [
     {
       label: "TOP-RANKED AUM TOTAL",
-      value: totalAumDisplay(packets.top20, topAumRows),
+      value: settled(packets.top20, totalAumDisplay(packets.top20, topAumRows)),
       note: "Top AUM ranking",
       href: "/profiles/?filter=Sovereign%20Wealth%20Fund",
       // Rank-order AUM values are a distribution, not a time series — drawn
       // as a line they read as a downtrend that never happened (minutes F).
       series: [],
       color: "#0A66C2",
-      statusLabel: totalAum ? "" : "Not disclosed",
+      statusLabel: packets.top20 === undefined ? "" : totalAum ? "" : "Not disclosed",
+      explain: "Assets under management summed across SWFI's top-AUM ranking. Shown only when one declared currency backs the sum — mixed-currency totals are suppressed rather than mislabeled. Click → the ranked institutions.",
     },
     {
       label: "ACTIVE ALLOCATORS",
-      value: activeAllocators ? compactNumber(activeAllocators) : packetCount(packets.allocators90, "count"),
+      value: settled(packets.allocators90 ?? packets.metrics, activeAllocators ? compactNumber(activeAllocators) : packetCount(packets.allocators90, "count")),
       note: "Last 90 days",
       href: "/allocators",
       series: seriesFromNumbers([activeAllocators]),
       color: "#16538C",
+      explain: "Institutions with recorded allocation activity in the last 90 days. Click → the active allocators list.",
     },
     {
       label: "DISCLOSED DEAL VALUE",
-      value: sectorCapital ? compactMoney(sectorCapital) : metricCard(packets.metrics, "transactions"),
+      value: settled(packets.sectorFlows ?? packets.metrics, sectorCapital ? compactMoney(sectorCapital) : metricCard(packets.metrics, "transactions")),
       note: "Market activity",
       href: "/deals",
       // Per-sector totals are a distribution across sectors, not a trend.
       series: [],
       color: "#5C9BD6",
+      explain: "Sum of disclosed transaction values in the loaded records (undisclosed deals excluded). Click → deals.",
     },
     {
       label: "LIVE RFPS / MANDATES",
-      value: rfps ? compactNumber(rfps) : "Not disclosed",
+      value: settled(packets.metrics ?? packets.rfps, rfps ? compactNumber(rfps) : "Not disclosed"),
       note: "Live RFPs",
       href: "/mandates",
       series: seriesFromNumbers([rfps]),
       color: "#7A8A9B",
+      explain: "Open requests-for-proposal and mandates currently live on SWFI. Click → the RFPs list.",
     },
     {
       label: "SWF PROFILES",
-      value: swfs ? compactNumber(swfs) : "Not disclosed",
+      value: settled(packets.metrics, swfs ? compactNumber(swfs) : "Not disclosed"),
       note: "SWF profiles",
       href: "/profiles/?filter=Sovereign%20Wealth%20Fund",
       series: seriesFromNumbers([swfs]),
       color: "#B90D12",
+      explain: "Sovereign wealth fund profiles tracked on SWFI. Click → SWF-filtered institutions.",
     },
     {
       label: "INTELLIGENCE ITEMS",
-      value: research ? compactNumber(research) : packetCount(packets.news, "count"),
+      value: settled(packets.metrics ?? packets.news, research ? compactNumber(research) : packetCount(packets.news, "count")),
       note: "Intelligence items",
       href: "/intelligence",
       series: seriesFromNumbers([research]),
       color: "#2C78D2",
+      explain: "Published SWFI intelligence articles and research items. Click → the intelligence list.",
     },
   ];
 }
@@ -2701,6 +2738,10 @@ function totalAumValue(packet: Packet | undefined, topRows: Record<string, unkno
   // currency backs; otherwise report nothing rather than a laundered number.
   if (isFact(packet)) {
     const data = packetData(packet);
+    // Preferred: the backend's explicitly-USD total (doctrine amendment
+    // 2026-07-05 — verified-USD snapshot per entity, summed in one currency).
+    const usd = numberValue(data.total_assets_usd);
+    if (usd) return usd;
     const direct = numberValue(data.total_assets || data.total_aum || data.aum_total);
     const currency = text(data.total_assets_currency || data.total_aum_currency || data.aum_total_currency, "").trim();
     if (direct && currency) return direct;
@@ -2711,6 +2752,9 @@ function totalAumValue(packet: Packet | undefined, topRows: Record<string, unkno
 function totalAumDisplay(packet: Packet | undefined, topRows: Record<string, unknown>[]) {
   if (isFact(packet)) {
     const data = packetData(packet);
+    // Preferred: explicitly-USD total from the doctrine-amended backend.
+    const usd = numberValue(data.total_assets_usd);
+    if (usd) return compactCurrency(usd, text(data.total_assets_usd_currency, "USD").trim().toUpperCase() || "USD");
     const direct = numberValue(data.total_assets || data.total_aum || data.aum_total);
     const currency = text(data.total_assets_currency || data.total_aum_currency || data.aum_total_currency, "").trim().toUpperCase();
     if (direct && currency) return compactCurrency(direct, currency);
