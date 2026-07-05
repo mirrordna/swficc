@@ -3,7 +3,12 @@ set -euo pipefail
 
 HOST="${SWFIPN_HOST:-}"
 DOMAIN="${SWFIPN_DOMAIN:-}"
-SITE_ADDRESSES="${SWFIPN_SITE_ADDRESSES:-$DOMAIN}"
+# dashboard.swfi.com is the team's decided internal hostname (minutes
+# 2026-07-03, decision M / action 5). It ships in the DEFAULT so a deploy run
+# without ambient env can never silently drop its TLS again (2026-07-05
+# incident: a deploy without SWFIPN_SITE_ADDRESSES exported rebuilt Caddy with
+# only the swfipn domain and dashboard.swfi.com lost its certificate).
+SITE_ADDRESSES="${SWFIPN_SITE_ADDRESSES:-$DOMAIN, dashboard.swfi.com}"
 API_DOMAIN="${SWFIPN_API_DOMAIN:-api.swfi.com}"
 REMOTE_ROOT="${SWFIPN_REMOTE_ROOT:-/opt/swfipn-acceptance}"
 FRONTEND_REPO="${SWFIPN_FRONTEND_REPO:-/Users/mirror-pro/repos/swfi-dashboard}"
