@@ -902,11 +902,31 @@ async function routeParityCheck(browser) {
 }
 
 async function directProtectedRoutesCheck(browser) {
+  // Contract change per meeting minutes 2026-07-03 decision J (Paul-directed
+  // 2026-07-05): detailed records do NOT live inside the dashboard — detail
+  // routes must FORWARD to the SWFI platform record via the login handoff.
+  // The old form of this check asserted the opposite (a self-contained
+  // in-dashboard record page). Samples are named regression rows: an
+  // id-carrying route must hand off to exactly that record; a route with no
+  // resolvable record pointer must return to the dashboard preview.
   const samples = [
-    { route: "/profiles/detail/?slug=andreessen-horowitz&name=Andreessen+Horowitz", authText: "ENTITY PROFILE", protectedText: "Andreessen Horowitz" },
-    { route: "/transactions/detail/?id=6a2c168b43e7f69d0cd0c923", authText: "TRANSACTION DETAILS", protectedText: "ChatSee.AI Inc" },
+    {
+      route: "/profiles/detail/?source=https%3A%2F%2Fwww.swfi.com%2Fv1%2Fentities%2F598cdaa50124e9fd2d05a79b",
+      expectRecordPath: "/v1/entities/598cdaa50124e9fd2d05a79b",
+      label: "ADIA entity handoff",
+    },
+    {
+      route: "/transactions/detail/?id=6a2c168b43e7f69d0cd0c923",
+      expectRecordPath: "/v1/transactions/6a2c168b43e7f69d0cd0c923",
+      label: "transaction handoff",
+    },
+    {
+      route: "/profiles/detail/?name=No+Pointer+Sample",
+      expectRecordPath: "",
+      label: "no record pointer -> back to preview",
+    },
   ];
-  const result = { id: "direct_record_routes_are_self_contained", ok: true, skipped: false, failures: [], samples: [], subscriber_auth_mode: "self_contained_public_record_pages", credentials_used: false };
+  const result = { id: "direct_record_routes_forward_to_platform", ok: true, skipped: false, failures: [], samples: [], subscriber_auth_mode: "platform_handoff_per_minutes_J", credentials_used: false };
   const { chromium } = loadPlaywright();
   const isolatedBrowser = await chromium.launch({
     headless: true,
@@ -916,19 +936,40 @@ async function directProtectedRoutesCheck(browser) {
 
   try {
     for (const sample of samples) {
-      const row = { route: sample.route, unauthenticated: { final_url: "", ok: true, failures: [] }, authenticated: { final_url: "", ok: true, failures: [] } };
+      const row = { route: sample.route, label: sample.label, unauthenticated: { final_url: "", ok: true, failures: [] } };
       const page = await publicContext.newPage();
       try {
         const response = await page.goto(appUrl(sample.route), { waitUntil: "domcontentloaded", timeout: 30_000 });
-        await page.waitForFunction((expectedText) => {
-          const body = document.body?.innerText || "";
-          return body.includes(expectedText) || (body.length > 500 && !/\bLoading\b/.test(body));
-        }, sample.protectedText, { timeout: 60_000 }).catch(() => {});
-        const body = await bodyText(page, 4_000);
-        row.unauthenticated.final_url = page.url();
         if (!response || response.status() >= 400) row.unauthenticated.failures.push(`http_${response?.status() || "missing"}`);
-        if (!body.includes(sample.authText) || !body.includes(sample.protectedText)) {
-          row.unauthenticated.failures.push(`self_contained_record_missing:${sample.protectedText}`);
+        if (sample.expectRecordPath) {
+          // The route client-redirects to the platform; the signin origin can
+          // be slow (45s timeouts observed on www.swfi.com today), so wait
+          // THROUGH the navigation rather than sampling mid-flight. Fallback:
+          // the forwarding page carrying the handoff link also satisfies J.
+          const encoded = encodeURIComponent(sample.expectRecordPath);
+          let handedOff = false;
+          try {
+            await page.waitForURL((u) => u.hostname === "www.swfi.com" && (u.href.includes(encoded) || u.href.includes(sample.expectRecordPath)), { timeout: 45_000 });
+            handedOff = true;
+          } catch {}
+          row.unauthenticated.final_url = page.url();
+          let carriesLink = false;
+          if (!handedOff) {
+            carriesLink = await page.evaluate((args) => Array.from(document.querySelectorAll("a")).some((a) => {
+              const href = a.getAttribute("href") || "";
+              return href.includes(args.encoded) || href.includes(args.raw);
+            }), { encoded, raw: sample.expectRecordPath }).catch(() => false);
+          }
+          if (!handedOff && !carriesLink) row.unauthenticated.failures.push(`platform_handoff_missing:${sample.expectRecordPath}`);
+        } else {
+          // No record pointer: must land back on the dashboard preview, never
+          // an invented platform URL.
+          await page.waitForFunction(() => !/\/detail\/?($|\?)/.test(window.location.pathname), { timeout: 30_000 }).catch(() => {});
+          const finalUrl = page.url();
+          row.unauthenticated.final_url = finalUrl;
+          if (/\/detail\//.test(finalUrl) || finalUrl.startsWith("https://www.swfi.com/")) {
+            row.unauthenticated.failures.push("pointerless_detail_did_not_return_to_preview");
+          }
         }
       } catch (error) {
         row.unauthenticated.failures.push(error.message);
@@ -936,9 +977,6 @@ async function directProtectedRoutesCheck(browser) {
         await page.close().catch(() => {});
       }
       row.unauthenticated.ok = row.unauthenticated.failures.length === 0;
-      row.authenticated.ok = true;
-      row.authenticated.skipped = true;
-      row.authenticated.note = "Self-contained public record route; SWFI subscriber session proof is outside this public mirror gate.";
       result.samples.push(row);
       result.failures.push(...row.unauthenticated.failures.map((failure) => `${sample.route}:unauth:${failure}`));
     }
@@ -968,7 +1006,7 @@ async function run() {
     checks.push(await boundedCheck("data_parity", () => dashboardDataParityCheck(browser), Math.max(checkTimeoutMs, 180_000)));
     checks.push(await boundedCheck("staleness", () => stalenessCheck()));
     checks.push(await boundedCheck("route_parity", () => routeParityCheck(browser), Math.max(checkTimeoutMs, 180_000)));
-    checks.push(await boundedCheck("direct_record_routes_are_self_contained", () => directProtectedRoutesCheck(browser)));
+    checks.push(await boundedCheck("direct_record_routes_forward_to_platform", () => directProtectedRoutesCheck(browser)));
   } finally {
     await browser.close().catch(() => {});
   }
