@@ -406,10 +406,18 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
       : source;
     return [...filtered].sort((a, b) => compareCells(rowCells("comparisons", a)[sortColumn], rowCells("comparisons", b)[sortColumn], sortDir));
   }, [kind, packet, sortColumn, sortDir, tableFilter]);
-  const visibleComparisonRecords = useMemo(
-    () => comparisonRecords.slice(pageStart, pageStart + rowLimit).slice(0, 5),
-    [comparisonRecords, pageStart, rowLimit],
-  );
+  const visibleComparisonRecords = useMemo(() => {
+    // Minutes 2026-07-03 (discussion I / action 10): comparisons only between
+    // similar entity types — an asset manager is not a family office's peer.
+    // Anchor on the first record of the current page, then build the peer set
+    // from same-type records only (never silently mix types).
+    const pageRows = comparisonRecords.slice(pageStart, pageStart + rowLimit);
+    const anchor = pageRows[0] || comparisonRecords[0];
+    if (!anchor) return [];
+    const peerType = businessText(anchor.type || anchor.entity_type);
+    const sameType = comparisonRecords.filter((row) => businessText(row.type || row.entity_type) === peerType);
+    return sameType.slice(0, 5);
+  }, [comparisonRecords, pageStart, rowLimit]);
   const countDetails = tableCountDetails(kind, packet, packets, totalRows, sourceRows.length);
   const visualizationRows = useMemo(() => isFact(packet) ? rows(packet) : [], [packet]);
   const dealEntityTypeOptions = useMemo(() => {
@@ -1763,7 +1771,9 @@ function ComparisonWorkbench({ records, packets }: { records: Row[]; packets: Re
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="m-0 text-[16px] font-bold text-[#11314F]">Current Peer Set</h2>
-          <div className="mt-1 text-[12px] text-[#7A8A9B]">Exact profile packets hydrated: {hydrated.filter((row) => row.__profile_fact === true).length} of {hydrated.length}</div>
+          <div className="mt-1 text-[12px] text-[#7A8A9B]">
+            Peer group: {businessText(hydrated[0]?.type || hydrated[0]?.entity_type)} — comparisons stay within one entity type. Exact profile packets hydrated: {hydrated.filter((row) => row.__profile_fact === true).length} of {hydrated.length}
+          </div>
         </div>
         <div className="rounded border border-[#DCE3EA] px-3 py-2 text-[12px] text-[#41566B]">
           Comparing {hydrated.length.toLocaleString("en-US")} institutions
