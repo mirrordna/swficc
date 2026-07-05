@@ -300,15 +300,17 @@ export default function DashboardPage() {
 
 function BrdCommandCenterSidebar({ topRows, pending = false }: { topRows: Record<string, unknown>[]; pending?: boolean }) {
   const sidebarNav = [
-    // Minutes F: every nav item needs a distinct, truthful destination. The
-    // old list sent two labels to /deals and called the RFP page "Events &
-    // Forums". One label per page, SWFIPN vocabulary (minutes M-1), and the
-    // two core pages the sidebar was missing (Allocators, Comparisons) added.
+    // Minutes F: every nav item needs a distinct, truthful destination — one
+    // label per page, SWFIPN vocabulary (minutes M-1), no duplicate targets,
+    // no "Events & Forums" label on RFP data. "Deals & Pipelines" targets
+    // /transactions per the team's own KP acceptance contract
+    // (dashboardSectionLinks: "Deals" -> /transactions/); "Capital Flows"
+    // carries the /deals surface.
     ["Executive Overview", "/"],
     ["Contacts & Relationships", "/people"],
     ["Institutions", "/profiles"],
-    ["Deals & Pipelines", "/deals"],
-    ["Transactions", "/transactions"],
+    ["Deals & Pipelines", "/transactions"],
+    ["Capital Flows", "/deals"],
     ["Active Allocators", "/allocators"],
     ["Peer Comparisons", "/comparisons"],
     ["Research & Analytics", "/intelligence"],
@@ -377,9 +379,17 @@ function BrdTopNavigation({ onSearchOpen, dataAsOfLabel, displayName }: { onSear
   return (
     <header data-gsap-reveal className="bg-[#B90D12] text-white shadow-[0_1px_8px_rgba(20,32,50,0.18)]">
       <div className="mx-auto grid min-h-[78px] max-w-[1440px] gap-3 px-4 py-3 sm:px-5 lg:grid-cols-[minmax(260px,1fr)_minmax(340px,520px)_auto] lg:items-center">
-        <div className="min-w-0">
-          <h1 className="text-[22px] font-extrabold leading-tight text-white sm:text-[24px]">{displayName ? `${greeting}, ${displayName}.` : `${greeting}.`}</h1>
-          <p className="mt-1 text-[12px] font-medium text-white/78">Here&apos;s your intelligence and pipeline overview.</p>
+        <div className="flex min-w-0 items-center gap-3">
+          {/* Stable brand mark on every viewport — before this, the header's
+              only "SWFI" was the data-dependent freshness label, so branding
+              (and the acceptance gate) raced hydration. */}
+          <DashboardLink href="/" className="shrink-0" aria-label="SWFI dashboard home">
+            <img src={assetHref("/swfi-assets/logo.svg")} alt="SWFI Sovereign Wealth Fund Institute" className="h-9 w-[104px] object-contain" />
+          </DashboardLink>
+          <div className="min-w-0">
+            <h1 className="text-[22px] font-extrabold leading-tight text-white sm:text-[24px]">{displayName ? `${greeting}, ${displayName}.` : `${greeting}.`}</h1>
+            <p className="mt-1 text-[12px] font-medium text-white/78">Here&apos;s your intelligence and pipeline overview.</p>
+          </div>
         </div>
         <button
           type="button"

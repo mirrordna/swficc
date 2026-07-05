@@ -1,6 +1,6 @@
 # SWFI /swficc Acceptance Status
 
-Status: Ready for acceptance/demo review
+Status: Not ready
 
 Scope: current `/swficc` dashboard/terminal validation scope.
 
@@ -8,15 +8,15 @@ This does not claim that full BRD Phase 2 productization is complete.
 
 Public URL: `https://swfipn.activemirror.ai/swficc/`
 
-Deployed release: `/opt/swfipn-acceptance/releases/20260705T094541Z`
+Deployed release: `/opt/swfipn-acceptance/releases/20260705T113155Z`
 
-Public asset version: `20260705T094541Z`
+Public asset version: `20260705T113155Z`
 
 ## Verdict
 
-Acceptance lock: `go`
+Acceptance lock: `no_go`
 
-Share gate: `fail`, `sendable: false`
+Share gate: `pass`, `sendable: true`
 
 BRD contract truth: `fail`, full-universe parity `UNPROVEN`
 
@@ -32,7 +32,8 @@ Production API DNS cutover: `blocked`
 
 ## Blockers
 
-- None found within current acceptance scope.
+- swfipn-acceptance-criteria-gate: status=fail; failures=look_and_feel_consistent
+- swfipn-kp-acceptance-gate: status=fail; failures=dashboard_kp_contract
 
 ## Deferred / Blocked Outside Current Sendable Scope
 
@@ -52,7 +53,7 @@ Production API DNS cutover: `blocked`
 
 | Gate | Result | Receipt |
 | --- | --- | --- |
-| Share/sendability gate | `fail` | `output/swfipn-share-gate-latest.json` |
+| Share/sendability gate | `pass` | `output/swfipn-share-gate-latest.json` |
 | Full-universe mapping gate | `pass` | `output/swfipn-full-universe-mapping-latest.json` |
 | Source/destination manifest gate | `pass` | `output/swfipn-source-destination-manifest-latest.json` |
 | Detail-batch parity gate | `pass` | `output/swfipn-detail-batch-parity-latest.json` |
@@ -60,8 +61,8 @@ Production API DNS cutover: `blocked`
 | Record field parity gate | `blocked` | `output/swfipn-record-field-parity-full-latest.json` |
 | Adversarial review gate | `fail` | `output/swfipn-adversarial-review-latest.json` |
 | BRD contract truth gate | `fail` | `output/swfipn-brd-contract-truth-gate-latest.json` |
-| Acceptance criteria gate | `pass` | `output/swfipn-acceptance-criteria-gate-latest.json` |
-| KP acceptance gate | `pass` | `output/swfipn-kp-acceptance-gate-latest.json` |
+| Acceptance criteria gate | `fail` | `output/swfipn-acceptance-criteria-gate-latest.json` |
+| KP acceptance gate | `fail` | `output/swfipn-kp-acceptance-gate-latest.json` |
 | Route and leakage gates | `pass` | `output/swfipn-link-mapping-leakage-gate-latest.json, output/swfipn-visible-link-escape-gate-latest.json` |
 | BRD Phase 2 gate | `fail` | `output/swfipn-brd-phase2-acceptance-latest.json` |
 | Runtime staleness gate | `pass` | `output/swfipn-runtime-staleness-gate-latest.json` |
@@ -85,7 +86,7 @@ Production API DNS cutover: `blocked`
 
 - receipts: `8`
 - screenshots: `3`
-- failures: `1`
+- failures: `0`
 - source_links: `30`
 - detail_links: `21`
 - mirror_record_links: `51`
@@ -106,7 +107,7 @@ Production API DNS cutover: `blocked`
 
 ## Required wording
 
-Use: “The current `/swficc` dashboard/terminal scope is deployed, source-backed, and sendable for validation with receipts.”
+Use: “The current `/swficc` dashboard/terminal scope is deployed, but it is not sendable until the failing or blocked acceptance receipts pass.”
 
 Use: “corresponding SWFI record/profile page within `/swficc` where an internal record exists.”
 
@@ -116,4 +117,4 @@ Do not use: “All SWFI.com pages are fully migrated.”
 
 ## Final acceptance sentence
 
-No blockers are open inside the current `/swficc` dashboard/terminal validation scope. Full BRD Phase 2 remains active because the explicit deferred productization bucket and production `api.swfi.com` DNS cutover are not complete.
+Blockers remain within the current `/swficc` dashboard/terminal validation scope. Do not call this ready or sendable until the required receipts pass.

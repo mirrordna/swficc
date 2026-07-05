@@ -1,5 +1,6 @@
-import RecordDetailPage from "@/components/RecordDetailPage";
+import SwfiPlatformRedirect from "@/components/SwfiPlatformRedirect";
 
-export default function ProfileDetailPage() {
-  return <RecordDetailPage kind="profile" />;
+// Minutes 2026-07-03 decision J: detail views forward to the SWFI platform.
+export default function Page() {
+  return <SwfiPlatformRedirect kind="profile" />;
 }
