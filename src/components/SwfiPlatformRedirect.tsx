@@ -32,6 +32,11 @@ function RedirectInner({ kind }: { kind: string }) {
     if (source && isSwfiPlatformRecordHref(source)) return swfiAuthHandoffHref(source);
     const id = (params.get("id") || "").trim();
     if (id) return swfiAuthHandoffHref(recordUrl(kind, id));
+    // Slug/name-only rows carry no record id. swfi.com's public search is a
+    // real, verified destination (HTTP 200 unauthenticated) — forward there
+    // rather than bounce back to the preview (minutes G: chains end at SWFI).
+    const slugTerms = (params.get("name") || params.get("slug") || "").trim().replace(/-/g, " ");
+    if (slugTerms) return `https://www.swfi.com/?s=${encodeURIComponent(slugTerms)}`;
     return "";
   }, [kind, params]);
 
