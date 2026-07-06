@@ -47,7 +47,10 @@ const ENDPOINTS = {
 export default function PdfDoctrinePage() {
   const rootRef = useGsapReveal<HTMLDivElement>();
   const [packets, setPackets] = useState<Packets>({});
-  const [view, setView] = useState<"data" | "visualization">("data");
+  // Default to the visual view (Paul's law 2026-07-06: "every page should
+  // have a visual graph"; the audit found this page's existing visualization
+  // hidden behind the Data default — same trap as the filtered-mandates bug).
+  const [view, setView] = useState<"data" | "visualization">("visualization");
 
   useEffect(() => {
     let active = true;

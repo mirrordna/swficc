@@ -97,15 +97,17 @@ const CONFIG: Record<Kind, { title: string; endpoint: string; columns: string[];
     columns: ["Name", "Country", "City", "Region", "LinkedIn", "Citation"],
   },
   transactions: {
+    // Sector + Type added 2026-07-06 (unleveraged-fields probe: both
+    // 25/25-filled in every packet row, never displayed).
     title: "Transactions",
     endpoint: "/api/transactions/v1?limit=100",
-    columns: ["Name", "Buyer Entity", "Buyer Region", "Amount (USD)", "Closed At"],
+    columns: ["Name", "Buyer Entity", "Buyer Region", "Sector", "Type", "Amount (USD)", "Closed At"],
     columnsNote: "Seller details are not disclosed in SWFI transaction records — columns return when the source carries them.",
   },
   deals: {
     title: "Deals",
     endpoint: "/api/transactions/v1?limit=100",
-    columns: ["Name", "Buyer Entity", "Buyer Region", "Amount (USD)", "Closed At"],
+    columns: ["Name", "Buyer Entity", "Buyer Region", "Sector", "Type", "Amount (USD)", "Closed At"],
     columnsNote: "Seller details are not disclosed in SWFI transaction records — columns return when the source carries them.",
   },
   allocators: {
@@ -119,9 +121,11 @@ const CONFIG: Record<Kind, { title: string; endpoint: string; columns: string[];
     columns: ["Institution", "Entity Type", "Country / Region", "AUM", "Peer Group"],
   },
   mandates: {
+    // Amount added 2026-07-06 (unleveraged-fields probe: amount_display is
+    // 25/25-filled and was never shown — RFP size is decision-relevant).
     title: "RFPs / Mandates",
     endpoint: "/api/live-opportunities/v1",
-    columns: ["Title", "Institution", "Strategy", "Deadline", "Citation"],
+    columns: ["Title", "Institution", "Strategy", "Amount", "Deadline", "Citation"],
   },
   alerts: {
     title: "Alerts",
@@ -183,11 +187,13 @@ function rowCells(kind: Kind, row: Row): Cell[] {
       transactionCell(row),
       entityListCell(row, "buyer"),
       transactionFactCell(row, text(row.buyer_region || row.region)),
+      transactionFactCell(row, text(row.sector || row.industry)),
+      transactionFactCell(row, text(row.investment_type || row.type)),
       transactionFactCell(row, disclosedMoney(row.amount_display || row.capital_display || row.amount || row.capital || row.value)),
       transactionFactCell(row, text(row.closed_at || row.announced_at || row.date)),
     ];
   }
-  if (kind === "mandates") return [mandateCell(row), text(row.institution), text(row.strategy || row.asset_class_or_strategy), text(row.deadline || row.due_at), citation(href, "/mandates/")];
+  if (kind === "mandates") return [mandateCell(row), text(row.institution), text(row.strategy || row.asset_class_or_strategy), disclosedMoney(row.amount_display || row.amount), text(row.deadline || row.due_at), citation(href, "/mandates/")];
   if (kind === "research" || kind === "intelligence") {
     const researchHref = researchSourceHref(row);
     return [researchCell(row), text(row.source), text(row.published_at || row.date), citation(researchHref, "/intelligence/")];
@@ -252,6 +258,22 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
   const [selectedDealEntityTypes, setSelectedDealEntityTypes] = useState<string[]>([]);
   const [sectionView, setSectionView] = useState<"data" | "visualization">(() => supportsSectionVisualization(kind) ? "visualization" : "data");
   const [rowLimit, setRowLimit] = useState(25);
+  // Paul-reported live bug 2026-07-06 (/mandates/?filter=...: "this site
+  // links dont lead anywhere"): arriving with ?filter= means the visitor
+  // clicked a chart segment and came for RECORDS — but the default
+  // Visualization view hid the record table (and its swfi.com handoffs)
+  // behind the Data toggle. A filter arrival lands on Data. (Effect, not
+  // state initializer: the static export pre-renders without the query
+  // string, so deciding at hydration time would mismatch — React #418.)
+  useEffect(() => {
+    try {
+      if (new URLSearchParams(window.location.search).has("filter")) {
+        setSectionView("data");
+      }
+    } catch {
+      /* no window or malformed query: keep the default view */
+    }
+  }, []);
   const [pageIndex, setPageIndex] = useState(0);
   const [comparisonPackets, setComparisonPackets] = useState<Record<string, Packet>>({});
   const serverPageIndex = isServerPagedKind(kind) ? pageIndex : 0;
@@ -1283,7 +1305,9 @@ function packetNumber(packet: Packet | undefined, keys: string[]) {
 }
 
 function supportsSectionVisualization(kind: Kind): boolean {
-  return ["profiles", "comparisons", "people", "transactions", "deals", "mandates"].includes(kind);
+  // allocators + intelligence added 2026-07-06 (Paul: "every page should
+  // have a visual graph or relevant"; audit receipt: both were table-only).
+  return ["profiles", "comparisons", "people", "transactions", "deals", "mandates", "allocators", "intelligence"].includes(kind);
 }
 
 function sectionVisualizationTitle(kind: Kind): string {
@@ -1292,6 +1316,8 @@ function sectionVisualizationTitle(kind: Kind): string {
   if (kind === "people") return "People Data Visualization";
   if (kind === "transactions" || kind === "deals") return "Transaction Data Visualization";
   if (kind === "mandates") return "Compass RFP Analytics";
+  if (kind === "allocators") return "Allocator Activity Visualization";
+  if (kind === "intelligence") return "Intelligence Feed Visualization";
   return "Data Visualization";
 }
 
@@ -1375,12 +1401,13 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
       ) : (
         /* NEVER_LYING: without source-side facets these charts describe the
            CURRENT PAGE of records, not the whole universe — say so in the
-           titles, and don't draw a "trend" from a handful of dated rows (a
+           titles, don't draw a "trend" from a handful of dated rows (a
            3-point line across years reads as market history that never
-           happened). */
+           happened), and never render an EMPTY chart frame (a chart with no
+           rows is a dead element — minutes F). */
         <div className="grid gap-4 lg:grid-cols-3">
-          <SectionBarChart kind={kind} title="Records by Category (current page)" rows={categoryRows} />
-          <SectionBarChart kind={kind} title="Records by Geography (current page)" rows={geographyRows} />
+          {categoryRows.length ? <SectionBarChart kind={kind} title="Records by Category (current page)" rows={categoryRows} /> : null}
+          {geographyRows.length ? <SectionBarChart kind={kind} title="Records by Geography (current page)" rows={geographyRows} /> : null}
           {trendRows.length >= 4 ? (
             <SectionLineChart title="Records by Month (current page)" rows={trendRows} />
           ) : (
@@ -1399,6 +1426,8 @@ function sectionCategoryLabel(kind: Kind, row: Row): string {
   if (kind === "profiles" || kind === "comparisons") return businessText(row.type || row.entity_type);
   if (kind === "people") return businessText(row.institution || row.title || row.country);
   if (kind === "transactions" || kind === "deals") return businessText(row.industry || row.category || row.sector || row.investment_type);
+  if (kind === "allocators") return businessText(row.activity_reason || row.entity_type || row.type);
+  if (kind === "intelligence") return businessText(row.source);
   return businessText(row.type || row.strategy || row.investment_type || row.asset_class_or_strategy);
 }
 
