@@ -102,7 +102,7 @@ export function SwfiFooter() {
           <a href={appHref("/demo/")} className="text-white underline">Demo</a>
           <a href={appHref("/contact/")} className="text-white underline">Contact Us</a>
           <a href={appHref("/newsletter-subscription/")} className="text-white underline">Subscribe</a>
-          <a href={appHref("/login/")} className="text-white underline">Sign In</a>
+          <a href="https://www.swfi.com/v1/signin/" className="text-white underline">Sign In</a>
           </nav>
         </div>
         <div className="h-px bg-white/20" />

@@ -1397,7 +1397,7 @@ function ConceptTopBar({ dataAsOfLabel, packets }: { dataAsOfLabel: string; pack
           <DashboardLink href="/solutions/" className="text-white/90 no-underline hover:text-white">Solutions</DashboardLink>
           <DashboardLink href="/demo/" className="text-white/90 no-underline hover:text-white">Demo</DashboardLink>
           <DashboardLink href="/contact/" className="text-white/90 no-underline hover:text-white">Contact Us</DashboardLink>
-          <DashboardLink href="/login/" className="text-white/90 no-underline hover:text-white">Sign In</DashboardLink>
+          <a href="https://www.swfi.com/v1/signin/" className="text-white/90 no-underline hover:text-white">Sign In</a>
         </nav>
         <form action={appHref("/search/")} className="order-3 flex h-9 w-full items-center border border-white/30 bg-white px-2.5 text-[#444D5F] sm:order-none sm:w-[430px]">
           <span className="mr-2 text-[10px] font-black uppercase tracking-[0.12em] text-[#7A8794]">Search</span>

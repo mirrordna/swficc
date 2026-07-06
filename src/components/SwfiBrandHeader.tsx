@@ -2,13 +2,18 @@
 
 import { appHref, assetHref } from "@/lib/selfContainedLinks";
 
+// Sign-in belongs to swfi.com (source-of-truth rule; minutes C/G). There is
+// no /login route in this app — the old link 404'd once the route vanished
+// from the tree.
+const SWFI_SIGNIN = "https://www.swfi.com/v1/signin/";
+
 const brandLinks = [
   ["About Us", "/about/"],
   ["Products", "/products/"],
   ["Solutions", "/solutions/"],
   ["Demo", "/demo/"],
   ["Contact Us", "/contact/"],
-  ["Sign In", "/login/"],
+  ["Sign In", SWFI_SIGNIN],
 ] as const;
 
 const brandDropdowns: Record<string, readonly (readonly [string, string])[]> = {
@@ -48,7 +53,7 @@ export default function SwfiBrandHeader({
           {brandLinks.map(([label, href]) => {
             const rawHref = String(href);
             const target = absoluteOrAppHref(href);
-            const gated = gateBrandLinks && !rawHref.startsWith("http://") && !rawHref.startsWith("https://") && rawHref !== "/login/";
+            const gated = gateBrandLinks && !rawHref.startsWith("http://") && !rawHref.startsWith("https://");
             const dropdown = brandDropdowns[label] || [];
             return (
               <div key={label} className="group relative">
@@ -106,8 +111,10 @@ export default function SwfiBrandHeader({
   );
 }
 
-function loginHref(target: string): string {
-  return `${appHref("/login/")}?${new URLSearchParams({ next: target }).toString()}`;
+function loginHref(_target: string): string {
+  // Gated links go to the platform sign-in; the dashboard has no login of
+  // its own (data-dashboard-target still carries the intended destination).
+  return SWFI_SIGNIN;
 }
 
 function absoluteOrAppHref(href: string): string {

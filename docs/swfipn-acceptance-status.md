@@ -8,15 +8,15 @@ This does not claim that full BRD Phase 2 productization is complete.
 
 Public URL: `https://swfipn.activemirror.ai/swficc/`
 
-Deployed release: `/opt/swfipn-acceptance/releases/20260705T113155Z`
+Deployed release: `/opt/swfipn-acceptance/releases/20260705T140957Z`
 
-Public asset version: `20260705T113155Z`
+Public asset version: `20260705T140957Z`
 
 ## Verdict
 
 Acceptance lock: `no_go`
 
-Share gate: `pass`, `sendable: true`
+Share gate: `fail`, `sendable: false`
 
 BRD contract truth: `fail`, full-universe parity `UNPROVEN`
 
@@ -32,8 +32,8 @@ Production API DNS cutover: `blocked`
 
 ## Blockers
 
-- swfipn-acceptance-criteria-gate: status=fail; failures=look_and_feel_consistent
-- swfipn-kp-acceptance-gate: status=fail; failures=dashboard_kp_contract
+- swfipn-acceptance-criteria-gate: status=fail; failures=tabular_rows_link_to_swfi_pages,data_parity,staleness
+- swfipn-visible-link-escape-gate: status=fail; failures={'route': '/profiles/detail/?id=5e5713b876fb1e43b1bb71eb', 'failure': 'blank_page'},{'route': '/profiles/detail/?id=5e5713b876fb1e43b1bb71eb', 'failure': 'console_or_page_errors:2'},{'route': '/profiles/detail/?id=5e5713b876fb1e43b1bb71eb', 'failure': 'failed_requests:1'}
 
 ## Deferred / Blocked Outside Current Sendable Scope
 
@@ -53,7 +53,7 @@ Production API DNS cutover: `blocked`
 
 | Gate | Result | Receipt |
 | --- | --- | --- |
-| Share/sendability gate | `pass` | `output/swfipn-share-gate-latest.json` |
+| Share/sendability gate | `fail` | `output/swfipn-share-gate-latest.json` |
 | Full-universe mapping gate | `pass` | `output/swfipn-full-universe-mapping-latest.json` |
 | Source/destination manifest gate | `pass` | `output/swfipn-source-destination-manifest-latest.json` |
 | Detail-batch parity gate | `pass` | `output/swfipn-detail-batch-parity-latest.json` |
@@ -62,7 +62,7 @@ Production API DNS cutover: `blocked`
 | Adversarial review gate | `fail` | `output/swfipn-adversarial-review-latest.json` |
 | BRD contract truth gate | `fail` | `output/swfipn-brd-contract-truth-gate-latest.json` |
 | Acceptance criteria gate | `fail` | `output/swfipn-acceptance-criteria-gate-latest.json` |
-| KP acceptance gate | `fail` | `output/swfipn-kp-acceptance-gate-latest.json` |
+| KP acceptance gate | `pass` | `output/swfipn-kp-acceptance-gate-latest.json` |
 | Route and leakage gates | `pass` | `output/swfipn-link-mapping-leakage-gate-latest.json, output/swfipn-visible-link-escape-gate-latest.json` |
 | BRD Phase 2 gate | `fail` | `output/swfipn-brd-phase2-acceptance-latest.json` |
 | Runtime staleness gate | `pass` | `output/swfipn-runtime-staleness-gate-latest.json` |
@@ -86,7 +86,7 @@ Production API DNS cutover: `blocked`
 
 - receipts: `8`
 - screenshots: `3`
-- failures: `0`
+- failures: `2`
 - source_links: `30`
 - detail_links: `21`
 - mirror_record_links: `51`
