@@ -165,10 +165,11 @@ function rowCells(kind: Kind, row: Row): Cell[] {
       text(row.country),
       text(row.city),
       text(row.region),
-      // linkedin_url is source data about the person (backend guards the
-      // host); Paul 2026-07-06 "add all of it" — the one sanctioned
-      // non-SWFI outbound link class.
-      row.linkedin_url ? { label: "LinkedIn profile", href: String(row.linkedin_url) } : NOT_DISCLOSED,
+      // Law tightened 2026-07-06 ("all final links MUST redirect to
+      // swfi.com"): the LinkedIn presence stays VISIBLE as data, but the
+      // outbound link is gone — the person's SWFI record (Citation column)
+      // is the chain's terminal.
+      row.linkedin_url ? "On file" : NOT_DISCLOSED,
       citation(href, "/people/"),
     ];
   }

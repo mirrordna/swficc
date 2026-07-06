@@ -85,17 +85,11 @@ export function SwfiFooter() {
     <footer className="bg-[#22272F] px-4 py-8 text-white">
       <div className="mx-auto grid max-w-[1188px] gap-5">
         <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
-          <nav aria-label="SWFI social links" className="flex flex-wrap items-center gap-6">
-            <a href="https://twitter.com/swfinstitute?ref_src=twsrc%5Egoogle%7Ctwcamp%5Eserp%7Ctwgr%5Eauthor" aria-label="Twitter" className="inline-flex">
-              <img src={assetHref("/swfi-assets/twitter.svg")} alt="" className="h-6 w-6" />
-            </a>
-            <a href="https://www.linkedin.com/company/sovereign-wealth-fund-institute-inc-" aria-label="LinkedIn" className="inline-flex">
-              <img src={assetHref("/swfi-assets/linkedin.svg")} alt="" className="h-6 w-6" />
-            </a>
-            <a href="https://www.facebook.com/institutionalinvestorsSWFI/" aria-label="Facebook" className="inline-flex">
-              <img src={assetHref("/swfi-assets/facebook.svg")} alt="" className="h-6 w-6" />
-            </a>
-          </nav>
+          {/* Social icons removed 2026-07-06 (Paul: "all final links on
+              every page MUST redirect to swfi.com — the swfi team wants it
+              to be the final source of truth"). Social profiles live on the
+              platform; the preview never links off the SWFI universe. */}
+          <a href="https://www.swfi.com/" className="text-[14px] font-semibold text-white underline">swfi.com — the SWFI platform</a>
           <nav aria-label="SWFI footer navigation" className="flex flex-wrap gap-8 text-[14px]">
           <a href={appHref("/about/")} className="text-white underline">About Us</a>
           <a href={appHref("/solutions/")} className="text-white underline">Solutions</a>

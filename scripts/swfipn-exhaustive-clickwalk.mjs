@@ -77,9 +77,9 @@ while (queue.length && pages.length < MAX_PAGES) {
     if (/^https?:\/\//.test(href)) {
       try {
         const host = new URL(href).hostname;
-        // Aligned to the escape/leakage gates' allowlist + Paul 2026-07-06
-        // "add all of it" (people linkedin_url is sanctioned source data).
-        const allowedExternal = new Set(["gwc.events", "twitter.com", "www.linkedin.com", "www.facebook.com"]);
+        // Law tightened 2026-07-06 (Paul: "all final links on every page
+        // MUST redirect to swfi.com"): no external hosts are approved.
+        const allowedExternal = new Set([]);
         if (host.endsWith("swfi.com")) {
           swfiHandoffs += 1;
         } else if (host !== new URL(ORIGIN).hostname && !allowedExternal.has(host)) {

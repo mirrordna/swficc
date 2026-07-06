@@ -40,12 +40,9 @@ const routes = envList("SWFIPN_LINK_ESCAPE_ROUTES", [
   "/source/",
   "/search/?q=Real%20Estate",
 ]);
-const allowedExternalHosts = new Set([
-  "gwc.events",
-  "twitter.com",
-  "www.linkedin.com",
-  "www.facebook.com",
-]);
+// Law tightened 2026-07-06 (Paul: "all final links on every page MUST
+// redirect to swfi.com"): NO external hosts are approved finals.
+const allowedExternalHosts = new Set([]);
 const forbiddenUserText = [
   "Active Mirror",
   "source_gap",

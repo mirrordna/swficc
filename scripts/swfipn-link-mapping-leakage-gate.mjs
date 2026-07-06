@@ -81,12 +81,9 @@ const forbiddenText = [
   /\b[a-f0-9]{24}\b/i,
 ];
 
-const allowedExternalHosts = new Set([
-  "gwc.events",
-  "twitter.com",
-  "www.linkedin.com",
-  "www.facebook.com",
-]);
+// Law tightened 2026-07-06 (Paul: "all final links on every page MUST
+// redirect to swfi.com"): NO external hosts are approved finals.
+const allowedExternalHosts = new Set([]);
 
 function normalizeOrigin(value) {
   return value.endsWith("/") ? value : `${value}/`;
