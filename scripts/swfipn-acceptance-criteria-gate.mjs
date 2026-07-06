@@ -921,9 +921,18 @@ async function directProtectedRoutesCheck(browser) {
       label: "transaction handoff",
     },
     {
+      // Law change 2026-07-06: name/slug-only rows (no record id) forward to
+      // swfi.com PUBLIC SEARCH (verified 200 unauthenticated) so the chain
+      // still ends at the platform (minutes G).
       route: "/profiles/detail/?name=No+Pointer+Sample",
       expectRecordPath: "",
-      label: "no record pointer -> back to preview",
+      expectPublicSearch: "no pointer sample",
+      label: "name-only pointer -> swfi public search",
+    },
+    {
+      route: "/profiles/detail/",
+      expectRecordPath: "",
+      label: "no record pointer at all -> back to preview",
     },
   ];
   const result = { id: "direct_record_routes_forward_to_platform", ok: true, skipped: false, failures: [], samples: [], subscriber_auth_mode: "platform_handoff_per_minutes_J", credentials_used: false };
@@ -961,9 +970,22 @@ async function directProtectedRoutesCheck(browser) {
             }), { encoded, raw: sample.expectRecordPath }).catch(() => false);
           }
           if (!handedOff && !carriesLink) row.unauthenticated.failures.push(`platform_handoff_missing:${sample.expectRecordPath}`);
+        } else if (sample.expectPublicSearch) {
+          // Name/slug-only: must reach swfi.com public search with the
+          // de-slugged terms (law 2026-07-06; minutes G).
+          await page.waitForURL((u) => u.hostname === "www.swfi.com" && u.searchParams.get("s") !== null, { timeout: 45_000 }).catch(() => {});
+          const finalUrl = page.url();
+          row.unauthenticated.final_url = finalUrl;
+          let reachedSearch = false;
+          try {
+            const parsedFinal = new URL(finalUrl);
+            reachedSearch = parsedFinal.hostname === "www.swfi.com"
+              && (parsedFinal.searchParams.get("s") || "").toLowerCase() === sample.expectPublicSearch;
+          } catch {}
+          if (!reachedSearch) row.unauthenticated.failures.push(`name_pointer_did_not_reach_public_search:${finalUrl.slice(0, 90)}`);
         } else {
-          // No record pointer: must land back on the dashboard preview, never
-          // an invented platform URL.
+          // No record pointer at all: must land back on the dashboard
+          // preview, never an invented platform URL.
           await page.waitForFunction(() => !/\/detail\/?($|\?)/.test(window.location.pathname), { timeout: 30_000 }).catch(() => {});
           const finalUrl = page.url();
           row.unauthenticated.final_url = finalUrl;

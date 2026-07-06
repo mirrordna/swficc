@@ -85,7 +85,22 @@ function loadPlaywright() {
 }
 
 function isRawSwfiRecordUrl(value) {
+  // Bare auth entry (law 2026-07-06) is not a record URL.
+  if (isSwfiAuthEntryHref(value)) return false;
   return /https?:\/\/(?:www\.|cms\.)?swfi\.com\/(?:v1\/|\?p=)/i.test(String(value || ""));
+}
+
+// The bare SWFI sign-in page (no redirect param) is the platform's auth
+// entry — approved everywhere (source-of-truth rule; minutes C/G).
+function isSwfiAuthEntryHref(value) {
+  try {
+    const parsed = new URL(String(value || ""));
+    if (!["www.swfi.com", "swfi.com"].includes(parsed.hostname)) return false;
+    if (parsed.pathname.replace(/\/?$/, "/") !== "/v1/signin/") return false;
+    return !parsed.searchParams.get("redirect");
+  } catch {
+    return false;
+  }
 }
 
 function isAllowedSwfiLegacyArticleUrl(value) {
@@ -121,6 +136,7 @@ function allowedExternal(route, href) {
     const parsed = new URL(href);
     if (isCanonicalSwfiHandoffUrl(href)) return true;
     if (isAllowedSwfiLegacyArticleUrl(href)) return true;
+    if (isSwfiAuthEntryHref(href)) return true;
     if (!allowedExternalHosts.has(parsed.hostname)) return false;
     return true;
   } catch {

@@ -81,7 +81,9 @@ const brandExpectedLinks = [
   ["Solutions", "/solutions/"],
   ["Demo", "/demo/"],
   ["Contact Us", "/contact/"],
-  ["Sign In", "/login/"],
+  // Law change 2026-07-06 (source-of-truth rule; minutes C/G): Sign In goes
+  // DIRECTLY to the SWFI auth entry — /login/ no longer exists in this app.
+  ["Sign In", "swfi-auth-entry"],
 ];
 const brandPageRoutes = [
   {
@@ -243,10 +245,27 @@ function sameAppRoute(href, route) {
 function loginHrefTargetsRoute(href, route) {
   try {
     const parsed = new URL(href);
+    // New law 2026-07-06: gated brand links point at the SWFI auth entry
+    // directly; the intended destination rides data-dashboard-target
+    // (validated separately by dashboardTargetMatchesRoute).
+    if (isSwfiAuthEntryHref(href)) return true;
     const root = new URL(origin);
     return parsed.origin === root.origin
       && parsed.pathname.replace(/\/?$/, "/") === appPath("/login/")
       && parsed.searchParams.get("next") === appTarget(route);
+  } catch {
+    return false;
+  }
+}
+
+// The bare SWFI sign-in page (no redirect param) is the platform's auth
+// entry — an approved destination everywhere, never a "record link".
+function isSwfiAuthEntryHref(value) {
+  try {
+    const parsed = new URL(String(value || ""));
+    if (!["www.swfi.com", "swfi.com"].includes(parsed.hostname)) return false;
+    if (parsed.pathname.replace(/\/?$/, "/") !== "/v1/signin/") return false;
+    return !parsed.searchParams.get("redirect");
   } catch {
     return false;
   }
@@ -318,7 +337,7 @@ function isAllowedSwfiLegacyArticleUrl(value) {
 }
 
 function isApprovedSwfiPlatformHref(value) {
-  return isApprovedSwfiRecordHandoff(value) || isAllowedSwfiLegacyArticleUrl(value);
+  return isApprovedSwfiRecordHandoff(value) || isAllowedSwfiLegacyArticleUrl(value) || isSwfiAuthEntryHref(value);
 }
 
 function dashboardTargetMatchesRoute(target, route) {
@@ -498,9 +517,11 @@ function brandLinkFailures(links, { dashboardGated = false } = {}) {
       failures.push(`brand_nav_missing:${label}`);
       continue;
     }
-    const valid = dashboardGated && route !== "/login/"
-      ? matches.some((link) => loginHrefTargetsRoute(link.href, route) && dashboardTargetMatchesRoute(link.dashboardTarget, route))
-      : matches.some((link) => sameAppRoute(link.href, route));
+    const valid = route === "swfi-auth-entry"
+      ? matches.some((link) => isSwfiAuthEntryHref(link.href))
+      : dashboardGated
+        ? matches.some((link) => loginHrefTargetsRoute(link.href, route) && dashboardTargetMatchesRoute(link.dashboardTarget, route))
+        : matches.some((link) => sameAppRoute(link.href, route));
     if (!valid) {
       failures.push(`brand_nav_wrong_route:${label}:${matches.map((link) => link.href).join("|")}`);
     }
@@ -636,7 +657,9 @@ async function listRouteCheck(context, spec) {
       const anchors = Array.from(document.querySelectorAll("a[href]"));
       const found = anchors.find((a) => {
         if (kind === "legacy" && /\/research\/detail\/?\?[^#]*\blegacy=\d+/.test(a.href)) return true;
-        if (a.href.includes("www.swfi.com/v1/signin/")) return true;
+        // Record handoffs carry redirect=; the bare auth entry (header Sign
+        // In, law 2026-07-06) is not a record link — skip it here.
+        if (a.href.includes("www.swfi.com/v1/signin/") && a.href.includes("redirect=")) return true;
         return /^https:\/\/(www\.)?swfi\.com\/\?p=\d+/.test(a.href);
       });
       return found ? { text: found.textContent?.trim().replace(/\s+/g, " ") || "", href: found.href, source: found.getAttribute("data-source-state") || "" } : null;

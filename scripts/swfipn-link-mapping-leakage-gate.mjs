@@ -161,6 +161,12 @@ function parseSwfiSignin(href) {
 }
 
 function classifyAnchor(anchor) {
+  // Law change 2026-07-06 (source-of-truth rule; minutes C/G): the BARE
+  // sign-in page (no redirect param) is the platform's auth entry — an
+  // approved destination, not a record link and not a leak.
+  if (isSwfiAuthEntryHref(anchor.href) || isSwfiAuthEntryHref(anchor.raw)) {
+    return { ...anchor, family: "swfi_auth_entry", kind: "", redirect: "" };
+  }
   const signin = parseSwfiSignin(anchor.href) || parseSwfiSignin(anchor.raw);
   if (signin) return { ...anchor, family: signin.kind ? "swfi_record_handoff" : "swfi_signin", kind: signin.kind, redirect: signin.redirectPath, absoluteRedirect: signin.absoluteRedirect, invalidRedirect: signin.invalidRedirect };
   try {

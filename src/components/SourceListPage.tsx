@@ -39,6 +39,8 @@ const pageLinks = [
   ["RFPs", "/mandates"],
   // Minutes F: no nav element without working function — Alerts has no data
   // source yet (empty endpoint), so it leaves the nav until it is real.
+  // AUM History added 2026-07-06 (Paul: "link it").
+  ["AUM History", "/aggregates"],
   ["Reports", "/reports"],
   ["Intelligence", "/intelligence"],
   ["Search", "/search"],

@@ -315,6 +315,9 @@ function BrdCommandCenterSidebar({ topRows, pending = false }: { topRows: Record
     ["Peer Comparisons", "/comparisons"],
     ["Research & Analytics", "/intelligence"],
     ["RFPs & Mandates", "/mandates"],
+    // Paul-approved 2026-07-06 ("link it"): the historical AUM chart page
+    // joins the nav — it was live and working but unreachable.
+    ["AUM History", "/aggregates"],
     ["Reports & Dashboards", "/reports"],
     ["Settings", "/account"],
   ] as const;
@@ -341,7 +344,9 @@ function BrdCommandCenterSidebar({ topRows, pending = false }: { topRows: Record
       </div>
       <div className="mx-4 border-t border-[#E8ECF1] py-4">
         <div className="mb-2 flex items-center justify-between text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#4A5665]">
-          <span>Watchlist</span>
+          {/* Honest label 2026-07-06: these are the top-AUM ranked rows, not a
+              user-curated watchlist (this preview has no accounts). */}
+          <span>Top by AUM</span>
           <span className="text-[#7B8996]">AUM</span>
         </div>
         <div className="grid gap-2">
@@ -351,7 +356,7 @@ function BrdCommandCenterSidebar({ topRows, pending = false }: { topRows: Record
               <span className="text-right text-[11px] font-bold text-[#071F48]">{aumDisplay(row)}</span>
             </DataLink>
           )) : (
-            <div className="rounded-[6px] bg-[#F6F8FA] px-3 py-2 text-[11px] font-semibold text-[#657282]">{pending ? "Loading…" : "No current watchlist rows"}</div>
+            <div className="rounded-[6px] bg-[#F6F8FA] px-3 py-2 text-[11px] font-semibold text-[#657282]">{pending ? "Loading…" : "No ranked rows loaded"}</div>
           )}
         </div>
       </div>
