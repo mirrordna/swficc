@@ -8,15 +8,15 @@ This does not claim that full BRD Phase 2 productization is complete.
 
 Public URL: `https://swfipn.activemirror.ai/swficc/`
 
-Deployed release: `/opt/swfipn-acceptance/releases/20260706T063822Z`
+Deployed release: `/opt/swfipn-acceptance/releases/20260706T072757Z`
 
-Public asset version: `20260706T063822Z`
+Public asset version: `20260706T072757Z`
 
 ## Verdict
 
 Acceptance lock: `go`
 
-Share gate: `fail`, `sendable: false`
+Share gate: `pass`, `sendable: true`
 
 BRD contract truth: `fail`, full-universe parity `UNPROVEN`
 
@@ -52,7 +52,7 @@ Production API DNS cutover: `blocked`
 
 | Gate | Result | Receipt |
 | --- | --- | --- |
-| Share/sendability gate | `fail` | `output/swfipn-share-gate-latest.json` |
+| Share/sendability gate | `pass` | `output/swfipn-share-gate-latest.json` |
 | Full-universe mapping gate | `pass` | `output/swfipn-full-universe-mapping-latest.json` |
 | Source/destination manifest gate | `pass` | `output/swfipn-source-destination-manifest-latest.json` |
 | Detail-batch parity gate | `pass` | `output/swfipn-detail-batch-parity-latest.json` |
@@ -85,7 +85,7 @@ Production API DNS cutover: `blocked`
 
 - receipts: `8`
 - screenshots: `3`
-- failures: `4`
+- failures: `0`
 - source_links: `30`
 - detail_links: `21`
 - mirror_record_links: `51`

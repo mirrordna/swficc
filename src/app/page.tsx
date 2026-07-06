@@ -19,7 +19,41 @@ import {
 import { useGsapReveal } from "@/hooks/useGsapReveal";
 import { HOME_PACKET_SNAPSHOT } from "@/lib/homeSourceSnapshot";
 import { appHref, appRouteForHref, assetHref, isSwfiPlatformRecordHref, sourceProvenanceHref, swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
-import WorldCapitalMap from "@/components/WorldCapitalMap";
+import WorldCapitalMap, { type WorldFlowPair } from "@/components/WorldCapitalMap";
+
+// Deal-flow pairs for the map's interactive layer (Paul 2026-07-06: "where
+// the flows are going"). Data truth (fan-out probe receipt): every loaded
+// deal carries buyer_entities[].country inline (59/59) and a deal-location
+// country (25/25) — flows anchor on THOSE fields only; buyer countries are
+// never resolved by name search (probe caught 2/5 wrong-entity matches).
+// Weights are DEAL COUNTS (full coverage); USD sums ride along with their
+// own disclosed-deal coverage, never imputed.
+function worldFlowPairs(transactionRows: Record<string, unknown>[]): WorldFlowPair[] {
+  const pairs = new Map<string, WorldFlowPair>();
+  for (const row of transactionRows) {
+    const target = brdText(row.country, "");
+    if (!target) continue;
+    const buyers = Array.isArray(row.buyer_entities) ? (row.buyer_entities as Record<string, unknown>[]) : [];
+    const usd = text(row.currency, "").trim().toUpperCase() === "USD" ? (numberValue(row.amount) || 0) : 0;
+    const sources = new Set<string>();
+    for (const buyer of buyers) {
+      const source = brdText(buyer.country, "");
+      if (source) sources.add(source);
+    }
+    for (const source of sources) {
+      const key = `${source}→${target}`;
+      const current = pairs.get(key) || { source, target, deals: 0, buyers: 0, usd: 0, usdDeals: 0 };
+      current.deals += 1;
+      current.buyers += buyers.filter((buyer) => brdText(buyer.country, "") === source).length;
+      if (usd) {
+        current.usd += usd;
+        current.usdDeals += 1;
+      }
+      pairs.set(key, current);
+    }
+  }
+  return [...pairs.values()].sort((a, b) => b.deals - a.deals);
+}
 import { useDashboardSessionDisplayName } from "@/lib/dashboardAuth";
 import { businessSearchQueryVariants, dedupeSearchRecords, rankSearchRecords, searchRelevanceScore as businessSearchRelevanceScore, type SearchKind } from "@/lib/searchRelevance";
 
@@ -516,9 +550,9 @@ function VisualExecutiveOverview({
               expanded={expandedPanel === "institution-overview"}
               onToggle={onTogglePanel}
               detail={<TotalAumInsightDetail topRows={topRows} institutionTypeRows={institutionTypeRows} transactionRows={transactionRows} rfpRows={rfpRows} sectorRows={sectorRows} />}
-              explain="Real world map of where SWFI's top-ranked institutions are based — bubble number = institutions in that country from the loaded rows; AUM shows only when one currency backs it. Click a country or row → that country's profiles."
+              explain="Real world map, two views: Institutions (where SWFI's top-ranked institutions are based; bubble = count) and Deal flows (arrows from buyer country to deal location, width = connecting deals; hover for values). AUM and USD figures show only when the source disclosed them. Click a country or row → that country's profiles."
             >
-              <CapitalByCountry topPacket={packets.top20} topRows={topRows} sectorRows={sectorRows} />
+              <CapitalByCountry topPacket={packets.top20} topRows={topRows} sectorRows={sectorRows} flows={worldFlowPairs(transactionRows)} />
             </ExpandablePanel>
             <ExpandablePanel
               id="capital-flows"
@@ -1501,7 +1535,7 @@ function ExpandablePanel({ id, title, href, expanded, onToggle, children, detail
   );
 }
 
-function CapitalByCountry({ topPacket, topRows, sectorRows }: { topPacket?: Packet; topRows: Record<string, unknown>[]; sectorRows: Record<string, unknown>[] }) {
+function CapitalByCountry({ topPacket, topRows, sectorRows, flows = [] }: { topPacket?: Packet; topRows: Record<string, unknown>[]; sectorRows: Record<string, unknown>[]; flows?: WorldFlowPair[] }) {
   const totalAum = totalAumValue(topPacket, topRows);
   const sectorCapital = sumNumbers(sectorRows.map(sectorValue));
   // Ranked by institution count (always known, one unit) — never by a bar
@@ -1524,7 +1558,7 @@ function CapitalByCountry({ topPacket, topRows, sectorRows }: { topPacket?: Pack
       <div className="overflow-hidden rounded-[6px] border border-[#C8D8E8] bg-white shadow-[0_1px_4px_rgba(20,44,70,0.08)]">
         {display.length ? (
           <div className="grid gap-1.5 p-3">
-            <WorldCapitalMap rows={nodes} />
+            <WorldCapitalMap rows={nodes} flows={flows} />
             <div className="flex items-baseline justify-between gap-2">
               <span className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#7B8996]">Institutions by country</span>
               <span className="text-[9.5px] font-semibold text-[#7B8996]">from the loaded SWFI ranking rows</span>
@@ -1637,6 +1671,9 @@ function InstitutionIntelligenceOverview({
   return (
     <div className="grid gap-3">
       <VisualPanel title="Top SWF AUM Locations" source={ENDPOINTS.top20} empty={DASHBOARD_EMPTY} hasRows={topRows.length > 0 || sectorRows.length > 0}>
+        {/* institutions view only here — this secondary panel's props don't
+            carry transactionRows; the main Global Capital Map panel has the
+            Deal-flows toggle. */}
         <CapitalByCountry topPacket={packets.top20} topRows={topRows} sectorRows={sectorRows} />
       </VisualPanel>
       <div className="grid gap-3 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
