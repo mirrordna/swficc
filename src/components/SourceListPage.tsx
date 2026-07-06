@@ -1444,7 +1444,7 @@ function SectionBarChart({ kind, title, rows: chartRows }: { kind: Kind; title: 
               <span className="font-bold text-[#11314F]">{row.count.toLocaleString("en-US")}</span>
             </div>
             <div className="h-2 rounded bg-[#E8EDF2]">
-              <div className="h-2 rounded bg-[#5C9BD6]" style={{ width: `${Math.max(8, (row.count / max) * 100)}%` }} />
+              <div className="h-2 rounded bg-[#5C9BD6]" style={{ width: `${Math.max(1.5, (row.count / max) * 100)}%` }} />
             </div>
           </a>
         )) : <div className="text-sm text-[#7A8A9B]">No source rows available.</div>}
@@ -1667,7 +1667,7 @@ function CompassBarChart({ title, rows: chartRows }: { title: string; rows: { la
               <span className="font-bold text-[#11314F]">{row.count.toLocaleString("en-US")}</span>
             </div>
             <div className="h-2 rounded bg-[#E8EDF2]">
-              <div className="h-2 rounded bg-[#5C9BD6]" style={{ width: `${Math.max(8, (row.count / max) * 100)}%` }} />
+              <div className="h-2 rounded bg-[#5C9BD6]" style={{ width: `${Math.max(1.5, (row.count / max) * 100)}%` }} />
             </div>
           </a>
         )) : <div className="text-sm text-[#7A8A9B]">No Compass rows available.</div>}
@@ -1838,11 +1838,48 @@ function DealEnginePanel() {
       </form>
 
       <div className="grid gap-3 xl:grid-cols-3">
-        <DealEngineTable title="Ticket Size" columns={["Band", "Deals", "Capital"]} rows={ticketRows} />
-        <DealEngineTable title="Investment Frequency" columns={["Investor", "Deals", "Latest"]} rows={frequencyRows} />
+        {/* Audit 2026-07-06: the Deal Engine's own data was table-only —
+            deal-count micro-bars (one unit, nothing converted) make the
+            band and investor distributions readable at a glance. */}
+        <div className="grid content-start gap-2">
+          <DealEngineBars
+            title="Deals by band"
+            rows={isFact(packets.ticketSize) ? rows(packets.ticketSize).map((row) => ({ label: businessText(row.label || row.band), count: numericSortValue(text(row.deals || row.count, "")) || 0 })) : []}
+          />
+          <DealEngineTable title="Ticket Size" columns={["Band", "Deals", "Capital"]} rows={ticketRows} />
+        </div>
+        <div className="grid content-start gap-2">
+          <DealEngineBars
+            title="Deals by investor"
+            rows={isFact(packets.frequency) ? rows(packets.frequency).map((row) => ({ label: businessText(row.investor || row.name), count: numericSortValue(text(row.deal_count || row.deals_in_window, "")) || 0 })) : []}
+          />
+          <DealEngineTable title="Investment Frequency" columns={["Investor", "Deals", "Latest"]} rows={frequencyRows} />
+        </div>
         <DealEngineTable title="Co-Investments" columns={["Investors", "Latest Deal", "Amount"]} rows={coInvestmentRows} />
       </div>
     </section>
+  );
+}
+
+function DealEngineBars({ title, rows: barRows }: { title: string; rows: { label: string; count: number }[] }) {
+  const shown = barRows.filter((row) => row.label && row.label !== "Not disclosed" && row.count > 0).slice(0, 5);
+  if (!shown.length) return null;
+  const max = Math.max(1, ...shown.map((row) => row.count));
+  return (
+    <div className="grid gap-1 rounded border border-[#EDF1F5] bg-[#FBFCFE] p-2" role="img" aria-label={title}>
+      <div className="text-[10px] font-extrabold uppercase tracking-[0.08em] text-[#7B8996]">{title}</div>
+      {shown.map((row) => (
+        <div key={row.label} className="grid grid-cols-[minmax(0,1fr)_30px] items-center gap-2">
+          <span className="min-w-0">
+            <span className="block truncate text-[10.5px] font-bold text-[#41566B]">{row.label}</span>
+            <span className="block h-[5px] overflow-hidden rounded bg-[#EAF1F7]">
+              <span className="block h-full rounded bg-[#0A66C2]" style={{ width: `${Math.max(1.5, (row.count / max) * 100)}%` }} />
+            </span>
+          </span>
+          <span className="text-right text-[11px] font-extrabold text-[#0A3A7A]">{row.count}</span>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -1944,6 +1981,12 @@ function ComparisonWorkbench({ records, packets }: { records: Row[]; packets: Re
                   const value = valueForMetric(row);
                   const source = label === "Source" ? sourceHref(row) : "";
                   const profileHref = source || profileDetailHref(row, source || undefined);
+                  // Peer AUM bars (audit 2026-07-06): scaled ONLY on the
+                  // verified-USD assets figure — never across mixed native
+                  // currencies. No figure, no bar; the label already says
+                  // "Not disclosed".
+                  const usdBasis = label === "AUM" ? numericSortValue(text(row.assets, "")) : null;
+                  const usdMax = label === "AUM" ? Math.max(1, ...hydrated.map((peer) => numericSortValue(text(peer.assets, "")) || 0)) : 1;
                   return (
                     <td key={`${comparisonRecordId(row) || comparisonName(row)}-${label}`} className="px-3 py-2 align-top text-[#41566B]">
                       {source ? (
@@ -1951,6 +1994,11 @@ function ComparisonWorkbench({ records, packets }: { records: Row[]; packets: Re
                           {value}
                         </a>
                       ) : value}
+                      {usdBasis ? (
+                        <span className="mt-1 block h-[6px] max-w-[160px] overflow-hidden rounded bg-[#EAF1F7]">
+                          <span className="block h-full rounded bg-[#0A66C2]" style={{ width: `${Math.max(1.5, (usdBasis / usdMax) * 100)}%` }} />
+                        </span>
+                      ) : null}
                     </td>
                   );
                 })}
@@ -1958,6 +2006,9 @@ function ComparisonWorkbench({ records, packets }: { records: Row[]; packets: Re
             ))}
           </tbody>
         </table>
+      </div>
+      <div className="text-[10.5px] font-semibold text-[#7B8996]">
+        AUM bars compare the verified USD assets figure across this peer set; institutions without it show no bar — nothing is converted or estimated.
       </div>
     </section>
   );
