@@ -1534,9 +1534,11 @@ function CapitalByCountry({ topPacket, topRows, sectorRows }: { topPacket?: Pack
               >
                 <span className="text-[11px] font-black text-[#7B8996]">{index + 1}</span>
                 <span className="min-w-0">
-                  <span className="flex items-baseline gap-2">
-                    <span className="truncate text-[12.5px] font-bold text-[#13283D] group-hover:text-[#0A3A7A]">{node.country}</span>
-                    {node.topName ? <span className="hidden truncate text-[10px] font-semibold text-[#7B8996] sm:block">top: {node.topName}</span> : null}
+                  {/* The country name is the point of the row — it never
+                      truncates; the top-institution note yields instead. */}
+                  <span className="flex min-w-0 items-baseline gap-2">
+                    <span className="flex-none whitespace-nowrap text-[12.5px] font-bold text-[#13283D] group-hover:text-[#0A3A7A]">{node.country}</span>
+                    {node.topName ? <span className="hidden min-w-0 flex-1 truncate text-[10px] font-semibold text-[#7B8996] sm:block">top: {node.topName}</span> : null}
                   </span>
                   <span className="mt-1 block h-[6px] w-full overflow-hidden rounded bg-[#EAF1F7]">
                     <span className="block h-full rounded bg-[#0A66C2]" style={{ width: `${Math.max(6, Math.round((node.count / maxCount) * 100))}%` }} />
@@ -1545,7 +1547,7 @@ function CapitalByCountry({ topPacket, topRows, sectorRows }: { topPacket?: Pack
                 <span className="text-right">
                   <span className="block text-[12px] font-extrabold text-[#0A3A7A]">{node.count} {node.count === 1 ? "institution" : "institutions"}</span>
                   <span className="block text-[10px] font-semibold text-[#667386]">
-                    {node.aum && node.aumCurrency ? (node.aumCurrency === "USD" ? compactMoney(node.aum) : `${node.aumCurrency} ${compactNumber(node.aum)}`) : "AUM currency mixed"}
+                    {node.aum && node.aumCurrency ? (node.aumCurrency === "USD" ? compactMoney(node.aum) : `${node.aumCurrency} ${compactNumber(node.aum)}`) : "Mixed currencies"}
                   </span>
                 </span>
               </DashboardLink>
@@ -1558,7 +1560,9 @@ function CapitalByCountry({ topPacket, topRows, sectorRows }: { topPacket?: Pack
           {stats.map((stat) => (
             <DashboardLink key={stat.label} href={stat.href} className="min-w-0 border-r border-[#E1E8EF] px-3 py-2 text-inherit no-underline last:border-r-0">
               <span className="block truncate text-[10px] font-bold text-[#7B8996]">{stat.label}</span>
-              <span className="mt-1 block truncate text-[15px] font-extrabold text-[#0A3A7A]">{stat.value}</span>
+              {/* Values wrap rather than truncate — "United Arab Emirates"
+                  cut to "United ..." hides the answer the tile exists for. */}
+              <span className="mt-1 block text-[15px] font-extrabold leading-tight text-[#0A3A7A]">{stat.value}</span>
               {"note" in stat && stat.note ? <span className="mt-0.5 block truncate text-[9.5px] font-semibold text-[#7B8996]">{stat.note}</span> : null}
             </DashboardLink>
           ))}
