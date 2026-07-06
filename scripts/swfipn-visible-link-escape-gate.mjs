@@ -128,12 +128,15 @@ function isCanonicalSwfiHandoffUrl(value) {
   return false;
 }
 
-function allowedExternal(route, href) {
+function allowedExternal(route, href, target) {
   try {
     const parsed = new URL(href);
     if (isCanonicalSwfiHandoffUrl(href)) return true;
     if (isAllowedSwfiLegacyArticleUrl(href)) return true;
     if (isSwfiAuthEntryHref(href)) return true;
+    // Paul 2026-07-06: LinkedIn profile links are sanctioned ONLY when they
+    // open in a NEW TAB (the in-tab chain still terminates at swfi.com).
+    if (["www.linkedin.com", "linkedin.com"].includes(parsed.hostname) && target === "_blank") return true;
     if (!allowedExternalHosts.has(parsed.hostname)) return false;
     return true;
   } catch {
@@ -244,7 +247,7 @@ async function inspectRoute(browser, route) {
   result.failed_requests = failedRequests;
   if (result.status >= 400 || !result.status) result.failures.push(`http_${result.status || "missing"}`);
   if (result.blank) result.failures.push("blank_page");
-  const unapprovedExternal = result.external_links.filter((link) => !allowedExternal(route, link.href));
+  const unapprovedExternal = result.external_links.filter((link) => !allowedExternal(route, link.href, link.target));
   if (unapprovedExternal.length) result.failures.push(`unapproved_external_links:${unapprovedExternal.length}`);
   if (result.raw_record_anchors.length) result.failures.push(`raw_swfi_record_anchors:${result.raw_record_anchors.length}`);
   if (result.raw_source_attrs.length) result.failures.push(`raw_swfi_source_attrs:${result.raw_source_attrs.length}`);

@@ -225,6 +225,9 @@ function linkFailures(route, links) {
     try {
       const host = new URL(link.href).hostname;
       if (["www.swfi.com", "swfi.com", "cms.swfi.com"].includes(host)) return true;
+      // Paul 2026-07-06: LinkedIn profile links are sanctioned ONLY when
+      // they open in a NEW TAB (in-tab chains still end at swfi.com).
+      if (["www.linkedin.com", "linkedin.com"].includes(host) && link.target === "_blank") return false;
       return !allowedExternalHosts.has(host);
     } catch {
       return true;

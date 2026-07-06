@@ -57,6 +57,7 @@ while (queue.length && pages.length < MAX_PAGES) {
     anchors = await page.evaluate(() =>
       Array.from(document.querySelectorAll("a")).map((a) => ({
         href: String(a.getAttribute("href") || ""),
+        target: String(a.getAttribute("target") || ""),
         text: (a.textContent || "").replace(/\s+/g, " ").trim().slice(0, 60),
       }))
     );
@@ -77,12 +78,13 @@ while (queue.length && pages.length < MAX_PAGES) {
     if (/^https?:\/\//.test(href)) {
       try {
         const host = new URL(href).hostname;
-        // Law tightened 2026-07-06 (Paul: "all final links on every page
-        // MUST redirect to swfi.com"): no external hosts are approved.
-        const allowedExternal = new Set([]);
+        // Law 2026-07-06: no external finals — EXCEPT LinkedIn profile
+        // links that open in a NEW TAB (Paul-sanctioned same day; the
+        // in-tab chain still terminates at swfi.com).
+        const newTabLinkedin = ["www.linkedin.com", "linkedin.com"].includes(host) && anchor.target === "_blank";
         if (host.endsWith("swfi.com")) {
           swfiHandoffs += 1;
-        } else if (host !== new URL(ORIGIN).hostname && !allowedExternal.has(host)) {
+        } else if (host !== new URL(ORIGIN).hostname && !newTabLinkedin) {
           flags.push({ route, kind: "non_swfi_external", detail: `${host} <- "${anchor.text}"` });
         }
       } catch {

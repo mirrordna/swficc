@@ -24,7 +24,10 @@ import SavedSearchManager from "@/components/SavedSearchManager";
 type Kind = "profiles" | "people" | "transactions" | "deals" | "allocators" | "comparisons" | "mandates" | "alerts" | "research" | "intelligence" | "search";
 type Row = Record<string, unknown>;
 type CellLink = { label: string; href?: string; sourceHref?: string };
-type Cell = string | { label: string; href?: string; sourceHref?: string; citationText?: string; links?: CellLink[] };
+// newTab: Paul-sanctioned 2026-07-06 ("can the linkedin links open in a new
+// page altogether?") — auxiliary data links may open in a NEW TAB; the
+// dashboard's own in-tab chain still terminates at swfi.com.
+type Cell = string | { label: string; href?: string; sourceHref?: string; citationText?: string; newTab?: boolean; links?: CellLink[] };
 const NOT_DISCLOSED = "Not disclosed";
 const LOADING = "Loading";
 const DEFAULT_SEARCH_QUERY = "";
@@ -165,11 +168,10 @@ function rowCells(kind: Kind, row: Row): Cell[] {
       text(row.country),
       text(row.city),
       text(row.region),
-      // Law tightened 2026-07-06 ("all final links MUST redirect to
-      // swfi.com"): the LinkedIn presence stays VISIBLE as data, but the
-      // outbound link is gone — the person's SWFI record (Citation column)
-      // is the chain's terminal.
-      row.linkedin_url ? "On file" : NOT_DISCLOSED,
+      // Paul 2026-07-06 (same day, after the MUST law): LinkedIn opens in a
+      // NEW TAB — the in-tab chain still ends at the person's SWFI record
+      // (Citation column); the profile pops a separate page.
+      row.linkedin_url ? { label: "LinkedIn profile ↗", href: String(row.linkedin_url), newTab: true } : NOT_DISCLOSED,
       citation(href, "/people/"),
     ];
   }
@@ -795,6 +797,15 @@ function displayCell(value?: Cell) {
   const href = cellHref(value) || linkLikeHref(label);
   if (!label || label === SOURCE_GAP || label === "Not disclosed") return NOT_DISCLOSED;
   if (href) {
+    // newTab cells (Paul-sanctioned auxiliary data links, e.g. LinkedIn)
+    // pop a separate page; the in-tab chain still ends at swfi.com.
+    if (typeof value === "object" && value?.newTab) {
+      return (
+        <span className="grid gap-1">
+          <a href={href} target="_blank" rel="noopener noreferrer" className="text-[#16538C] underline">{label}</a>
+        </span>
+      );
+    }
     const sourceHref = typeof value === "object" && value ? value.sourceHref || sourceProvenanceHref(label) : sourceProvenanceHref(label);
     const preferredHref = sourceHref && isSwfiPlatformRecordHref(sourceHref) ? sourceHref : href;
     const target = productHref(preferredHref, "/");
