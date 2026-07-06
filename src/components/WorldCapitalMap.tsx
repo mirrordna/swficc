@@ -1,19 +1,28 @@
 "use client";
 
-// Real geography for the Global Capital Map (Paul 2026-07-06: wanted a map,
-// amCharts-style — not the invented dot-continents, and not no-map-at-all).
-// Natural Earth 50m country shapes (public domain, shipped locally at
-// /swfi-assets/countries-50m.json), d3-geo Natural Earth projection.
-// Honesty rules carried over: every country in the data appears (no
-// hardcoded coordinate table), AUM text only when one currency backs it,
-// countries the atlas cannot match are DISCLOSED, never dropped silently.
+// Global Capital Map — ECharts engine ported from the demo2 terminal build
+// (Paul 2026-07-06: "you can use the demo2 world capital map on the
+// dashboard"): animated flow arcs with moving direction arrows, ripple
+// hubs, rich tooltips — demo2's living-map feel on THIS build's verified
+// data truth. Geometry: Natural Earth 50m shapes (public domain, shipped
+// locally), converted topojson→geojson client-side. Honesty rules carried
+// over unchanged: every country in the data appears or is DISCLOSED as
+// not-drawable; AUM/USD figures only where the source disclosed them
+// (per-pair coverage in tooltips); flow anchors come from inline source
+// fields only — never name-search resolution (probe receipt 2026-07-06).
 
-import { useEffect, useMemo, useState } from "react";
-import { geoNaturalEarth1, geoPath, geoCentroid } from "d3-geo";
+import { useEffect, useMemo, useRef, useState } from "react";
+import * as echarts from "echarts/core";
+import { GeoComponent, TooltipComponent } from "echarts/components";
+import { EffectScatterChart, LinesChart } from "echarts/charts";
+import { CanvasRenderer } from "echarts/renderers";
+import { geoCentroid } from "d3-geo";
 import { feature } from "topojson-client";
 import type { Topology, GeometryCollection } from "topojson-specification";
 import type { Feature, Geometry } from "geojson";
 import { appHref, assetHref } from "@/lib/selfContainedLinks";
+
+echarts.use([GeoComponent, TooltipComponent, EffectScatterChart, LinesChart, CanvasRenderer]);
 
 export type WorldCapitalRow = {
   country: string;
@@ -23,10 +32,6 @@ export type WorldCapitalRow = {
   topName: string;
 };
 
-// One aggregated buyer-country → deal-country connection (Paul 2026-07-06:
-// "make the map interactive like where the flows are going"). Weights are
-// DEAL COUNTS (100% coverage, no value imputation); USD sums ride along for
-// the tooltip with their own disclosed-deal coverage.
 export type WorldFlowPair = {
   source: string;
   target: string;
@@ -42,7 +47,6 @@ const NAME_ALIASES: Record<string, string> = {
   "united states": "united states of america",
   usa: "united states of america",
   "hong kong": "hong kong s.a.r.",
-  "south korea": "south korea",
   "russian federation": "russia",
   uae: "united arab emirates",
 };
@@ -63,11 +67,23 @@ function aumLabel(row: WorldCapitalRow): string {
   return row.aumCurrency === "USD" ? `$${compactValue(row.aum)}` : `${row.aumCurrency} ${compactValue(row.aum)}`;
 }
 
+function usdShort(value: number): string {
+  return value >= 1e9 ? `$${(value / 1e9).toFixed(1)}B` : value >= 1e6 ? `$${Math.round(value / 1e6)}M` : `$${Math.round(value / 1e3)}K`;
+}
+
+function flowTip(pair: WorldFlowPair): string {
+  const value = pair.usd ? `${usdShort(pair.usd)} disclosed (${pair.usdDeals} of ${pair.deals})` : "value not disclosed";
+  return `${pair.source} → ${pair.target}: ${pair.deals} ${pair.deals === 1 ? "deal" : "deals"} · ${value}`;
+}
+
 export default function WorldCapitalMap({ rows, flows = [] }: { rows: WorldCapitalRow[]; flows?: WorldFlowPair[] }) {
-  const [countries, setCountries] = useState<CountryFeature[] | null>(null);
+  const [geoReady, setGeoReady] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
   const [mode, setMode] = useState<"institutions" | "flows">("institutions");
-  const [hoverFlow, setHoverFlow] = useState<number | null>(null);
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const chartRef = useRef<echarts.ECharts | null>(null);
+  const centroidsRef = useRef<Map<string, [number, number]>>(new Map());
+  const geoNamesRef = useRef<Map<string, string>>(new Map());
 
   useEffect(() => {
     const controller = new AbortController();
@@ -75,7 +91,19 @@ export default function WorldCapitalMap({ rows, flows = [] }: { rows: WorldCapit
       .then((response) => (response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`))))
       .then((topology: Topology<{ countries: GeometryCollection<{ name?: string }> }>) => {
         const collection = feature(topology, topology.objects.countries);
-        setCountries(collection.features as CountryFeature[]);
+        const features = collection.features as CountryFeature[];
+        for (const countryFeature of features) {
+          const rawName = countryFeature.properties?.name || "";
+          const key = normalizeName(rawName);
+          if (!key) continue;
+          geoNamesRef.current.set(key, rawName);
+          const centroid = geoCentroid(countryFeature);
+          if (Number.isFinite(centroid[0]) && Number.isFinite(centroid[1])) {
+            centroidsRef.current.set(key, [centroid[0], centroid[1]]);
+          }
+        }
+        echarts.registerMap("world", collection as unknown as Parameters<typeof echarts.registerMap>[1]);
+        setGeoReady(true);
       })
       .catch(() => {
         if (!controller.signal.aborted) setLoadFailed(true);
@@ -83,27 +111,205 @@ export default function WorldCapitalMap({ rows, flows = [] }: { rows: WorldCapit
     return () => controller.abort();
   }, []);
 
-  const { matched, unmatched, maxCount } = useMemo(() => {
-    const byName = new Map<string, CountryFeature>();
-    for (const featureRow of countries || []) {
-      const name = normalizeName(featureRow.properties?.name || "");
-      if (name) byName.set(name, featureRow);
-    }
-    const matchedRows: { row: WorldCapitalRow; feature: CountryFeature }[] = [];
-    const unmatchedRows: WorldCapitalRow[] = [];
-    for (const row of rows) {
-      const key = normalizeName(row.country);
+  const resolved = useMemo(() => {
+    const lookup = (country: string) => {
+      const key = normalizeName(country);
       const alias = NAME_ALIASES[key] || key;
-      const found = byName.get(alias) || byName.get(key);
-      if (found) matchedRows.push({ row, feature: found });
-      else unmatchedRows.push(row);
-    }
-    return {
-      matched: matchedRows,
-      unmatched: unmatchedRows,
-      maxCount: Math.max(1, ...rows.map((row) => row.count)),
+      return geoNamesRef.current.has(alias) ? alias : geoNamesRef.current.has(key) ? key : null;
     };
-  }, [countries, rows]);
+    const matched: { row: WorldCapitalRow; geoKey: string }[] = [];
+    const unmatched: WorldCapitalRow[] = [];
+    for (const row of rows) {
+      const geoKey = geoReady ? lookup(row.country) : null;
+      if (geoKey) matched.push({ row, geoKey });
+      else unmatched.push(row);
+    }
+    const crossFlows: { pair: WorldFlowPair; from: [number, number]; to: [number, number] }[] = [];
+    const domesticFlows: { pair: WorldFlowPair; at: [number, number] }[] = [];
+    const unmappableFlows: WorldFlowPair[] = [];
+    for (const pair of flows) {
+      const sourceKey = geoReady ? lookup(pair.source) : null;
+      const targetKey = geoReady ? lookup(pair.target) : null;
+      const from = sourceKey ? centroidsRef.current.get(sourceKey) : undefined;
+      const to = targetKey ? centroidsRef.current.get(targetKey) : undefined;
+      if (!from || !to) unmappableFlows.push(pair);
+      else if (pair.source === pair.target) domesticFlows.push({ pair, at: from });
+      else crossFlows.push({ pair, from, to });
+    }
+    return { matched, unmatched, crossFlows, domesticFlows, unmappableFlows };
+  }, [rows, flows, geoReady]);
+
+  useEffect(() => {
+    if (!geoReady || !hostRef.current) return;
+    if (!chartRef.current) {
+      chartRef.current = echarts.init(hostRef.current);
+      chartRef.current.on("click", (event: { seriesName?: string; name?: string }) => {
+        if (event.name && (event.seriesName === "institution-hubs" || event.seriesName === "flow-hubs")) {
+          window.location.href = appHref(`/profiles/?filter=${encodeURIComponent(event.name)}`);
+        }
+      });
+    }
+    const chart = chartRef.current;
+    const { matched, crossFlows, domesticFlows } = resolved;
+    const maxCount = Math.max(1, ...matched.map(({ row }) => row.count));
+    const maxDeals = Math.max(1, ...crossFlows.map(({ pair }) => pair.deals), ...domesticFlows.map(({ pair }) => pair.deals));
+    const geoBase = {
+      map: "world",
+      roam: false,
+      silent: true,
+      top: 4,
+      bottom: 4,
+      left: 4,
+      right: 4,
+      itemStyle: { areaColor: "#E9EFF4", borderColor: "#FFFFFF", borderWidth: 0.6 },
+    };
+
+    if (mode === "institutions") {
+      const top5 = new Set(matched.slice(0, 5).map(({ row }) => row.country));
+      chart.setOption(
+        {
+          tooltip: { trigger: "item", backgroundColor: "#0A2342", borderWidth: 0, textStyle: { color: "#fff", fontSize: 12 } },
+          geo: {
+            ...geoBase,
+            regions: matched.map(({ row, geoKey }) => {
+              const intensity = Math.sqrt(row.count / maxCount);
+              return {
+                name: geoNamesRef.current.get(geoKey) || row.country,
+                itemStyle: { areaColor: intensity > 0.66 ? "#3D86CB" : intensity > 0.33 ? "#7FAEDD" : "#BAD3EC" },
+              };
+            }),
+          },
+          series: [
+            {
+              name: "institution-hubs",
+              type: "effectScatter",
+              coordinateSystem: "geo",
+              zlevel: 3,
+              rippleEffect: { brushType: "stroke", scale: 2.4 },
+              symbolSize: (value: number[]) => 8 + Math.sqrt((value[2] || 1) / maxCount) * 18,
+              itemStyle: { color: "#0A66C2", shadowBlur: 8, shadowColor: "rgba(10,102,194,.35)" },
+              label: {
+                show: true,
+                position: "bottom",
+                // On-map labels stay short: country + AUM only when one
+                // currency backs it; the tooltip carries the full detail.
+                formatter: (params: { name: string; data: { labelAum: string } }) =>
+                  top5.has(params.name) ? (params.data.labelAum ? `${params.name} · ${params.data.labelAum}` : params.name) : "",
+                color: "#22313F",
+                fontSize: 10,
+                fontWeight: 700,
+              },
+              data: matched.map(({ row, geoKey }, index) => ({
+                name: row.country,
+                value: [...(centroidsRef.current.get(geoKey) || [0, 0]), row.count],
+                labelAum: row.aum && row.aumCurrency ? aumLabel(row) : "",
+                tipAum: aumLabel(row),
+                tipTop: row.topName,
+                itemStyle: index === 0 ? { color: "#A61C20", shadowColor: "rgba(166,28,32,.35)" } : undefined,
+              })),
+              tooltip: {
+                formatter: (params: { name: string; value: number[]; data: { tipAum: string; tipTop: string } }) =>
+                  `${params.name}: ${params.value[2]} ${params.value[2] === 1 ? "institution" : "institutions"} · ${params.data.tipAum}${params.data.tipTop ? ` · top: ${params.data.tipTop}` : ""}`,
+              },
+            },
+            { name: "flow-lines", type: "lines", coordinateSystem: "geo", data: [] },
+            { name: "flow-hubs", type: "effectScatter", coordinateSystem: "geo", data: [] },
+          ],
+        },
+        { replaceMerge: ["series", "geo"] },
+      );
+    } else {
+      const involvement = new Map<string, { deals: number; at: [number, number] }>();
+      for (const { pair, from, to } of crossFlows) {
+        const src = involvement.get(pair.source) || { deals: 0, at: from };
+        src.deals += pair.deals;
+        involvement.set(pair.source, src);
+        const dst = involvement.get(pair.target) || { deals: 0, at: to };
+        dst.deals += pair.deals;
+        involvement.set(pair.target, dst);
+      }
+      for (const { pair, at } of domesticFlows) {
+        const hub = involvement.get(pair.source) || { deals: 0, at };
+        hub.deals += pair.deals;
+        involvement.set(pair.source, hub);
+      }
+      const domesticByCountry = new Map(domesticFlows.map(({ pair }) => [pair.source, pair]));
+      chart.setOption(
+        {
+          tooltip: { trigger: "item", backgroundColor: "#0A2342", borderWidth: 0, textStyle: { color: "#fff", fontSize: 12 } },
+          geo: {
+            ...geoBase,
+            regions: [...involvement.keys()].map((country) => {
+              const key = normalizeName(country);
+              const alias = NAME_ALIASES[key] || key;
+              return { name: geoNamesRef.current.get(alias) || geoNamesRef.current.get(key) || country, itemStyle: { areaColor: "#CBDDEF" } };
+            }),
+          },
+          series: [
+            {
+              name: "flow-lines",
+              type: "lines",
+              coordinateSystem: "geo",
+              zlevel: 2,
+              effect: { show: true, period: 5, trailLength: 0.25, symbol: "arrow", symbolSize: 5, color: "#1B4F8A" },
+              lineStyle: { color: "#0A66C2", opacity: 0.4, curveness: 0.3 },
+              data: crossFlows.map(({ pair, from, to }) => ({
+                coords: [from, to],
+                lineStyle: { width: 1 + 3 * (pair.deals / maxDeals) },
+                tip: flowTip(pair),
+              })),
+              tooltip: { formatter: (params: { data: { tip: string } }) => params.data.tip },
+            },
+            {
+              name: "flow-hubs",
+              type: "effectScatter",
+              coordinateSystem: "geo",
+              zlevel: 3,
+              rippleEffect: { brushType: "stroke", scale: 2.2 },
+              symbolSize: (value: number[]) => 6 + Math.sqrt((value[2] || 1) / Math.max(1, ...[...involvement.values()].map((entry) => entry.deals))) * 14,
+              itemStyle: { color: "#0A66C2", shadowBlur: 6, shadowColor: "rgba(10,102,194,.3)" },
+              label: {
+                show: true,
+                position: "bottom",
+                // Label only the busiest hubs — the Europe cluster collides
+                // when every hub is named; the rest stay in tooltips.
+                formatter: (params: { name: string; data: { labelled: boolean } }) => (params.data.labelled ? params.name : ""),
+                color: "#22313F",
+                fontSize: 9.5,
+                fontWeight: 700,
+              },
+              data: (() => {
+                const topHubs = new Set([...involvement.entries()].sort((a, b) => b[1].deals - a[1].deals).slice(0, 8).map(([country]) => country));
+                return [...involvement.entries()].map(([country, entry]) => ({
+                  name: country,
+                  value: [...entry.at, entry.deals],
+                  labelled: topHubs.has(country),
+                  tipDomestic: domesticByCountry.get(country) ? `${domesticByCountry.get(country)!.deals} domestic` : "",
+                }));
+              })(),
+              tooltip: {
+                formatter: (params: { name: string; value: number[]; data: { tipDomestic: string } }) =>
+                  `${params.name}: ${params.value[2]} connecting ${params.value[2] === 1 ? "deal" : "deals"}${params.data.tipDomestic ? ` (${params.data.tipDomestic})` : ""}`,
+              },
+            },
+            { name: "institution-hubs", type: "effectScatter", coordinateSystem: "geo", data: [] },
+          ],
+        },
+        { replaceMerge: ["series", "geo"] },
+      );
+    }
+  }, [geoReady, mode, resolved]);
+
+  useEffect(() => {
+    if (!hostRef.current) return;
+    const observer = new ResizeObserver(() => chartRef.current?.resize());
+    observer.observe(hostRef.current);
+    return () => {
+      observer.disconnect();
+      chartRef.current?.dispose();
+      chartRef.current = null;
+    };
+  }, []);
 
   if (loadFailed) {
     return (
@@ -112,61 +318,8 @@ export default function WorldCapitalMap({ rows, flows = [] }: { rows: WorldCapit
       </div>
     );
   }
-  if (!countries) {
-    return (
-      <div className="grid min-h-[220px] content-center rounded-[6px] bg-[#F7FAFD] p-3 text-center text-[12px] font-semibold text-[#526171]">
-        Loading map…
-      </div>
-    );
-  }
 
-  const width = 980;
-  const height = 430;
-  const projection = geoNaturalEarth1().fitExtent(
-    [
-      [8, 8],
-      [width - 8, height - 8],
-    ],
-    { type: "Sphere" },
-  );
-  const path = geoPath(projection);
-  const matchedNames = new Set(matched.map((entry) => normalizeName(entry.feature.properties?.name || "")));
-  const labelled = matched.slice(0, 5);
-
-  // Flow-mode geometry: resolve each pair's endpoints against the SAME atlas
-  // matching used for institutions; unmatched endpoints get disclosed.
-  const byName = new Map<string, CountryFeature>();
-  for (const featureRow of countries) {
-    const name = normalizeName(featureRow.properties?.name || "");
-    if (name) byName.set(name, featureRow);
-  }
-  const centroidFor = (country: string): [number, number] | null => {
-    const key = normalizeName(country);
-    const found = byName.get(NAME_ALIASES[key] || key) || byName.get(key);
-    if (!found) return null;
-    return projection(geoCentroid(found)) || null;
-  };
-  const crossFlows: { pair: WorldFlowPair; from: [number, number]; to: [number, number] }[] = [];
-  const domesticFlows: { pair: WorldFlowPair; at: [number, number] }[] = [];
-  const unmappableFlows: WorldFlowPair[] = [];
-  const maxDeals = Math.max(1, ...flows.map((pair) => pair.deals));
-  for (const pair of flows) {
-    const from = centroidFor(pair.source);
-    const to = centroidFor(pair.target);
-    if (!from || !to) {
-      unmappableFlows.push(pair);
-    } else if (pair.source === pair.target) {
-      domesticFlows.push({ pair, at: from });
-    } else {
-      crossFlows.push({ pair, from, to });
-    }
-  }
-  const flowCountries = new Set(flows.flatMap((pair) => [normalizeName(pair.source), normalizeName(pair.target)]));
-  const usdShort = (value: number) => (value >= 1e9 ? `$${(value / 1e9).toFixed(1)}B` : value >= 1e6 ? `$${Math.round(value / 1e6)}M` : `$${Math.round(value / 1e3)}K`);
-  const flowLabel = (pair: WorldFlowPair) =>
-    `${pair.source} → ${pair.target} · ${pair.deals} ${pair.deals === 1 ? "deal" : "deals"}${pair.usd ? ` · ${usdShort(pair.usd)} disclosed (${pair.usdDeals} of ${pair.deals})` : " · value not disclosed"}`;
-  const hovered = hoverFlow !== null ? crossFlows[hoverFlow] : null;
-
+  const { unmatched, crossFlows, domesticFlows, unmappableFlows } = resolved;
   const showFlows = mode === "flows" && flows.length > 0;
 
   return (
@@ -194,113 +347,19 @@ export default function WorldCapitalMap({ rows, flows = [] }: { rows: WorldCapit
           </span>
         </div>
       ) : null}
-      <svg viewBox={`0 0 ${width} ${height}`} className="h-auto w-full" role="img" aria-label={showFlows ? "World map of capital flows from buyer countries to deal locations" : "World map of SWFI top-ranked institutions by country"}>
-        <defs>
-          <marker id="flowArrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
-            <path d="M0,0 L8,4 L0,8 Z" fill="#0A66C2" />
-          </marker>
-        </defs>
-        {countries.map((countryFeature, index) => {
-          const name = normalizeName(countryFeature.properties?.name || "");
-          if (!showFlows && matchedNames.has(name)) return null;
-          const inFlow = showFlows && flowCountries.has(name);
-          return <path key={`base-${index}`} d={path(countryFeature) || undefined} fill={inFlow ? "#CBDDEF" : "#E9EFF4"} stroke="#FFFFFF" strokeWidth="0.5" />;
-        })}
-        {!showFlows && matched.map(({ row, feature: countryFeature }) => {
-          const intensity = Math.sqrt(row.count / maxCount);
-          const fill = intensity > 0.66 ? "#3D86CB" : intensity > 0.33 ? "#7FAEDD" : "#BAD3EC";
-          return (
-            <a key={`country-${row.country}`} href={appHref(`/profiles/?filter=${encodeURIComponent(row.country)}`)}>
-              <path d={path(countryFeature) || undefined} fill={fill} stroke="#FFFFFF" strokeWidth="0.6">
-                <title>{`${row.country}: ${row.count} ${row.count === 1 ? "institution" : "institutions"} · ${aumLabel(row)}${row.topName ? ` · top: ${row.topName}` : ""}`}</title>
-              </path>
-            </a>
-          );
-        })}
-        {!showFlows && matched.map(({ row, feature: countryFeature }, index) => {
-          const [x, y] = projection(geoCentroid(countryFeature)) || [0, 0];
-          const radius = 4 + Math.sqrt(row.count / maxCount) * 13;
-          const lead = index === 0;
-          return (
-            <a key={`bubble-${row.country}`} href={appHref(`/profiles/?filter=${encodeURIComponent(row.country)}`)}>
-              <g>
-                <circle cx={x} cy={y} r={radius} fill={lead ? "#A61C20" : "#0A66C2"} opacity="0.92" stroke="#FFFFFF" strokeWidth="1.6">
-                  <title>{`${row.country}: ${row.count} ${row.count === 1 ? "institution" : "institutions"} · ${aumLabel(row)}`}</title>
-                </circle>
-                <text x={x} y={y + 3.5} textAnchor="middle" fill="#FFFFFF" fontSize="10" fontWeight="900">{row.count}</text>
-              </g>
-            </a>
-          );
-        })}
-        {!showFlows && labelled.map(({ row, feature: countryFeature }) => {
-          const [x, y] = projection(geoCentroid(countryFeature)) || [0, 0];
-          const radius = 4 + Math.sqrt(row.count / maxCount) * 13;
-          return (
-            <text
-              key={`label-${row.country}`}
-              x={x}
-              y={y + radius + 11}
-              textAnchor="middle"
-              fontSize="9.5"
-              fontWeight="800"
-              fill="#2E4157"
-              stroke="#FFFFFF"
-              strokeWidth="2.6"
-              paintOrder="stroke"
-            >
-              {row.aum && row.aumCurrency ? `${row.country} · ${aumLabel(row)}` : row.country}
-            </text>
-          );
-        })}
-        {showFlows && crossFlows.map(({ pair, from, to }, index) => {
-          const [x0, y0] = from;
-          const [x1, y1] = to;
-          const distance = Math.hypot(x1 - x0, y1 - y0);
-          const midX = (x0 + x1) / 2;
-          const midY = (y0 + y1) / 2 - Math.max(18, distance * 0.22);
-          const strokeWidth = 1.5 + Math.sqrt(pair.deals / maxDeals) * 4.5;
-          const dim = hoverFlow !== null && hoverFlow !== index;
-          return (
-            <g key={`flow-${pair.source}-${pair.target}`} onMouseEnter={() => setHoverFlow(index)} onMouseLeave={() => setHoverFlow(null)}>
-              <path
-                d={`M${x0},${y0} Q${midX},${midY} ${x1},${y1}`}
-                fill="none"
-                stroke="#0A66C2"
-                strokeWidth={strokeWidth}
-                strokeLinecap="round"
-                opacity={dim ? 0.15 : hoverFlow === index ? 0.95 : 0.55}
-                markerEnd="url(#flowArrow)"
-              >
-                <title>{flowLabel(pair)}</title>
-              </path>
-              {/* invisible fat hit-area so thin arcs are hoverable */}
-              <path d={`M${x0},${y0} Q${midX},${midY} ${x1},${y1}`} fill="none" stroke="transparent" strokeWidth={Math.max(12, strokeWidth + 8)} />
-            </g>
-          );
-        })}
-        {showFlows && domesticFlows.map(({ pair, at }) => {
-          const [x, y] = at;
-          const radius = 6 + Math.sqrt(pair.deals / maxDeals) * 9;
-          return (
-            <g key={`dom-${pair.source}`}>
-              <circle cx={x} cy={y} r={radius} fill="none" stroke="#0A66C2" strokeWidth="2" strokeDasharray="4 3" opacity="0.75">
-                <title>{`${pair.source}: ${pair.deals} domestic ${pair.deals === 1 ? "deal" : "deals"}${pair.usd ? ` · ${usdShort(pair.usd)} disclosed (${pair.usdDeals} of ${pair.deals})` : ""}`}</title>
-              </circle>
-              <text x={x} y={y + 3.5} textAnchor="middle" fill="#0A3A7A" fontSize="9.5" fontWeight="900">{pair.deals}</text>
-              <text x={x} y={y + radius + 10} textAnchor="middle" fontSize="8.5" fontWeight="800" fill="#2E4157" stroke="#FFFFFF" strokeWidth="2.4" paintOrder="stroke">{pair.source}</text>
-            </g>
-          );
-        })}
-      </svg>
+      <div
+        ref={hostRef}
+        role="img"
+        aria-label={showFlows ? "World map of capital flows from buyer countries to deal locations" : "World map of SWFI top-ranked institutions by country"}
+        className="h-[400px] w-full rounded-[6px] bg-[#F8FBFF]"
+      >
+        {!geoReady ? <div className="grid h-full content-center text-center text-[12px] font-semibold text-[#526171]">Loading map…</div> : null}
+      </div>
       {showFlows ? (
-        <div className="grid gap-1 text-[10px] font-semibold text-[#7B8996]">
-          <div className="min-h-[14px] font-bold text-[#0A3A7A]">
-            {hovered ? flowLabel(hovered.pair) : "Hover an arc for the pair's deals and disclosed value."}
-          </div>
-          <div>
-            Arrow width = number of connecting deals (buyer country → deal location). Dashed rings = domestic deals. USD totals appear only where the deal value is disclosed — never estimated.
-            {unmappableFlows.length ? ` Not drawable: ${unmappableFlows.map((pair) => `${pair.source}→${pair.target} (${pair.deals})`).join(", ")}.` : ""}
-          </div>
+        <div className="text-[10px] font-semibold text-[#7B8996]">
+          Moving arrows = deal direction (buyer country → deal location); line width = connecting deals; ripple hubs = countries in the loaded deals ({domesticFlows.length ? `domestic deals included in hub totals: ${domesticFlows.map(({ pair }) => `${pair.source} ${pair.deals}`).join(", ")}` : "no domestic deals in the loaded rows"}). USD totals appear in tooltips only where the deal value is disclosed — never estimated.
+          {unmappableFlows.length ? ` Not drawable: ${unmappableFlows.map((pair) => `${pair.source}→${pair.target} (${pair.deals})`).join(", ")}.` : ""}
+          {` ${crossFlows.length} cross-border ${crossFlows.length === 1 ? "route" : "routes"} drawn.`}
         </div>
       ) : unmatched.length ? (
         <div className="text-[10px] font-semibold text-[#7B8996]">
