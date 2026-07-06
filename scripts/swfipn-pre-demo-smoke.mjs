@@ -106,7 +106,7 @@ async function run() {
   // 3. Playwright: load each demo route, check render + leakage + timing
   console.error("[smoke] Launching browser for page checks...");
   const { chromium } = loadPlaywright();
-  const browser = await chromium.launch({ headless: true, timeout: 30_000 });
+  const browser = await chromium.launch({ channel: "chrome", headless: true, timeout: 30_000 });
   const page = await browser.newPage({ viewport: VIEWPORT });
 
   for (const route of DEMO_ROUTES) {

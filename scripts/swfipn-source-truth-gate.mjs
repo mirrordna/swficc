@@ -58,7 +58,7 @@ function scanStaticText() {
 
 async function inspectSourcePage() {
   const args = RESOLVE_IP ? [`--host-resolver-rules=MAP ${new URL(ORIGIN).hostname} ${RESOLVE_IP}`] : [];
-  const browser = await chromium.launch({ headless: true, args });
+  const browser = await chromium.launch({ channel: "chrome", headless: true, args });
   const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
   const url = appUrl("/source/?url=https%3A%2F%2Fwww.swfi.com%2Fv1%2Ftransactions%2F6a2c168b43e7f69d0cd0c923&return=%2Fswficc%2Ftransactions%2F");
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 });
@@ -77,7 +77,7 @@ async function inspectSourcePage() {
 
 async function inspectLegacySourcePage() {
   const args = RESOLVE_IP ? [`--host-resolver-rules=MAP ${new URL(ORIGIN).hostname} ${RESOLVE_IP}`] : [];
-  const browser = await chromium.launch({ headless: true, args });
+  const browser = await chromium.launch({ channel: "chrome", headless: true, args });
   const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
   const url = appUrl("/source/?url=https%3A%2F%2Fwww.swfi.com%2F%3Fp%3D109202&return=%2Fswficc%2Fresearch%2F");
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 });
@@ -99,7 +99,7 @@ async function inspectLegacySourcePage() {
 
 async function inspectUnmappedSourcePage() {
   const args = RESOLVE_IP ? [`--host-resolver-rules=MAP ${new URL(ORIGIN).hostname} ${RESOLVE_IP}`] : [];
-  const browser = await chromium.launch({ headless: true, args });
+  const browser = await chromium.launch({ channel: "chrome", headless: true, args });
   const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
   const url = appUrl("/source/?url=https%3A%2F%2Fwww.swfi.com%2F%3Fp%3D999999999&return=%2Fswficc%2Fresearch%2F");
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 });
@@ -116,7 +116,7 @@ async function inspectUnmappedSourcePage() {
 
 async function inspectBareSourcePage() {
   const args = RESOLVE_IP ? [`--host-resolver-rules=MAP ${new URL(ORIGIN).hostname} ${RESOLVE_IP}`] : [];
-  const browser = await chromium.launch({ headless: true, args });
+  const browser = await chromium.launch({ channel: "chrome", headless: true, args });
   const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
   const url = appUrl("/source/");
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 });

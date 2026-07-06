@@ -132,7 +132,7 @@ async function waitForDetailBody(page, expected, timeout = 45_000) {
 async function run() {
   fs.mkdirSync(outputDir, { recursive: true });
   const { chromium } = loadPlaywright();
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ channel: "chrome", headless: true });
   const context = await browser.newContext({ viewport: { width: 1280, height: 850 } });
   const failures = [];
   const pages = [];

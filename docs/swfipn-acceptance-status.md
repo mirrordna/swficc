@@ -8,21 +8,21 @@ This does not claim that full BRD Phase 2 productization is complete.
 
 Public URL: `https://swfipn.activemirror.ai/swficc/`
 
-Deployed release: `/opt/swfipn-acceptance/releases/20260706T120901Z`
+Deployed release: `unknown`
 
-Public asset version: `20260706T120901Z`
+Public asset version: `unknown`
 
 ## Verdict
 
 Acceptance lock: `no_go`
 
-Share gate: `pass`, `sendable: true`
+Share gate: `fail`, `sendable: false`
 
 BRD contract truth: `fail`, full-universe parity `UNPROVEN`
 
 BRD Phase 2 matrix: `fail`, verdict `no_go`
 
-Runtime staleness: `pass`, failures `0`
+Runtime staleness: `fail`, failures `0`
 
 API vhost readiness: `pass`, HTTP `308` -> `https://api.swfi.com/docs`
 
@@ -32,8 +32,11 @@ Production API DNS cutover: `blocked`
 
 ## Blockers
 
-- swfipn-link-mapping-leakage-gate: status=fail; failures={'route': '/about-us/overview/', 'failure': 'unapproved_external_links:swfi.com — the SWFI platform'},{'route': '/about-us/our-team/', 'failure': 'unapproved_external_links:swfi.com — the SWFI platform'},{'route': '/about/', 'failure': 'unapproved_external_links:swfi.com — the SWFI platform'}
-- swfipn-visible-link-escape-gate: status=fail; failures={'route': '/about/', 'failure': 'unapproved_external_links:1'},{'route': '/about-us/overview/', 'failure': 'unapproved_external_links:1'},{'route': '/about-us/our-team/', 'failure': 'unapproved_external_links:1'}
+- swfipn-acceptance-criteria-gate: status=fail
+- swfipn-kp-acceptance-gate: status=fail
+- swfipn-link-mapping-leakage-gate: status=fail
+- swfipn-visible-link-escape-gate: status=fail
+- swfipn-runtime-staleness-gate: status=fail
 
 ## Deferred / Blocked Outside Current Sendable Scope
 
@@ -53,7 +56,7 @@ Production API DNS cutover: `blocked`
 
 | Gate | Result | Receipt |
 | --- | --- | --- |
-| Share/sendability gate | `pass` | `output/swfipn-share-gate-latest.json` |
+| Share/sendability gate | `fail` | `output/swfipn-share-gate-latest.json` |
 | Full-universe mapping gate | `pass` | `output/swfipn-full-universe-mapping-latest.json` |
 | Source/destination manifest gate | `pass` | `output/swfipn-source-destination-manifest-latest.json` |
 | Detail-batch parity gate | `pass` | `output/swfipn-detail-batch-parity-latest.json` |
@@ -61,11 +64,11 @@ Production API DNS cutover: `blocked`
 | Record field parity gate | `blocked` | `output/swfipn-record-field-parity-full-latest.json` |
 | Adversarial review gate | `fail` | `output/swfipn-adversarial-review-latest.json` |
 | BRD contract truth gate | `fail` | `output/swfipn-brd-contract-truth-gate-latest.json` |
-| Acceptance criteria gate | `pass` | `output/swfipn-acceptance-criteria-gate-latest.json` |
-| KP acceptance gate | `pass` | `output/swfipn-kp-acceptance-gate-latest.json` |
+| Acceptance criteria gate | `fail` | `output/swfipn-acceptance-criteria-gate-latest.json` |
+| KP acceptance gate | `fail` | `output/swfipn-kp-acceptance-gate-latest.json` |
 | Route and leakage gates | `pass` | `output/swfipn-link-mapping-leakage-gate-latest.json, output/swfipn-visible-link-escape-gate-latest.json` |
 | BRD Phase 2 gate | `fail` | `output/swfipn-brd-phase2-acceptance-latest.json` |
-| Runtime staleness gate | `pass` | `output/swfipn-runtime-staleness-gate-latest.json` |
+| Runtime staleness gate | `fail` | `output/swfipn-runtime-staleness-gate-latest.json` |
 | API product gate | `pass` | `output/swfipn-api-product-gate-latest.json` |
 | API key lifecycle gate | `pass` | `output/swfipn-api-key-lifecycle-latest.json` |
 | Admin API Product Console UI gate | `pass` | `output/swfipn-admin-api-ui-brd-gate-latest.json` |
@@ -81,16 +84,6 @@ Production API DNS cutover: `blocked`
 | Phase 2 closure packet | `blocked_waiting_on_external_runtime_inputs` | `output/swfipn-phase2-closure-packet-latest.json` |
 | API DNS cutover gate | `blocked` | `output/swfipn-api-dns-key-lifecycle-latest.json` |
 | API DNS cutover controller | `ready` | `output/swfipn-api-dns-cutover-latest.json` |
-
-## Share Summary
-
-- receipts: `8`
-- screenshots: `3`
-- failures: `0`
-- source_links: `30`
-- detail_links: `21`
-- mirror_record_links: `51`
-- external_swfi_links: `0`
 
 ## Data Quality Caveats
 

@@ -662,7 +662,7 @@ function loadPlaywright() {
 
 async function inspectPublicUi() {
   const { chromium } = loadPlaywright();
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ channel: "chrome", headless: true });
   const desktop = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true });
   const results = [];

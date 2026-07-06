@@ -290,7 +290,7 @@ async function swfiUnauthRedirectCheck(browser, href, label, kind) {
 
 async function browserContract() {
   const { chromium } = loadPlaywright();
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ channel: "chrome", headless: true });
   const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });
   const page = await context.newPage();
   const result = {
@@ -392,7 +392,7 @@ async function run() {
   fs.mkdirSync(outputDir, { recursive: true });
   const runtime = runtimeWriteScan();
   const { chromium } = loadPlaywright();
-  const authBrowser = await chromium.launch({ headless: true });
+  const authBrowser = await chromium.launch({ channel: "chrome", headless: true });
   const authContext = await authBrowser.newContext({ storageState: { cookies: [], origins: [] } });
   const auth = await requestNoCustomAuth(authContext);
   await authContext.close().catch(() => {});

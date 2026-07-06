@@ -517,7 +517,7 @@ async function run() {
   const baseHost = new URL(base).hostname;
   const resolveIp = process.env.SWFIPN_RESOLVE_IP || "";
   const { chromium } = loadPlaywright();
-  const browser = await chromium.launch({
+  const browser = await chromium.launch({ channel: "chrome",
     headless: true,
     args: resolveIp ? [`--host-resolver-rules=MAP ${baseHost} ${resolveIp}`] : [],
   });

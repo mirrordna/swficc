@@ -432,7 +432,7 @@ async function run() {
   fs.mkdirSync(outputDir, { recursive: true });
   const ledger = readLedger();
   const { chromium } = loadPlaywright();
-  const browser = await chromium.launch({
+  const browser = await chromium.launch({ channel: "chrome",
     headless: true,
     args: resolveIp ? [`--host-resolver-rules=MAP ${originHost} ${resolveIp}`] : [],
   });

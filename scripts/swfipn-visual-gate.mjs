@@ -427,7 +427,7 @@ async function run() {
   const checks = [];
   checks.push(await fetchHtmlCheck());
 
-  const browser = await chromium.launch({
+  const browser = await chromium.launch({ channel: "chrome",
     headless: true,
     args: resolveIp ? [`--host-resolver-rules=MAP ${originHost} ${resolveIp}`] : [],
   });

@@ -35,7 +35,7 @@ function normalizeRoute(href) {
   }
 }
 
-const browser = await chromium.launch();
+const browser = await chromium.launch({ channel: "chrome" });
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
 const queue = [`${BASE}/`];
 const seen = new Set(queue);

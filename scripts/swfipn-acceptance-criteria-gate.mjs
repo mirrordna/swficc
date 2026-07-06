@@ -858,7 +858,7 @@ async function stalenessCheck() {
 
 async function routeParityCheck(browser) {
   const { chromium } = loadPlaywright();
-  const isolatedBrowser = await chromium.launch({
+  const isolatedBrowser = await chromium.launch({ channel: "chrome",
     headless: true,
     args: resolveIp ? [`--host-resolver-rules=MAP ${originHost} ${resolveIp}`] : [],
   });
@@ -937,7 +937,7 @@ async function directProtectedRoutesCheck(browser) {
   ];
   const result = { id: "direct_record_routes_forward_to_platform", ok: true, skipped: false, failures: [], samples: [], subscriber_auth_mode: "platform_handoff_per_minutes_J", credentials_used: false };
   const { chromium } = loadPlaywright();
-  const isolatedBrowser = await chromium.launch({
+  const isolatedBrowser = await chromium.launch({ channel: "chrome",
     headless: true,
     args: resolveIp ? [`--host-resolver-rules=MAP ${originHost} ${resolveIp}`] : [],
   });
@@ -1013,7 +1013,7 @@ async function directProtectedRoutesCheck(browser) {
 async function run() {
   fs.mkdirSync(outputDir, { recursive: true });
   const { chromium } = loadPlaywright();
-  const browser = await chromium.launch({
+  const browser = await chromium.launch({ channel: "chrome",
     headless: true,
     args: resolveIp ? [`--host-resolver-rules=MAP ${originHost} ${resolveIp}`] : [],
   });

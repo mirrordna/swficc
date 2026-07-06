@@ -456,7 +456,7 @@ function loadPlaywright() {
 
 async function visibleTotal(route) {
   const { chromium } = loadPlaywright();
-  const browser = await chromium.launch({ headless: true, timeout: 30_000 });
+  const browser = await chromium.launch({ channel: "chrome", headless: true, timeout: 30_000 });
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   try {
     await page.goto(appUrl(route), { waitUntil: "domcontentloaded", timeout: 30_000 });

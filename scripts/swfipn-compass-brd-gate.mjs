@@ -11,7 +11,7 @@ const screenshotPath = path.join(outputDir, "swfipn-compass-brd-gate-latest.png"
 fs.mkdirSync(outputDir, { recursive: true });
 
 async function main() {
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ channel: "chrome", headless: true });
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const apiResponses = [];
   const consoleErrors = [];

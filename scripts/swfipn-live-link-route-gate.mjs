@@ -102,7 +102,7 @@ async function crawlRoute(browser, route) {
 async function run() {
   fs.mkdirSync(outputDir, { recursive: true });
   const { chromium } = loadPlaywright();
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ channel: "chrome", headless: true });
   const checks = [];
   try {
     for (const route of routes) checks.push(await crawlRoute(browser, route));

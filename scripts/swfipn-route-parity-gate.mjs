@@ -111,7 +111,7 @@ function loadPlaywright() {
 }
 
 async function launchBrowser(chromium) {
-  return chromium.launch({ headless: true, timeout: 30_000 });
+  return chromium.launch({ channel: "chrome", headless: true, timeout: 30_000 });
 }
 
 async function fetchJson(url, timeoutMs = 45_000) {

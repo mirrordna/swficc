@@ -269,7 +269,7 @@ async function run() {
   const results = [];
   for (const route of routes) {
     console.error(`[link-escape] inspecting ${route}`);
-    const browser = await chromium.launch({ headless: true, timeout: 30_000 });
+    const browser = await chromium.launch({ channel: "chrome", headless: true, timeout: 30_000 });
     try {
       results.push(await inspectRoute(browser, route));
     } catch (error) {

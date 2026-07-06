@@ -56,7 +56,7 @@ async function run() {
   const base = normalizeBase(process.env.SWFIPN_ORIGIN || process.env.SWFI_FRONTEND_ORIGIN);
   const baseHost = new URL(base).hostname;
   const resolveIp = process.env.SWFIPN_RESOLVE_IP || "";
-  const browser = await chromium.launch({
+  const browser = await chromium.launch({ channel: "chrome",
     headless: true,
     args: resolveIp ? [`--host-resolver-rules=MAP ${baseHost} ${resolveIp}`] : [],
   });

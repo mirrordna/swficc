@@ -45,7 +45,9 @@ const facets = await json(`${ORIGIN}/api/source-data/facets/v1?collection=entiti
 record("D", "list charts computed over the WHOLE collection (facets api)", facets.body?.status === "ok" && (facets.body?.data?.total || 0) > 100000, `total=${facets.body?.data?.total}`);
 
 // --- rendered probes --------------------------------------------------
-const browser = await chromium.launch();
+// System Chrome (channel) — the ms-playwright browser cache was found
+// empty mid-session 2026-07-06; the system browser needs no download.
+const browser = await chromium.launch({ channel: "chrome" });
 const page = await browser.newPage({ viewport: { width: 1560, height: 1200 } });
 const textOf = async () => page.evaluate(() => document.body.innerText);
 

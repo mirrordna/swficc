@@ -961,7 +961,7 @@ async function run() {
     args: resolveIp ? [`--host-resolver-rules=MAP ${originHost} ${resolveIp}`] : [],
   };
   async function runWithBrowser(id, callback) {
-    const browser = await chromium.launch(launchOptions);
+    const browser = await chromium.launch({ channel: "chrome", ...launchOptions });
     try {
       return await callback(browser);
     } catch (error) {
