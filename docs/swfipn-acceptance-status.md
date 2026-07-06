@@ -1,6 +1,6 @@
 # SWFI /swficc Acceptance Status
 
-Status: Ready for acceptance/demo review
+Status: Not ready
 
 Scope: current `/swficc` dashboard/terminal validation scope.
 
@@ -8,13 +8,13 @@ This does not claim that full BRD Phase 2 productization is complete.
 
 Public URL: `https://swfipn.activemirror.ai/swficc/`
 
-Deployed release: `/opt/swfipn-acceptance/releases/20260706T075139Z`
+Deployed release: `/opt/swfipn-acceptance/releases/20260706T120901Z`
 
-Public asset version: `20260706T075139Z`
+Public asset version: `20260706T120901Z`
 
 ## Verdict
 
-Acceptance lock: `go`
+Acceptance lock: `no_go`
 
 Share gate: `pass`, `sendable: true`
 
@@ -32,7 +32,8 @@ Production API DNS cutover: `blocked`
 
 ## Blockers
 
-- None found within current acceptance scope.
+- swfipn-link-mapping-leakage-gate: status=fail; failures={'route': '/about-us/overview/', 'failure': 'unapproved_external_links:swfi.com — the SWFI platform'},{'route': '/about-us/our-team/', 'failure': 'unapproved_external_links:swfi.com — the SWFI platform'},{'route': '/about/', 'failure': 'unapproved_external_links:swfi.com — the SWFI platform'}
+- swfipn-visible-link-escape-gate: status=fail; failures={'route': '/about/', 'failure': 'unapproved_external_links:1'},{'route': '/about-us/overview/', 'failure': 'unapproved_external_links:1'},{'route': '/about-us/our-team/', 'failure': 'unapproved_external_links:1'}
 
 ## Deferred / Blocked Outside Current Sendable Scope
 
@@ -106,7 +107,7 @@ Production API DNS cutover: `blocked`
 
 ## Required wording
 
-Use: “The current `/swficc` dashboard/terminal scope is deployed, source-backed, and sendable for validation with receipts.”
+Use: “The current `/swficc` dashboard/terminal scope is deployed, but it is not sendable until the failing or blocked acceptance receipts pass.”
 
 Use: “corresponding SWFI record/profile page within `/swficc` where an internal record exists.”
 
@@ -116,4 +117,4 @@ Do not use: “All SWFI.com pages are fully migrated.”
 
 ## Final acceptance sentence
 
-No blockers are open inside the current `/swficc` dashboard/terminal validation scope. Full BRD Phase 2 remains active because the explicit deferred productization bucket and production `api.swfi.com` DNS cutover are not complete.
+Blockers remain within the current `/swficc` dashboard/terminal validation scope. Do not call this ready or sendable until the required receipts pass.

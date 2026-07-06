@@ -179,7 +179,15 @@ export default function DashboardPage() {
   const allocatorRows = factRows(packets.allocators30).slice(0, 25);
   const institutionTypeRows = institutionTypeFacetRows(packets.institutionTypes).slice(0, 8);
   const sectorRows = sectorFacetRows(packets.sectorFlows).slice(0, 10);
-  const topAumRows = factRows(packets.top20).slice(0, 25);
+  // Two-layer truth (2026-07-06): the backend serves swfi.com-parity order
+  // (source-of-truth mirror, gate-verified row-for-row); the DASHBOARD
+  // re-ranks on the verified-USD value so cross-currency magnitudes never
+  // masquerade as a ranking (doctrine 2026-07-05). Rows without a USD value
+  // keep their relative order at the tail.
+  const topAumRows = useMemo(() => {
+    const served = factRows(packets.top20).slice(0, 25);
+    return [...served].sort((a, b) => (numberValue(b.aum_usd) || 0) - (numberValue(a.aum_usd) || 0));
+  }, [packets.top20]);
   const dashboardEntitySearchRows = useMemo(() => dedupeSearchRecords([...topAumRows, ...entityRows]), [entityRows, topAumRows]);
   const dashboardReady = useMemo(() => {
     return ["metrics", "institutionTypes", "sectorFlows", "allocators30", "rfps", "transactions30", "entities", "top20", "news"]
