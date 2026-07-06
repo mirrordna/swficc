@@ -135,12 +135,17 @@ const CONFIG: Record<Kind, { title: string; endpoint: string; columns: string[];
   research: {
     title: "Research / News",
     endpoint: "/api/source-intelligence/news/v1?limit=100",
-    columns: ["Title", "Source", "Published", "Citation"],
+    columns: ["Title", "Summary", "Citation"],
   },
   intelligence: {
+    // Value-add fix 2026-07-06 (Paul: "what value add is this page
+    // providing?"): the feed serves full excerpts (25/25 probe receipt) that
+    // were never displayed, while Source was the constant "SWFI" and
+    // Published was 0/25-filled at source — two dead columns replaced by
+    // the story summary. Dates return when the source carries them.
     title: "Intelligence",
     endpoint: "/api/source-intelligence/news/v1?limit=100",
-    columns: ["Title", "Source", "Published", "Citation"],
+    columns: ["Title", "Summary", "Citation"],
   },
   search: {
     title: "Smart Search",
@@ -196,7 +201,12 @@ function rowCells(kind: Kind, row: Row): Cell[] {
   if (kind === "mandates") return [mandateCell(row), text(row.institution), text(row.strategy || row.asset_class_or_strategy), disclosedMoney(row.amount_display || row.amount), text(row.deadline || row.due_at), citation(href, "/mandates/")];
   if (kind === "research" || kind === "intelligence") {
     const researchHref = researchSourceHref(row);
-    return [researchCell(row), text(row.source), text(row.published_at || row.date), citation(researchHref, "/intelligence/")];
+    const excerpt = businessText(row.excerpt, "").replace(/\s+/g, " ").trim();
+    return [
+      researchCell(row),
+      excerpt ? (excerpt.length > 220 ? `${excerpt.slice(0, 219)}…` : excerpt) : NOT_DISCLOSED,
+      citation(researchHref, "/intelligence/"),
+    ];
   }
   if (kind === "search") return [text(row.title || row.name), linked(text(row.institution || row.name), href, "/search/"), text(row.sector), disclosedMoney(row.amount_display || row.capital_display || row.amount || row.capital || row.value), citation(href, "/search/")];
   return [];
