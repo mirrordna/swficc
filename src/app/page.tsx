@@ -502,16 +502,21 @@ function VisualExecutiveOverview({
             </DashboardLink>
           </div>
           <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_340px] xl:items-start 2xl:grid-cols-[minmax(340px,1fr)_minmax(340px,1.18fr)_330px]">
+            {/* Replaced the pseudo-geographic bubble map 2026-07-06 (Paul: "i
+                dont like the global capital map"): it drew invented dot
+                continents, decorative arcs implying flows that exist nowhere
+                in the data, and could only ever show 14 hardcoded countries.
+                This ranked list shows EVERY country in the loaded rows. */}
             <ExpandablePanel
               id="institution-overview"
-              title="Global Capital Map"
+              title="Capital by Country"
               href="/profiles/?filter=Sovereign%20Wealth%20Fund"
               expanded={expandedPanel === "institution-overview"}
               onToggle={onTogglePanel}
               detail={<TotalAumInsightDetail topRows={topRows} institutionTypeRows={institutionTypeRows} transactionRows={transactionRows} rfpRows={rfpRows} sectorRows={sectorRows} />}
-              explain="Where SWFI's top-ranked institutions are headquartered. Bubble number = country rank by loaded rows; AUM shows only when one currency backs it. Click a bubble → that country's profiles; Open records → ranked institutions."
+              explain="Where SWFI's top-ranked institutions are based, ranked by institutions in the loaded rows; AUM shows only when one currency backs it. Click a row → that country's profiles; Open records → ranked institutions."
             >
-              <GlobalCapitalMap topPacket={packets.top20} topRows={topRows} sectorRows={sectorRows} />
+              <CapitalByCountry topPacket={packets.top20} topRows={topRows} sectorRows={sectorRows} />
             </ExpandablePanel>
             <ExpandablePanel
               id="capital-flows"
@@ -1494,81 +1499,62 @@ function ExpandablePanel({ id, title, href, expanded, onToggle, children, detail
   );
 }
 
-function GlobalCapitalMap({ topPacket, topRows, sectorRows }: { topPacket?: Packet; topRows: Record<string, unknown>[]; sectorRows: Record<string, unknown>[] }) {
+function CapitalByCountry({ topPacket, topRows, sectorRows }: { topPacket?: Packet; topRows: Record<string, unknown>[]; sectorRows: Record<string, unknown>[] }) {
   const totalAum = totalAumValue(topPacket, topRows);
   const sectorCapital = sumNumbers(sectorRows.map(sectorValue));
-  const nodes = countryMapNodes(topRows);
-  const countryRows = [...nodes].sort((a, b) => (b.aum || b.count) - (a.aum || a.count) || a.topRank - b.topRank).slice(0, 5);
-  const topCountry = countryRows[0];
-  const topCountryShare = topCountry?.aum && totalAum ? Math.round((topCountry.aum / totalAum) * 100) : 0;
+  // Ranked by institution count (always known, one unit) — never by a bar
+  // scale that mixes AUM currencies with row counts. Currency-backed AUM
+  // shows as a text value per row.
+  const nodes = [...countryCapitalRows(topRows)].sort((a, b) => b.count - a.count || a.topRank - b.topRank || a.country.localeCompare(b.country));
+  const display = nodes.slice(0, 8);
+  const maxCount = Math.max(1, ...display.map((node) => node.count));
+  const topCountry = display[0];
+  const topCountryShare = topCountry?.aum && topCountry.aumCurrency === "USD" && totalAum ? Math.round((topCountry.aum / totalAum) * 100) : 0;
   const countries = knownDistinctCount(topRows.map((row) => row.country));
-  const mapArcSource = topCountry || countryRows[0] || nodes[0];
-  const arcTargets = mapArcSource ? countryRows.filter((node) => node.country !== mapArcSource.country).slice(0, 4) : [];
   const stats = [
     { label: "Countries", value: countries ? compactNumber(countries) : "Not disclosed", href: "/profiles", note: "Profile locations" },
     { label: "Profiles", value: topRows.length ? compactNumber(topRows.length) : "Not disclosed", href: "/profiles", note: "Loaded ranking rows" },
-    { label: "Top country", value: topCountry ? topCountry.country : "Not disclosed", href: topCountry ? `/profiles/?filter=${encodeURIComponent(topCountry.country)}` : "/profiles", note: topCountryShare ? `${topCountryShare}% of displayed AUM` : "AUM share unavailable" },
+    { label: "Top country", value: topCountry ? topCountry.country : "Not disclosed", href: topCountry ? `/profiles/?filter=${encodeURIComponent(topCountry.country)}` : "/profiles", note: topCountryShare ? `${topCountryShare}% of displayed AUM` : "By institutions in loaded rows" },
     { label: "Ranking total", value: totalAum ? compactNumber(totalAum) : "Not disclosed", href: "/profiles/?filter=Sovereign%20Wealth%20Fund" },
   ];
   return (
     <div className="grid gap-3">
-      <div className="relative min-h-[330px] overflow-hidden rounded-[6px] border border-[#C8D8E8] bg-white shadow-[0_1px_4px_rgba(20,44,70,0.08)]">
-        <div className="relative min-h-[330px] overflow-hidden bg-[#F8FBFD]">
-        {nodes.length ? (
-        <svg viewBox="0 0 700 330" className="absolute inset-0 h-full w-full" role="img" aria-label="Top SWF AUM locations by country">
-          <defs>
-            <radialGradient id="mapNode" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="#FFFFFF" stopOpacity="1" />
-              <stop offset="34%" stopColor="#0A66C2" stopOpacity="0.94" />
-              <stop offset="72%" stopColor="#0A66C2" stopOpacity="0.2" />
-              <stop offset="100%" stopColor="#0A66C2" stopOpacity="0" />
-            </radialGradient>
-            <radialGradient id="mapNodeLead" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="#FFFFFF" stopOpacity="1" />
-              <stop offset="36%" stopColor="#D51E29" stopOpacity="0.98" />
-              <stop offset="72%" stopColor="#D51E29" stopOpacity="0.22" />
-              <stop offset="100%" stopColor="#D51E29" stopOpacity="0" />
-            </radialGradient>
-          </defs>
-          <rect x="0" y="0" width="700" height="330" fill="#F8FBFD" />
-          {mapLandDots.map((dot, index) => (
-            <circle key={`dot-${index}`} cx={dot.x} cy={dot.y} r={dot.r} fill="#7EA1BF" opacity={dot.opacity} />
-          ))}
-          {mapArcSource && arcTargets.map((target) => (
-            <path key={`${mapArcSource.country}-${target.country}`} d={mapArcPath(mapArcSource, target)} fill="none" stroke="#7BAEDB" strokeWidth="1.6" strokeLinecap="round" opacity="0.55" />
-          ))}
-          {countryRows.map((node) => {
-            const countryIndex = countryRows.findIndex((countryNode) => countryNode.country === node.country);
-            const isLead = mapArcSource?.country === node.country;
-            return (
-              <g key={node.country}>
-                <circle cx={node.x} cy={node.y} r={node.r + 18} fill={isLead ? "url(#mapNodeLead)" : "url(#mapNode)"} />
-                <circle cx={node.x} cy={node.y} r={node.r} fill={isLead ? "#D51E29" : "#0A66C2"} opacity="0.96" stroke="#FFFFFF" strokeWidth="2.5" />
-                <circle cx={node.x} cy={node.y} r={Math.max(5, node.r - 8)} fill="#FFFFFF" opacity="0.98" />
-                {countryIndex >= 0 && countryIndex < 5 ? (
-                  <text x={node.x} y={node.y + 4} textAnchor="middle" fill={isLead ? "#B90D12" : "#071F48"} fontSize="11" fontWeight="950">{countryIndex + 1}</text>
-                ) : null}
-                {/* Minutes F: a numbered bubble alone explains nothing — name
-                    the country (and its same-currency AUM when it exists). */}
-                {countryIndex >= 0 && countryIndex < 5 ? (
-                  <text x={node.x} y={node.y + node.r + 12} textAnchor="middle" fill="#41566B" fontSize="8.5" fontWeight="800">
-                    {node.country}{node.aum && node.aumCurrency ? ` · ${node.aumCurrency} ${compactNumber(node.aum)}` : ""}
-                  </text>
-                ) : null}
-              </g>
-            );
-          })}
-        </svg>
+      <div className="overflow-hidden rounded-[6px] border border-[#C8D8E8] bg-white shadow-[0_1px_4px_rgba(20,44,70,0.08)]">
+        {display.length ? (
+          <div className="grid gap-1.5 p-3">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#7B8996]">Institutions by country</span>
+              <span className="text-[9.5px] font-semibold text-[#7B8996]">from the loaded SWFI ranking rows</span>
+            </div>
+            {display.map((node, index) => (
+              <DashboardLink
+                key={node.country}
+                href={`/profiles/?filter=${encodeURIComponent(node.country)}`}
+                className="group grid grid-cols-[20px_minmax(0,1fr)_auto] items-center gap-2 rounded px-1.5 py-1 text-inherit no-underline hover:bg-[#F4F8FB]"
+              >
+                <span className="text-[11px] font-black text-[#7B8996]">{index + 1}</span>
+                <span className="min-w-0">
+                  <span className="flex items-baseline gap-2">
+                    <span className="truncate text-[12.5px] font-bold text-[#13283D] group-hover:text-[#0A3A7A]">{node.country}</span>
+                    {node.topName ? <span className="hidden truncate text-[10px] font-semibold text-[#7B8996] sm:block">top: {node.topName}</span> : null}
+                  </span>
+                  <span className="mt-1 block h-[6px] w-full overflow-hidden rounded bg-[#EAF1F7]">
+                    <span className="block h-full rounded bg-[#0A66C2]" style={{ width: `${Math.max(6, Math.round((node.count / maxCount) * 100))}%` }} />
+                  </span>
+                </span>
+                <span className="text-right">
+                  <span className="block text-[12px] font-extrabold text-[#0A3A7A]">{node.count} {node.count === 1 ? "institution" : "institutions"}</span>
+                  <span className="block text-[10px] font-semibold text-[#667386]">
+                    {node.aum && node.aumCurrency ? (node.aumCurrency === "USD" ? compactMoney(node.aum) : `${node.aumCurrency} ${compactNumber(node.aum)}`) : "AUM currency mixed"}
+                  </span>
+                </span>
+              </DashboardLink>
+            ))}
+          </div>
         ) : (
           <CapitalSignalFallback sectorRows={sectorRows} pending={topPacket === undefined} />
         )}
-        <div className="absolute left-3 top-3 max-w-[250px] border border-[#D7E3EF] bg-white/95 px-3 py-2 shadow-sm">
-          <div className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#7B8996]">Top SWF AUM locations</div>
-          <div className="mt-1 text-[21px] font-extrabold leading-none text-[#13283D]">{topCountry ? topCountry.country : "Not disclosed"}</div>
-          <div className="mt-1 text-[10px] font-semibold text-[#667386]">{topCountry?.aum ? `${topCountry.aumCurrency === "USD" ? compactMoney(topCountry.aum) : `${topCountry.aumCurrency} ${compactNumber(topCountry.aum)}`} in loaded SWFI ranking rows` : "Marker size follows available SWFI ranking data"}</div>
-        </div>
-        <div className="absolute right-3 top-3 border border-[#D7E3EF] bg-white/95 px-3 py-2 text-[10px] font-extrabold text-[#0A3A7A] shadow-sm">All Regions</div>
-        <div className="absolute bottom-0 left-0 right-0 grid border-t border-[#D7E3EF] bg-white/96 text-[11px] sm:grid-cols-4">
+        <div className="grid border-t border-[#D7E3EF] bg-white text-[11px] sm:grid-cols-4">
           {stats.map((stat) => (
             <DashboardLink key={stat.label} href={stat.href} className="min-w-0 border-r border-[#E1E8EF] px-3 py-2 text-inherit no-underline last:border-r-0">
               <span className="block truncate text-[10px] font-bold text-[#7B8996]">{stat.label}</span>
@@ -1577,7 +1563,6 @@ function GlobalCapitalMap({ topPacket, topRows, sectorRows }: { topPacket?: Pack
             </DashboardLink>
           ))}
         </div>
-      </div>
       </div>
       {sectorCapital ? (
         <div className="text-[10.5px] font-semibold text-[#7B8996]">Market activity total: {compactMoney(sectorCapital)}</div>
@@ -1645,7 +1630,7 @@ function InstitutionIntelligenceOverview({
   return (
     <div className="grid gap-3">
       <VisualPanel title="Top SWF AUM Locations" source={ENDPOINTS.top20} empty={DASHBOARD_EMPTY} hasRows={topRows.length > 0 || sectorRows.length > 0}>
-        <GlobalCapitalMap topPacket={packets.top20} topRows={topRows} sectorRows={sectorRows} />
+        <CapitalByCountry topPacket={packets.top20} topRows={topRows} sectorRows={sectorRows} />
       </VisualPanel>
       <div className="grid gap-3 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
         <VisualPanel title="Total Institutions Tracked by Entity Type" source={ENDPOINTS.institutionTypes} empty={DASHBOARD_EMPTY} hasRows={institutionTypeRows.length > 0}>
@@ -2594,41 +2579,36 @@ function MiniRecordTable({ headers, rows: sourceRows, empty, controls }: { heade
   );
 }
 
-type CountryMapNode = {
+type CountryCapitalRow = {
   country: string;
-  x: number;
-  y: number;
   count: number;
   topRank: number;
   aum: number;
   aumCurrency: string;
   topName: string;
   topAum: number;
-  r: number;
 };
 
-function countryMapNodes(rowsToUse: Record<string, unknown>[]): CountryMapNode[] {
-  const grouped = new Map<string, CountryMapNode>();
+function countryCapitalRows(rowsToUse: Record<string, unknown>[]): CountryCapitalRow[] {
+  const grouped = new Map<string, CountryCapitalRow>();
   // Per-country currency tracking: a country's AUM sum is only meaningful when
   // every contributing row shares one declared currency (same laundered-number
   // guard as the headline total — rows arrive in 12 native currencies).
   const currencies = new Map<string, string | null>();
   for (const row of rowsToUse) {
     const country = brdText(row.country, "");
-    const point = countryPoint(country);
-    if (!country || !point) continue;
+    // 2026-07-06: the old map dropped any country without a hand-mapped
+    // coordinate (14 hardcoded points) — every country in the data counts.
+    if (!country) continue;
     const rank = numericSortValue(text(row.rank, "")) || Number.MAX_SAFE_INTEGER;
     const current = grouped.get(country) || {
       country,
-      x: point.x,
-      y: point.y,
       count: 0,
       topRank: rank,
       aum: 0,
       aumCurrency: "",
       topName: brdText(row.name, ""),
       topAum: 0,
-      r: 8,
     };
     const rowAum = aumValue(row);
     const rowCurrency = text(row.aum_currency, "").trim();
@@ -2644,85 +2624,15 @@ function countryMapNodes(rowsToUse: Record<string, unknown>[]): CountryMapNode[]
     if (rowAum > current.topAum) current.topAum = rowAum;
     grouped.set(country, current);
   }
-  const nodes = [...grouped.values()].map((node) => {
-    const currency = currencies.get(node.country);
-    // Mixed or undeclared currencies: zero the sum (marker falls back to row
-    // count; captions fall back to their no-AUM wording) instead of shipping
-    // a cross-currency number.
-    return currency ? { ...node, aumCurrency: currency } : { ...node, aum: 0, aumCurrency: "" };
-  });
-  const maxSignal = Math.max(1, ...nodes.map((node) => node.aum || node.count));
-  return nodes
+  return [...grouped.values()]
     .map((node) => {
-      const signal = node.aum || node.count;
-      const scale = Math.sqrt(signal / maxSignal);
-      const rankBoost = node.topRank <= 3 ? 3 : node.topRank <= 10 ? 1.5 : 0;
-      return { ...node, r: Math.min(28, 9 + scale * 15 + rankBoost) };
+      const currency = currencies.get(node.country);
+      // Mixed or undeclared currencies: zero the sum (row falls back to its
+      // count; captions fall back to their no-AUM wording) instead of
+      // shipping a cross-currency number.
+      return currency ? { ...node, aumCurrency: currency } : { ...node, aum: 0, aumCurrency: "" };
     })
-    .sort((a, b) => a.topRank - b.topRank || a.country.localeCompare(b.country))
-    .slice(0, 12);
-}
-
-function countryPoint(country: string): { x: number; y: number } | undefined {
-  const points: Record<string, { x: number; y: number }> = {
-    australia: { x: 590, y: 232 },
-    canada: { x: 128, y: 92 },
-    china: { x: 526, y: 142 },
-    "hong kong": { x: 538, y: 157 },
-    indonesia: { x: 552, y: 205 },
-    kuwait: { x: 416, y: 152 },
-    norway: { x: 346, y: 76 },
-    qatar: { x: 421, y: 161 },
-    "saudi arabia": { x: 407, y: 166 },
-    singapore: { x: 535, y: 194 },
-    "south korea": { x: 552, y: 133 },
-    turkey: { x: 392, y: 132 },
-    "united arab emirates": { x: 425, y: 164 },
-    "united states": { x: 134, y: 128 },
-  };
-  return points[normalizeCountryName(country)];
-}
-
-function normalizeCountryName(country: string) {
-  return country.toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ");
-}
-
-const mapLandDots = createMapLandDots();
-
-function createMapLandDots() {
-  const landMasses = [
-    { cx: 128, cy: 112, rx: 88, ry: 52, skew: -0.34, step: 8 },
-    { cx: 177, cy: 207, rx: 42, ry: 70, skew: 0.16, step: 8 },
-    { cx: 333, cy: 95, rx: 58, ry: 35, skew: 0.24, step: 7 },
-    { cx: 382, cy: 178, rx: 64, ry: 78, skew: -0.12, step: 8 },
-    { cx: 522, cy: 136, rx: 132, ry: 62, skew: 0.2, step: 8 },
-    { cx: 592, cy: 229, rx: 70, ry: 34, skew: 0.08, step: 8 },
-  ];
-  const dots: { x: number; y: number; r: number; opacity: number }[] = [];
-  for (const mass of landMasses) {
-    for (let y = -mass.ry; y <= mass.ry; y += mass.step) {
-      for (let x = -mass.rx; x <= mass.rx; x += mass.step) {
-        const shiftedX = x + y * mass.skew;
-        const ellipse = (shiftedX * shiftedX) / (mass.rx * mass.rx) + (y * y) / (mass.ry * mass.ry);
-        if (ellipse > 1) continue;
-        const phase = Math.abs((Math.round(shiftedX) * 7 + Math.round(y) * 11) % 17);
-        if (phase > 13) continue;
-        dots.push({
-          x: Math.round((mass.cx + shiftedX) * 10) / 10,
-          y: Math.round((mass.cy + y) * 10) / 10,
-          r: phase % 3 === 0 ? 1.4 : 1.1,
-          opacity: 0.36 + (phase % 5) * 0.06,
-        });
-      }
-    }
-  }
-  return dots;
-}
-
-function mapArcPath(source: CountryMapNode, target: CountryMapNode) {
-  const midX = (source.x + target.x) / 2;
-  const midY = Math.min(source.y, target.y) - Math.max(34, Math.abs(source.x - target.x) * 0.18);
-  return `M${source.x.toFixed(1)} ${source.y.toFixed(1)} Q${midX.toFixed(1)} ${midY.toFixed(1)} ${target.x.toFixed(1)} ${target.y.toFixed(1)}`;
+    .sort((a, b) => a.topRank - b.topRank || a.country.localeCompare(b.country));
 }
 
 function DonutGauge({ value }: { value: number }) {

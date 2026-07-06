@@ -19,7 +19,7 @@ const REQUIRED_TEXT = [
   "TOTAL AUM ENGAGED",
   "ACTIVE ALLOCATORS",
   "DISCLOSED DEAL VALUE",
-  "Global Capital Map",
+  "Capital by Country",
   "Top SWF AUM locations",
   "Capital Flows",
   "SWFI Discovery Pathways",
@@ -32,7 +32,7 @@ const REQUIRED_TEXT = [
 ];
 
 const REQUIRED_VISUAL_SECTIONS = [
-  "Global Capital Map",
+  "Capital by Country",
   "Capital Flows & Allocation Trends",
   "SWFI Discovery Pathways",
   "Top Institutional Relationships",
@@ -333,7 +333,7 @@ async function inspectViewport(browser, spec) {
     if (spec.mode === "top") {
       const expansion = await page.evaluate(() => {
         const button = Array.from(document.querySelectorAll("button"))
-          .find((candidate) => candidate.getAttribute("aria-label") === "Expand Global Capital Map");
+          .find((candidate) => candidate.getAttribute("aria-label") === "Expand Capital by Country");
         const before = button?.getAttribute("aria-expanded") === "false" || false;
         button?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
         return { before };
@@ -341,7 +341,7 @@ async function inspectViewport(browser, spec) {
       await page.waitForTimeout(250);
       const after = await page.evaluate(() => {
         const button = Array.from(document.querySelectorAll("button"))
-          .find((candidate) => candidate.getAttribute("aria-label") === "Collapse Global Capital Map");
+          .find((candidate) => candidate.getAttribute("aria-label") === "Collapse Capital by Country");
         const text = button?.textContent || "";
         return { expanded: button?.getAttribute("aria-expanded") === "true", text };
       });

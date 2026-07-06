@@ -49,7 +49,7 @@ async function main() {
   const committedMs = Date.now() - started;
   await page.waitForLoadState("domcontentloaded", { timeout: 120_000 });
   const domContentLoadedMs = Date.now() - started;
-  await page.waitForSelector("text=Global Capital Map", { timeout: 120_000 });
+  await page.waitForSelector("text=Capital by Country", { timeout: 120_000 });
   const overviewVisibleMs = Date.now() - started;
   await page.waitForSelector("text=Recent Activity", { timeout: 120_000 });
   const newestDataMs = Date.now() - started;

@@ -160,6 +160,19 @@ function parseSwfiSignin(href) {
   }
 }
 
+// The bare SWFI sign-in page (no redirect param) is the platform's auth
+// entry — approved everywhere (source-of-truth rule; minutes C/G).
+function isSwfiAuthEntryHref(value) {
+  try {
+    const parsed = new URL(String(value || ""));
+    if (!["www.swfi.com", "swfi.com"].includes(parsed.hostname)) return false;
+    if (parsed.pathname.replace(/\/?$/, "/") !== "/v1/signin/") return false;
+    return !parsed.searchParams.get("redirect");
+  } catch {
+    return false;
+  }
+}
+
 function classifyAnchor(anchor) {
   // Law change 2026-07-06 (source-of-truth rule; minutes C/G): the BARE
   // sign-in page (no redirect param) is the platform's auth entry — an
