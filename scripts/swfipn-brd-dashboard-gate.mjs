@@ -29,7 +29,7 @@ const requiredText = [
   "Compass",
   "Reports",
   "Here's your intelligence and pipeline overview.",
-  "Capital by Country",
+  "Global Capital Map",
   "AI Insights",
   "Latest Intelligence",
   "Most Referenced",

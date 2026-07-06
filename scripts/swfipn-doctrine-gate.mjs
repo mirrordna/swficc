@@ -40,7 +40,7 @@ const routes = [
     required: [
       "SWFI",
       "Here's your intelligence and pipeline overview.",
-      "Capital by Country",
+      "Global Capital Map",
       "AI Insights",
       "Recent Activity",
       "Transactions",
@@ -228,7 +228,7 @@ async function collectViewport(page, base, viewport, receipt) {
     const bodyText = document.body.innerText;
     const primaryText = [
       "Here's your intelligence and pipeline overview.",
-      "Capital by Country",
+      "Global Capital Map",
       "AI Insights",
       "Recent Activity",
       "Transactions",

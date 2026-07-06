@@ -220,7 +220,7 @@ async function waitForDashboard(page, timeout = 90_000) {
         && body.includes("INSIGHTS")
         && body.includes("TOP AUM RANKING");
       const brdDashboard = body.includes("Here's your intelligence and pipeline overview.")
-        && body.includes("Capital by Country")
+        && body.includes("Global Capital Map")
         && body.includes("AI Insights");
       return (legacyDashboard || brdDashboard) && !body.includes("Loading");
     },
@@ -791,7 +791,7 @@ async function run() {
     const mobileFailures = [];
     const mobileHasLegacyData = mobileBody.includes("KPI CARDS") && mobileBody.includes("INSIGHTS");
     const mobileHasBrdData = mobileBody.includes("Here's your intelligence and pipeline overview.")
-      && mobileBody.includes("Capital by Country")
+      && mobileBody.includes("Global Capital Map")
       && mobileBody.includes("AI Insights");
     if (!mobileHasLegacyData && !mobileHasBrdData) mobileFailures.push("missing_mobile_top_level_data");
     if (mobileMetrics.searchCount < 1) mobileFailures.push("missing_mobile_search");

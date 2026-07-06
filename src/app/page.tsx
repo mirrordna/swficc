@@ -19,6 +19,7 @@ import {
 import { useGsapReveal } from "@/hooks/useGsapReveal";
 import { HOME_PACKET_SNAPSHOT } from "@/lib/homeSourceSnapshot";
 import { appHref, appRouteForHref, assetHref, isSwfiPlatformRecordHref, sourceProvenanceHref, swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
+import WorldCapitalMap from "@/components/WorldCapitalMap";
 import { useDashboardSessionDisplayName } from "@/lib/dashboardAuth";
 import { businessSearchQueryVariants, dedupeSearchRecords, rankSearchRecords, searchRelevanceScore as businessSearchRelevanceScore, type SearchKind } from "@/lib/searchRelevance";
 
@@ -502,19 +503,20 @@ function VisualExecutiveOverview({
             </DashboardLink>
           </div>
           <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_340px] xl:items-start 2xl:grid-cols-[minmax(340px,1fr)_minmax(340px,1.18fr)_330px]">
-            {/* Replaced the pseudo-geographic bubble map 2026-07-06 (Paul: "i
-                dont like the global capital map"): it drew invented dot
-                continents, decorative arcs implying flows that exist nowhere
-                in the data, and could only ever show 14 hardcoded countries.
-                This ranked list shows EVERY country in the loaded rows. */}
+            {/* 2026-07-06 v2 (Paul: "i dont see a map... check out amcharts
+                for inspiration"): REAL geography now — Natural Earth country
+                shapes, not the old invented dot-continents (which also only
+                knew 14 hardcoded countries). Every country in the data is
+                drawn or explicitly disclosed as not-drawable; the ranked
+                list stays as the precise reading of the same numbers. */}
             <ExpandablePanel
               id="institution-overview"
-              title="Capital by Country"
+              title="Global Capital Map"
               href="/profiles/?filter=Sovereign%20Wealth%20Fund"
               expanded={expandedPanel === "institution-overview"}
               onToggle={onTogglePanel}
               detail={<TotalAumInsightDetail topRows={topRows} institutionTypeRows={institutionTypeRows} transactionRows={transactionRows} rfpRows={rfpRows} sectorRows={sectorRows} />}
-              explain="Where SWFI's top-ranked institutions are based, ranked by institutions in the loaded rows; AUM shows only when one currency backs it. Click a row → that country's profiles; Open records → ranked institutions."
+              explain="Real world map of where SWFI's top-ranked institutions are based — bubble number = institutions in that country from the loaded rows; AUM shows only when one currency backs it. Click a country or row → that country's profiles."
             >
               <CapitalByCountry topPacket={packets.top20} topRows={topRows} sectorRows={sectorRows} />
             </ExpandablePanel>
@@ -525,9 +527,9 @@ function VisualExecutiveOverview({
               expanded={expandedPanel === "capital-flows"}
               onToggle={onTogglePanel}
               detail={<ExpandedSectorRows rows={sectorRows} controls={controls} />}
-              explain="Disclosed transaction value grouped by sector, from the records loaded on this page. Click a sector → deals filtered to it."
+              explain="Where buyer capital flows: buyer region → industry from the deals loaded on this page, USD-disclosed values only (coverage stated under the chart). Click a band → those deals; expand for the sector table."
             >
-              <CapitalFlowPanel rows={sectorRows} />
+              <CapitalFlowSankey rows={transactionRows} />
             </ExpandablePanel>
             <ExpandablePanel
               id="ai-insights"
@@ -1522,6 +1524,7 @@ function CapitalByCountry({ topPacket, topRows, sectorRows }: { topPacket?: Pack
       <div className="overflow-hidden rounded-[6px] border border-[#C8D8E8] bg-white shadow-[0_1px_4px_rgba(20,44,70,0.08)]">
         {display.length ? (
           <div className="grid gap-1.5 p-3">
+            <WorldCapitalMap rows={nodes} />
             <div className="flex items-baseline justify-between gap-2">
               <span className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#7B8996]">Institutions by country</span>
               <span className="text-[9.5px] font-semibold text-[#7B8996]">from the loaded SWFI ranking rows</span>
@@ -1714,47 +1717,164 @@ function InstitutionIntelligenceOverview({
   );
 }
 
-function CapitalFlowPanel({ rows: sourceRows }: { rows: Record<string, unknown>[] }) {
-  const chartRows = sourceRows.slice(0, 6);
-  const total = sumNumbers(chartRows.map(sectorValue));
-  if (!chartRows.length) {
+// Capital flows as a real Sankey (Paul 2026-07-06: "dont like the capital
+// flows chart"; amCharts flow language). Data truth checked live before
+// building: seller_region is "Not disclosed" on ALL loaded deals, so a
+// buyer→seller diagram would be a lie — buyer region → industry with
+// disclosed USD value IS real. One unit per view: USD bands when any
+// USD-disclosed value exists, otherwise deal-count bands, each labeled.
+type FlowLink = { source: string; target: string; value: number; deals: number };
+
+function CapitalFlowSankey({ rows: transactionRows }: { rows: Record<string, unknown>[] }) {
+  const eligible = transactionRows.filter((row) => brdText(row.buyer_region, "") && brdText(row.industry, ""));
+  const usdValue = (row: Record<string, unknown>) => (text(row.currency, "").trim().toUpperCase() === "USD" ? (numberValue(row.amount) || 0) : 0);
+  const totalUsd = sumNumbers(eligible.map(usdValue));
+  const useUsd = totalUsd > 0;
+  const metric = (row: Record<string, unknown>) => (useUsd ? usdValue(row) : 1);
+
+  const linkMap = new Map<string, FlowLink>();
+  for (const row of eligible) {
+    const value = metric(row);
+    if (!value) continue;
+    const source = brdText(row.buyer_region, "");
+    const target = brdText(row.industry, "");
+    const key = `${source}→${target}`;
+    const current = linkMap.get(key) || { source, target, value: 0, deals: 0 };
+    current.value += value;
+    current.deals += 1;
+    linkMap.set(key, current);
+  }
+  const allLinks = [...linkMap.values()].sort((a, b) => b.value - a.value);
+  // Cap the right column at 5 named industries; the rest aggregate into an
+  // explicitly-labeled Other bucket (grouping disclosed, nothing dropped).
+  const industryTotals = new Map<string, number>();
+  for (const link of allLinks) industryTotals.set(link.target, (industryTotals.get(link.target) || 0) + link.value);
+  const namedIndustries = new Set([...industryTotals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([name]) => name));
+  const otherCount = [...industryTotals.keys()].filter((name) => !namedIndustries.has(name)).length;
+  const links: FlowLink[] = [];
+  for (const link of allLinks) {
+    const target = namedIndustries.has(link.target) ? link.target : `Other (${otherCount} industries)`;
+    const existing = links.find((entry) => entry.source === link.source && entry.target === target);
+    if (existing) {
+      existing.value += link.value;
+      existing.deals += link.deals;
+    } else {
+      links.push({ ...link, target });
+    }
+  }
+
+  const usdDeals = eligible.filter((row) => usdValue(row) > 0).length;
+  if (!links.length) {
     return (
-      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_150px]">
-        <div className="grid min-h-[172px] content-center rounded-[6px] bg-[#F7FAFD] p-3 text-center text-[12px] font-semibold text-[#526171]" role="img" aria-label="Disclosed capital by industry or category">
-          {DASHBOARD_EMPTY}
-        </div>
-        <div className="grid content-start gap-2">
-          <div className="rounded-[5px] bg-[#F7FAFD] px-3 py-2">
-            <div className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#7B8996]">Total Disclosed</div>
-            <div className="mt-1 text-[18px] font-extrabold text-[#13283D]">Not disclosed</div>
-          </div>
-        </div>
+      <div className="grid min-h-[172px] content-center rounded-[6px] bg-[#F7FAFD] p-3 text-center text-[12px] font-semibold text-[#526171]">
+        {DASHBOARD_EMPTY}
       </div>
     );
   }
+
+  const width = 560;
+  const height = 250;
+  const nodeWidth = 8;
+  const labelGutter = 148;
+  const gap = 8;
+  const sources = [...new Set(links.map((link) => link.source))];
+  const targets = [...new Set(links.map((link) => link.target))];
+  const sum = (names: string[], side: "source" | "target") =>
+    names.map((name) => links.filter((link) => link[side] === name).reduce((acc, link) => acc + link.value, 0));
+  const sourceSums = sum(sources, "source");
+  const targetSums = sum(targets, "target");
+  const totalValue = sourceSums.reduce((acc, value) => acc + value, 0);
+  const usable = (names: string[]) => height - gap * (names.length - 1) - 24;
+  const scaleFor = (sums: number[], names: string[]) => usable(names) / Math.max(1, sums.reduce((a, b) => a + b, 0));
+  const sourceScale = scaleFor(sourceSums, sources);
+  const targetScale = scaleFor(targetSums, targets);
+
+  const sourcePos = new Map<string, { y: number; h: number; offset: number }>();
+  let cursor = 12;
+  sources.forEach((name, index) => {
+    const h = Math.max(10, sourceSums[index] * sourceScale);
+    sourcePos.set(name, { y: cursor, h, offset: 0 });
+    cursor += h + gap;
+  });
+  const targetPos = new Map<string, { y: number; h: number; offset: number }>();
+  cursor = 12;
+  targets.forEach((name, index) => {
+    const h = Math.max(10, targetSums[index] * targetScale);
+    targetPos.set(name, { y: cursor, h, offset: 0 });
+    cursor += h + gap;
+  });
+
+  const leftX = labelGutter;
+  const rightX = width - labelGutter - nodeWidth;
+  const valueLabel = (value: number, deals: number) =>
+    useUsd ? compactMoney(value) : `${deals} ${deals === 1 ? "deal" : "deals"}`;
+
   return (
-    <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_150px]">
-      <SectorRibbonChart rows={chartRows} />
-      <div className="grid content-start gap-2">
-        <div className="rounded-[5px] bg-[#F7FAFD] px-3 py-2">
-          <div className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#7B8996]">Total Disclosed</div>
-          <div className="mt-1 text-[18px] font-extrabold text-[#13283D]">{total ? compactMoney(total) : "Not disclosed"}</div>
-        </div>
-        {chartRows.map((row, index) => {
-          const value = sectorValue(row);
-          const share = total ? Math.round((value / total) * 100) : 0;
+    <div className="grid gap-2">
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-auto w-full" role="img" aria-label={`Capital flows from buyer regions into industries, ${useUsd ? "by USD-disclosed value" : "by deal count"}`}>
+        {links.map((link) => {
+          const source = sourcePos.get(link.source)!;
+          const target = targetPos.get(link.target)!;
+          const sourceH = Math.max(2, (link.value / Math.max(1, sourceSums[sources.indexOf(link.source)])) * source.h);
+          const targetH = Math.max(2, (link.value / Math.max(1, targetSums[targets.indexOf(link.target)])) * target.h);
+          const y0 = source.y + source.offset;
+          const y1 = target.y + target.offset;
+          source.offset += sourceH;
+          target.offset += targetH;
+          const x0 = leftX + nodeWidth;
+          const x1 = rightX;
+          const cx = (x0 + x1) / 2;
+          const d = `M${x0},${y0} C${cx},${y0} ${cx},${y1} ${x1},${y1} L${x1},${y1 + targetH} C${cx},${y1 + targetH} ${cx},${y0 + sourceH} ${x0},${y0 + sourceH} Z`;
           return (
-            <DashboardLink key={brdText(row.name || row.value)} href={`/deals/?filter=${encodeURIComponent(brdText(row.name || row.value, ""))}`} className="grid grid-cols-[8px_minmax(0,1fr)_44px] items-center gap-2 rounded-[5px] px-1.5 py-1 text-[10.5px] text-[#405062] no-underline hover:bg-[#F5F8FB]">
-              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: sectorPalette[index % sectorPalette.length] }} />
-              <span className="truncate font-bold">{brdText(row.name || row.value)}</span>
-              <span className="text-right font-extrabold text-[#13283D]">{share ? `${share}%` : brdText(row.count)}</span>
-            </DashboardLink>
+            <a key={`${link.source}-${link.target}`} href={appHref(`/deals/?filter=${encodeURIComponent(link.target.startsWith("Other (") ? link.source : link.target)}`)}>
+              <path d={d} fill="#0A66C2" opacity="0.22" className="hover:opacity-40">
+                <title>{`${link.source} → ${link.target}: ${valueLabel(link.value, link.deals)} across ${link.deals} ${link.deals === 1 ? "deal" : "deals"}`}</title>
+              </path>
+            </a>
           );
         })}
+        {sources.map((name) => {
+          const pos = sourcePos.get(name)!;
+          const total = sourceSums[sources.indexOf(name)];
+          const deals = links.filter((link) => link.source === name).reduce((acc, link) => acc + link.deals, 0);
+          return (
+            <a key={`src-${name}`} href={appHref(`/deals/?filter=${encodeURIComponent(name)}`)}>
+              <g>
+                <rect x={leftX} y={pos.y} width={nodeWidth} height={pos.h} rx="2" fill="#0A3A7A" />
+                <text x={leftX - 6} y={pos.y + pos.h / 2 + 3} textAnchor="end" fontSize="10" fontWeight="800" fill="#2E4157">{name}</text>
+                <text x={leftX - 6} y={pos.y + pos.h / 2 + 13} textAnchor="end" fontSize="8.5" fontWeight="700" fill="#7B8996">{valueLabel(total, deals)}</text>
+              </g>
+            </a>
+          );
+        })}
+        {targets.map((name) => {
+          const pos = targetPos.get(name)!;
+          const total = targetSums[targets.indexOf(name)];
+          const deals = links.filter((link) => link.target === name).reduce((acc, link) => acc + link.deals, 0);
+          return (
+            <g key={`tgt-${name}`}>
+              <rect x={rightX} y={pos.y} width={nodeWidth} height={pos.h} rx="2" fill="#16538C" />
+              <text x={rightX + nodeWidth + 6} y={pos.y + pos.h / 2 + 3} fontSize="10" fontWeight="800" fill="#2E4157">{name.length > 26 ? `${name.slice(0, 25)}…` : name}</text>
+              <text x={rightX + nodeWidth + 6} y={pos.y + pos.h / 2 + 13} fontSize="8.5" fontWeight="700" fill="#7B8996">{valueLabel(total, deals)}</text>
+            </g>
+          );
+        })}
+      </svg>
+      <div className="flex flex-wrap items-baseline justify-between gap-2 text-[10px] font-semibold text-[#7B8996]">
+        <span>
+          {useUsd
+            ? `USD-disclosed value only: ${compactMoney(totalValue)} across ${usdDeals} of ${eligible.length} loaded deals with region + industry.`
+            : `No USD-disclosed values in the loaded deals — bands show deal counts (${eligible.length} deals).`}
+        </span>
+        <span>Buyer region → industry. Seller regions are not disclosed in the loaded rows.</span>
       </div>
     </div>
   );
 }
+
+// CapitalFlowPanel + SectorRibbonChart deleted 2026-07-06: the ribbon's wavy
+// shapes were decorative curves, not data (Paul: "dont like the capital
+// flows chart") — replaced by CapitalFlowSankey above.
 
 function AiInsightsPanel({ topInvestors, marketRows, fundraisingRows, newsRows }: {
   topInvestors: Record<string, unknown>[];
@@ -2257,55 +2377,6 @@ function MiniSparkline({ series, color, large = false }: { series: number[]; col
 }
 
 const sectorPalette = ["#0A3A7A", "#0A66C2", "#18A8A8", "#F2C94C", "#7A3FD1", "#596A7A"];
-
-function SectorRibbonChart({ rows: sourceRows }: { rows: Record<string, unknown>[] }) {
-  const chartRows = sourceRows.slice(0, 6);
-  const values = chartRows.map(sectorValue);
-  const total = sumNumbers(values);
-  const max = Math.max(1, ...values);
-  return (
-    <div className="grid min-h-[172px] content-between gap-3 rounded-[6px] bg-[#F7FAFD] p-3" role="img" aria-label="Disclosed capital by industry or category">
-      <div className="relative h-[112px] overflow-hidden">
-        <svg viewBox="0 0 520 130" className="h-full w-full">
-          {[0, 1, 2, 3].map((line) => (
-            <line key={line} x1="0" x2="520" y1={20 + line * 30} y2={20 + line * 30} stroke="#D8E2EC" strokeWidth="1" />
-          ))}
-          {chartRows.map((row, index) => {
-            const value = sectorValue(row);
-            const height = Math.max(8, (value / max) * 92);
-            const x = 18 + index * 78;
-            const y = 118 - height;
-            return (
-              <DashboardLink key={`${brdText(row.name || row.value)}-${index}`} href={`/deals/?filter=${encodeURIComponent(brdText(row.name || row.value, ""))}`}>
-                <path
-                  d={`M${x} 118 C${x + 10} ${y + 14}, ${x + 24} ${y}, ${x + 42} ${y + 8} L${x + 58} 118 Z`}
-                  fill={sectorPalette[index % sectorPalette.length]}
-                  opacity={0.9}
-                />
-              </DashboardLink>
-            );
-          })}
-        </svg>
-      </div>
-      {/* 3 cols at 9.5px truncated sector names to single letters ("I. 46%") —
-          illegible (minutes F: every element must be legible). 2 cols +
-          wrapping labels keep every sector name readable in the same space. */}
-      <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] font-bold text-[#5B6878]">
-        {chartRows.slice(0, 6).map((row, index) => {
-          const value = sectorValue(row);
-          const share = total ? Math.round((value / total) * 100) : 0;
-          return (
-            <DashboardLink key={`${brdText(row.name || row.value)}-legend`} href={`/deals/?filter=${encodeURIComponent(brdText(row.name || row.value, ""))}`} className="flex min-w-0 items-center gap-1 text-inherit no-underline">
-              <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: sectorPalette[index % sectorPalette.length] }} />
-              <span className="min-w-0 whitespace-normal leading-tight">{brdText(row.name || row.value)}</span>
-              <span className="shrink-0 text-[#13283D]">{share ? `${share}%` : brdText(row.count)}</span>
-            </DashboardLink>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
 
 function IndustryCategoryBars({ rows: sourceRows }: { rows: Record<string, unknown>[] }) {
   const chartRows = sourceRows.slice(0, 6);
