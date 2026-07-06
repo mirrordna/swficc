@@ -8,9 +8,9 @@ This does not claim that full BRD Phase 2 productization is complete.
 
 Public URL: `https://swfipn.activemirror.ai/swficc/`
 
-Deployed release: `unknown`
+Deployed release: `/opt/swfipn-acceptance/releases/20260706T134749Z`
 
-Public asset version: `unknown`
+Public asset version: `20260706T134749Z`
 
 ## Verdict
 
@@ -22,7 +22,7 @@ BRD contract truth: `fail`, full-universe parity `UNPROVEN`
 
 BRD Phase 2 matrix: `fail`, verdict `no_go`
 
-Runtime staleness: `fail`, failures `0`
+Runtime staleness: `pass`, failures `0`
 
 API vhost readiness: `pass`, HTTP `308` -> `https://api.swfi.com/docs`
 
@@ -32,11 +32,8 @@ Production API DNS cutover: `blocked`
 
 ## Blockers
 
-- swfipn-acceptance-criteria-gate: status=fail
-- swfipn-kp-acceptance-gate: status=fail
-- swfipn-link-mapping-leakage-gate: status=fail
-- swfipn-visible-link-escape-gate: status=fail
-- swfipn-runtime-staleness-gate: status=fail
+- swfipn-link-mapping-leakage-gate: status=fail; failures={'route': '/about-us/overview/', 'failure': 'unapproved_external_links:swfi.com — the SWFI platform'},{'route': '/about-us/our-team/', 'failure': 'unapproved_external_links:swfi.com — the SWFI platform'},{'route': '/about/', 'failure': 'unapproved_external_links:swfi.com — the SWFI platform'}
+- swfipn-visible-link-escape-gate: status=fail; failures={'route': '/about/', 'failure': 'unapproved_external_links:1'},{'route': '/about-us/overview/', 'failure': 'unapproved_external_links:1'},{'route': '/about-us/our-team/', 'failure': 'unapproved_external_links:1'}
 
 ## Deferred / Blocked Outside Current Sendable Scope
 
@@ -64,11 +61,11 @@ Production API DNS cutover: `blocked`
 | Record field parity gate | `blocked` | `output/swfipn-record-field-parity-full-latest.json` |
 | Adversarial review gate | `fail` | `output/swfipn-adversarial-review-latest.json` |
 | BRD contract truth gate | `fail` | `output/swfipn-brd-contract-truth-gate-latest.json` |
-| Acceptance criteria gate | `fail` | `output/swfipn-acceptance-criteria-gate-latest.json` |
-| KP acceptance gate | `fail` | `output/swfipn-kp-acceptance-gate-latest.json` |
+| Acceptance criteria gate | `pass` | `output/swfipn-acceptance-criteria-gate-latest.json` |
+| KP acceptance gate | `pass` | `output/swfipn-kp-acceptance-gate-latest.json` |
 | Route and leakage gates | `pass` | `output/swfipn-link-mapping-leakage-gate-latest.json, output/swfipn-visible-link-escape-gate-latest.json` |
 | BRD Phase 2 gate | `fail` | `output/swfipn-brd-phase2-acceptance-latest.json` |
-| Runtime staleness gate | `fail` | `output/swfipn-runtime-staleness-gate-latest.json` |
+| Runtime staleness gate | `pass` | `output/swfipn-runtime-staleness-gate-latest.json` |
 | API product gate | `pass` | `output/swfipn-api-product-gate-latest.json` |
 | API key lifecycle gate | `pass` | `output/swfipn-api-key-lifecycle-latest.json` |
 | Admin API Product Console UI gate | `pass` | `output/swfipn-admin-api-ui-brd-gate-latest.json` |

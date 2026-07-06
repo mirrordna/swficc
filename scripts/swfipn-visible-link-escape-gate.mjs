@@ -128,12 +128,27 @@ function isCanonicalSwfiHandoffUrl(value) {
   return false;
 }
 
+// Paul's law 2026-07-06 ("all final links MUST redirect to swfi.com"): a
+// bare swfi.com platform page (homepage, marketing, policy) IS a valid
+// final destination. Raw record URLs (/v1/{collection}/{id}) stay forbidden
+// as bare links — those must be signin handoffs, never leaked.
+function isSwfiPlatformPageHref(value) {
+  try {
+    const parsed = new URL(String(value || ""));
+    if (!["www.swfi.com", "swfi.com", "cms.swfi.com"].includes(parsed.hostname)) return false;
+    return !isRawSwfiRecordUrl(value);
+  } catch {
+    return false;
+  }
+}
+
 function allowedExternal(route, href, target) {
   try {
     const parsed = new URL(href);
     if (isCanonicalSwfiHandoffUrl(href)) return true;
     if (isAllowedSwfiLegacyArticleUrl(href)) return true;
     if (isSwfiAuthEntryHref(href)) return true;
+    if (isSwfiPlatformPageHref(href)) return true;
     // Paul 2026-07-06: LinkedIn profile links are sanctioned ONLY when they
     // open in a NEW TAB (the in-tab chain still terminates at swfi.com).
     if (["www.linkedin.com", "linkedin.com"].includes(parsed.hostname) && target === "_blank") return true;

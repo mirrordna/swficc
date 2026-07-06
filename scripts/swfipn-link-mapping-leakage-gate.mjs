@@ -223,10 +223,19 @@ function linkFailures(route, links) {
   if (leakedSourceParams.length) failures.push(`source_param_or_token_leaks:${leakedSourceParams.slice(0, 6).map((link) => link.text || link.raw).join("|")}`);
   const unapprovedExternal = links.filter((link) => link.family === "external").filter((link) => {
     try {
-      const host = new URL(link.href).hostname;
-      if (["www.swfi.com", "swfi.com", "cms.swfi.com"].includes(host)) return true;
-      // Paul 2026-07-06: LinkedIn profile links are sanctioned ONLY when
-      // they open in a NEW TAB (in-tab chains still end at swfi.com).
+      const parsed = new URL(link.href);
+      const host = parsed.hostname;
+      // Paul's law 2026-07-06: a bare swfi.com platform page (homepage,
+      // marketing, policy) IS a valid final. Raw /v1/{collection}/{id}
+      // record URLs are caught earlier as family "raw_swfi_record"; any
+      // swfi.com link reaching the external family is a platform page →
+      // approved (return false = not-unapproved). Belt-and-braces: still
+      // flag if it somehow carries a raw record path.
+      if (["www.swfi.com", "swfi.com", "cms.swfi.com"].includes(host)) {
+        return /^\/v1\/(entities|people|transactions|compass|news)\//i.test(parsed.pathname);
+      }
+      // LinkedIn profile links are sanctioned ONLY when they open in a NEW
+      // TAB (in-tab chains still end at swfi.com).
       if (["www.linkedin.com", "linkedin.com"].includes(host) && link.target === "_blank") return false;
       return !allowedExternalHosts.has(host);
     } catch {
