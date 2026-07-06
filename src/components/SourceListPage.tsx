@@ -201,7 +201,7 @@ function rowCells(kind: Kind, row: Row): Cell[] {
   if (kind === "mandates") return [mandateCell(row), text(row.institution), text(row.strategy || row.asset_class_or_strategy), disclosedMoney(row.amount_display || row.amount), text(row.deadline || row.due_at), citation(href, "/mandates/")];
   if (kind === "research" || kind === "intelligence") {
     const researchHref = researchSourceHref(row);
-    const excerpt = businessText(row.excerpt, "").replace(/\s+/g, " ").trim();
+    const excerpt = text(row.excerpt, "").replace(/\s+/g, " ").trim();
     return [
       researchCell(row),
       excerpt ? (excerpt.length > 220 ? `${excerpt.slice(0, 219)}…` : excerpt) : NOT_DISCLOSED,
