@@ -78,26 +78,32 @@ function initialSearchPackets(kind: Kind, query: string): Record<string, Packet>
   }
 }
 
-const CONFIG: Record<Kind, { title: string; endpoint: string; columns: string[]; sources?: Record<string, string> }> = {
+const CONFIG: Record<Kind, { title: string; endpoint: string; columns: string[]; columnsNote?: string; sources?: Record<string, string> }> = {
   profiles: {
     title: "Institutions",
     endpoint: "/api/source-data/search/v1?collection=entities&limit=100",
     columns: ["Entity Name", "Type", "Country", "AUM"],
   },
   people: {
+    // Columns follow the SOURCE schema (keys-only probe, Paul-authorized
+    // 2026-07-06): people docs carry no employment fields — Title and
+    // Institution were structurally impossible columns. City/Region/LinkedIn
+    // are what the records actually hold ("add all of it", same date).
     title: "People",
     endpoint: "/api/source-data/search/v1?collection=people&limit=100",
-    columns: ["Name", "Title", "Institution", "Country", "Citation"],
+    columns: ["Name", "Country", "City", "Region", "LinkedIn", "Citation"],
   },
   transactions: {
     title: "Transactions",
     endpoint: "/api/transactions/v1?limit=100",
-    columns: ["Name", "Buyer Entity", "Buyer Region", "Seller Entity", "Seller Region", "Amount (USD)", "Closed At"],
+    columns: ["Name", "Buyer Entity", "Buyer Region", "Amount (USD)", "Closed At"],
+    columnsNote: "Seller details are not disclosed in SWFI transaction records — columns return when the source carries them.",
   },
   deals: {
     title: "Deals",
     endpoint: "/api/transactions/v1?limit=100",
-    columns: ["Name", "Buyer Entity", "Buyer Region", "Seller Entity", "Seller Region", "Amount (USD)", "Closed At"],
+    columns: ["Name", "Buyer Entity", "Buyer Region", "Amount (USD)", "Closed At"],
+    columnsNote: "Seller details are not disclosed in SWFI transaction records — columns return when the source carries them.",
   },
   allocators: {
     title: "Active Allocators",
@@ -153,14 +159,27 @@ function rowCells(kind: Kind, row: Row): Cell[] {
       disclosedMoney(row.managed_assets || row.assets_managed),
     ];
   }
-  if (kind === "people") return [personCell(row), text(row.title), text(row.institution), text(row.country), citation(href, "/people/")];
+  if (kind === "people") {
+    return [
+      personCell(row),
+      text(row.country),
+      text(row.city),
+      text(row.region),
+      // linkedin_url is source data about the person (backend guards the
+      // host); Paul 2026-07-06 "add all of it" — the one sanctioned
+      // non-SWFI outbound link class.
+      row.linkedin_url ? { label: "LinkedIn profile", href: String(row.linkedin_url) } : NOT_DISCLOSED,
+      citation(href, "/people/"),
+    ];
+  }
   if (kind === "transactions" || kind === "deals") {
+    // Seller columns removed 2026-07-06: seller entity/region were "Not
+    // disclosed" on 25/25 live rows (structural absence in the source) —
+    // dead columns violate minutes F. The header note discloses it once.
     return [
       transactionCell(row),
       entityListCell(row, "buyer"),
       transactionFactCell(row, text(row.buyer_region || row.region)),
-      entityListCell(row, "seller"),
-      transactionFactCell(row, text(row.seller_region)),
       transactionFactCell(row, disclosedMoney(row.amount_display || row.capital_display || row.amount || row.capital || row.value)),
       transactionFactCell(row, text(row.closed_at || row.announced_at || row.date)),
     ];
@@ -680,6 +699,9 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
         </div>
 
         <div data-gsap-reveal className={showRecordData ? "hidden overflow-x-auto rounded border border-[#DCE3EA] bg-white sm:block" : "hidden"}>
+          {config.columnsNote ? (
+            <div className="border-b border-[#EDF1F5] px-3 py-1.5 text-[11px] font-semibold text-[#7B8996]">{config.columnsNote}</div>
+          ) : null}
           <table className="w-full min-w-[720px] border-collapse text-left text-[14px]">
             <thead>
               <tr className="bg-[#F7F9FA]">

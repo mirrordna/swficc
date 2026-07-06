@@ -77,9 +77,12 @@ while (queue.length && pages.length < MAX_PAGES) {
     if (/^https?:\/\//.test(href)) {
       try {
         const host = new URL(href).hostname;
+        // Aligned to the escape/leakage gates' allowlist + Paul 2026-07-06
+        // "add all of it" (people linkedin_url is sanctioned source data).
+        const allowedExternal = new Set(["gwc.events", "twitter.com", "www.linkedin.com", "www.facebook.com"]);
         if (host.endsWith("swfi.com")) {
           swfiHandoffs += 1;
-        } else if (host !== new URL(ORIGIN).hostname) {
+        } else if (host !== new URL(ORIGIN).hostname && !allowedExternal.has(host)) {
           flags.push({ route, kind: "non_swfi_external", detail: `${host} <- "${anchor.text}"` });
         }
       } catch {
