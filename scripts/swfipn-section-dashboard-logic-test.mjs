@@ -171,5 +171,29 @@ check("preview cap passes small pagers through", previewPageCount(3), 3);
 check("preview cap floors at one page", previewPageCount(0), 1);
 check("preview cap truncates fractional page counts", previewPageCount(2.9), 2);
 
+// Dashboard 2.0 E2E contract gate helpers (same module the browser gate runs)
+const { vagueLabelIssue, staleDataIssue, elementContractIssues, ctaDestinationIssue } = await import("./swfipn-dashboard20-e2e-contract-gate.mjs");
+check("vague label: bare Data blocked", vagueLabelIssue("Data"), "vague_label");
+check("vague label: bare View blocked", vagueLabelIssue(" view "), "vague_label");
+check("vague label: specific label passes", vagueLabelIssue("View live mandates"), null);
+check("vague label: empty label flagged", vagueLabelIssue("  "), "empty_label");
+check("stale data: old year without label flagged", staleDataIssue("Institute Fund Summit Asia 2020", NOW), "stale_data_unlabeled:2020");
+check("stale data: Historical marker passes", staleDataIssue("Historical: Summit 2020", NOW), null);
+check("stale data: recent year passes", staleDataIssue("Deal closed 2026", NOW), null);
+check(
+  "element contract: missing purpose and cta detected",
+  elementContractIssues({ displayId: "x", type: "chart", title: "Chart", purpose: "", source: "SWFI", cta: "", ctaHref: "" }),
+  ["missing_purpose", "missing_cta", "missing_cta_destination"],
+);
+check(
+  "element contract: control needs no destination",
+  elementContractIssues({ displayId: "x", type: "control", title: "Focus", purpose: "p", source: "s", cta: "c", ctaHref: "" }),
+  [],
+);
+check("cta destination: swfi.com passes", ctaDestinationIssue("https://www.swfi.com/v1/signin/?msg=auth", "https://dashboard.swfi.com/swficc"), null);
+check("cta destination: preview-layer filter link passes", ctaDestinationIssue("/swficc/profiles/?filter=Norway", "https://dashboard.swfi.com/swficc"), null);
+check("cta destination: linkedin exception passes", ctaDestinationIssue("https://www.linkedin.com/in/example", "https://dashboard.swfi.com/swficc"), null);
+check("cta destination: off-platform host flagged", String(ctaDestinationIssue("https://example.com/x", "https://dashboard.swfi.com/swficc")).split(":")[0], "off_platform_destination");
+
 console.log(failures === 0 ? `ALL CHECKS PASS (${failures} failures)` : `${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

@@ -73,6 +73,24 @@ is the authority; this file is the working copy.
   honestly disclosed ("Showing 25 of 595,106"). P02 clause 1 re-verified in
   code the same day: no middleware.ts, no local login gate greps. The Data
   view's own framing states its role: "a limited preview, not the database".
+- E2E VERIFICATION CONTRACT (seventh pass, same day, per Paul's directive):
+  "A 200 response means reachable. It does not mean approved." New gate
+  `scripts/swfipn-dashboard20-e2e-contract-gate.mjs` (npm run contract:gate /
+  contract:gate:public) verifies three layers per page — HTTP, display
+  contract, behavior — and emits failure REASONS per element, not bare
+  pass/fail. Conditions covered: display contract (data-display-id,
+  data-purpose, data-source, data-primary-cta, data-cta-href,
+  data-requires-auth, data-updated-at — attributes now carried by the
+  section panels, summary tiles, charts, top records, Compass root,
+  aggregates chart, and reports visualization), CTA destination chain
+  (swfi.com / preview layer / sanctioned LinkedIn only), unauthenticated
+  export scan, raw-dump framing check, vague-label scan (More/Data/Misc/
+  Unknown/TBD/Test/Click here/View banned as whole labels), stale-data scan
+  (years two or more behind must carry Historical). The pure checkers are
+  exported and fixture-tested under node in the logic test suite; the
+  browser run executes in the deploy lane. Label fixes shipped with it:
+  the list-page and aggregates "Data" toggles now read "Records" (compass
+  gate realigned), and the sidebar "View" chips read "Open records".
 - P05 (sixth pass, same day — exhaustive sweep): four more unauthenticated
   download surfaces found and sign-in gated: the research detail
   "Download Source Data" .txt link, the Reports page's Export CSV/PNG pair

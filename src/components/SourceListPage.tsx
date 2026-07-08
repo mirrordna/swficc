@@ -607,7 +607,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
               <div className="flex rounded border border-[#C7D2DD] bg-[#F7F9FA] p-1 text-sm">
                 {[
                   ["visualization", "Visualization"],
-                  ["data", "Data"],
+                  ["data", "Records"],
                 ].map(([value, label]) => (
                   <button
                     key={value}
@@ -1413,7 +1413,16 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
           Sign in on SWFI to export
         </a>
       </div>
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div
+        className="grid gap-3 sm:grid-cols-3"
+        data-display-id={`summary-tiles-${kind}`}
+        data-display-type="metric"
+        data-title="Summary tiles"
+        data-purpose="Headline counts for this view: collection total, items in view, leading category."
+        data-source="SWFI platform data"
+        data-primary-cta="Click a tile to open its records"
+        data-cta-href={dataViewHref}
+      >
         {summary.map(([label, value, href, cta]) => (
           <a key={label} href={href} className="rounded border border-[#DCE3EA] bg-[#F7F9FA] px-3 py-3 no-underline">
             <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#7A8A9B]">{label}</div>
@@ -1486,7 +1495,15 @@ function sectionCategoryLabel(kind: Kind, row: Row): string {
 function SectionBarChart({ kind, title, rows: chartRows }: { kind: Kind; title: string; rows: { label: string; count: number }[] }) {
   const max = Math.max(1, ...chartRows.map((row) => row.count));
   return (
-    <div className="rounded border border-[#DCE3EA] bg-white p-3">
+    <div
+      className="rounded border border-[#DCE3EA] bg-white p-3"
+      data-display-id={`bar-chart-${kind}-${slugForDisplayId(title)}`}
+      data-display-type="chart"
+      data-purpose={title}
+      data-source="SWFI platform data"
+      data-primary-cta="Click a bar to open the matching records"
+      data-cta-href={chartRows[0] ? appHref(`${routeByKind[kind]}/?filter=${encodeURIComponent(chartRows[0].label)}`) : ""}
+    >
       <h3 className="m-0 mb-3 text-[13px] font-bold text-[#11314F]">{title}</h3>
       <div className="grid gap-2">
         {chartRows.length ? chartRows.slice(0, 8).map((row) => (
@@ -1505,6 +1522,10 @@ function SectionBarChart({ kind, title, rows: chartRows }: { kind: Kind; title: 
   );
 }
 
+function slugForDisplayId(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
+}
+
 function SectionLineChart({ title, rows: chartRows, recordsHref }: { title: string; rows: { label: string; count: number }[]; recordsHref?: string }) {
   const visibleRows = chartRows.filter((row) => row.label !== NOT_DISCLOSED).slice(-12);
   const max = Math.max(1, ...visibleRows.map((row) => row.count));
@@ -1516,7 +1537,15 @@ function SectionLineChart({ title, rows: chartRows, recordsHref }: { title: stri
     }).join(" ")
     : "";
   return (
-    <div className="rounded border border-[#DCE3EA] bg-white p-3">
+    <div
+      className="rounded border border-[#DCE3EA] bg-white p-3"
+      data-display-id={`line-chart-${slugForDisplayId(title)}`}
+      data-display-type="chart"
+      data-purpose={title}
+      data-source="Dates carried on the SWFI records loaded in this view"
+      data-primary-cta="Open the dated records"
+      data-cta-href={recordsHref || ""}
+    >
       <h3 className="m-0 mb-3 text-[13px] font-bold text-[#11314F]">{title}</h3>
       {visibleRows.length ? (
         <div>
@@ -1539,8 +1568,17 @@ function SectionLineChart({ title, rows: chartRows, recordsHref }: { title: stri
 }
 
 function SectionTopRecords({ kind, rows: topRows }: { kind: Kind; rows: Row[] }) {
+  const firstTop = topRows[0];
   return (
-    <div className="rounded border border-[#DCE3EA] bg-white p-3">
+    <div
+      className="rounded border border-[#DCE3EA] bg-white p-3"
+      data-display-id={`top-records-${kind}`}
+      data-display-type="card"
+      data-purpose="Shortcut cards into the first records of this view."
+      data-source="SWFI platform records loaded in this view"
+      data-primary-cta="Click a card to open its SWFI page"
+      data-cta-href={firstTop ? productHref(sectionRecordHref(kind, firstTop, sourceHref(firstTop)), routeByKind[kind]) : ""}
+    >
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h3 className="m-0 text-[13px] font-bold text-[#11314F]">Highlighted SWFI Pages</h3>
         <span className="text-sm font-semibold text-[#7A8A9B]">Use Data for the analytical table</span>
@@ -1710,7 +1748,15 @@ function useFocusTerms(): { focusTerms: string[]; toggleFocusTerm: (term: string
 function SectionFocusLens({ chips, focusTerms, onToggle, onClear }: { chips: string[]; focusTerms: string[]; onToggle: (term: string) => void; onClear: () => void }) {
   if (chips.length < 2 && !focusTerms.length) return null;
   return (
-    <div className="rounded border border-[#DCE3EA] bg-white p-3" data-brd-section-focus="true">
+    <div
+      className="rounded border border-[#DCE3EA] bg-white p-3"
+      data-brd-section-focus="true"
+      data-display-id="focus-lens"
+      data-display-type="control"
+      data-purpose="Optional lens: pin records matching your chosen category or geography terms first under Top rankings."
+      data-source="Your selection, stored only in this browser"
+      data-primary-cta="Toggle a term to focus the rankings"
+    >
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="m-0 text-[13px] font-bold text-[#11314F]">Focus (optional)</h3>
         {focusTerms.length ? <button type="button" onClick={onClear} className="rounded border border-[#C7D2DD] bg-white px-2 py-0.5 text-[11px] font-semibold text-[#16538C]">Clear focus</button> : null}
@@ -1734,8 +1780,19 @@ function SectionFreshness({ kind, rows: sourceRows }: { kind: Kind; rows: Row[] 
   const now = useNowOnce();
   const summary = freshnessSummary(sourceRows.map((row) => dashRecordFor(kind, row)), now);
   if (!summary) return null;
+  const firstFresh = summary.entries[0];
   return (
-    <div className="rounded border border-[#DCE3EA] bg-white p-3" data-brd-section-freshness={kind}>
+    <div
+      className="rounded border border-[#DCE3EA] bg-white p-3"
+      data-brd-section-freshness={kind}
+      data-display-id={`freshness-${kind}`}
+      data-display-type="card"
+      data-purpose="What changed recently: records added or updated inside the stated window, newest first."
+      data-source="Dates carried on the SWFI records loaded in this view"
+      data-primary-cta="Click a name to open its SWFI page"
+      data-cta-href={firstFresh ? productHref(sectionRecordHref(kind, firstFresh.record.row, sourceHref(firstFresh.record.row)), routeByKind[kind]) : ""}
+      data-updated-at={firstFresh ? new Date(firstFresh.stamp).toISOString() : ""}
+    >
       <h3 className="m-0 mb-1 text-[13px] font-bold text-[#11314F]">New &amp; updated in this view</h3>
       <div className="mb-2 text-[12px] text-[#7A8A9B]">
         {summary.newCount.toLocaleString("en-US")} new and {summary.updatedCount.toLocaleString("en-US")} updated records among the ones loaded in this view, dated within the last {summary.windowDays} days. Click a name to open its SWFI page.
@@ -1761,8 +1818,19 @@ function SectionRankings({ kind, tabs, rowCount }: { kind: Kind; tabs: RankingTa
   const [activeTab, setActiveTab] = useState(0);
   const tab = tabs[Math.min(activeTab, Math.max(0, tabs.length - 1))];
   if (!tab) return null;
+  const firstEntry = tab.entries[0];
+  const primaryHref = firstEntry ? productHref(sectionRecordHref(kind, firstEntry.row, sourceHref(firstEntry.row)), routeByKind[kind]) : "";
   return (
-    <div className="rounded border border-[#DCE3EA] bg-white p-3" data-brd-section-rankings={kind}>
+    <div
+      className="rounded border border-[#DCE3EA] bg-white p-3"
+      data-brd-section-rankings={kind}
+      data-display-id={`rankings-${kind}`}
+      data-display-type="ranking"
+      data-purpose="Ranks the records loaded in this view by disclosed size, recency, deadline, or your chosen focus."
+      data-source="SWFI platform records loaded in this view"
+      data-primary-cta="Click a row to open its SWFI record page"
+      data-cta-href={primaryHref}
+    >
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h3 className="m-0 text-[13px] font-bold text-[#11314F]">Top {sectionNoun(kind)}</h3>
         {tabs.length > 1 ? (
@@ -1798,8 +1866,18 @@ function SectionRankings({ kind, tabs, rowCount }: { kind: Kind; tabs: RankingTa
 
 function SectionQuickCounts({ kind, facets, universeTotal }: { kind: Kind; facets: FacetBlock[]; universeTotal: number }) {
   if (!facets.length) return null;
+  const firstCount = facets[0]?.rows[0];
   return (
-    <div className="rounded border border-[#DCE3EA] bg-white p-3" data-brd-section-quick-counts={kind}>
+    <div
+      className="rounded border border-[#DCE3EA] bg-white p-3"
+      data-brd-section-quick-counts={kind}
+      data-display-id={`quick-counts-${kind}`}
+      data-display-type="counts"
+      data-purpose="Whole-collection counts for facet fields the universe charts do not already show."
+      data-source="SWFI source-side facet counts, computed at source"
+      data-primary-cta="Click a value to filter this page to it"
+      data-cta-href={firstCount ? appHref(`${routeByKind[kind]}/?filter=${encodeURIComponent(firstCount.label)}`) : ""}
+    >
       <h3 className="m-0 mb-1 text-[13px] font-bold text-[#11314F]">Quick Counts</h3>
       <div className="mb-2 text-[12px] text-[#7A8A9B]">
         Counts cover all {universeTotal.toLocaleString("en-US")} records in SWFI, computed at source. Click a value to filter this page to it.
@@ -1841,7 +1919,16 @@ function SectionHeatmap({ kind, rows: sourceRows }: { kind: Kind; rows: Row[] })
   });
   const max = Math.max(1, ...categories.flatMap((category) => geographies.map((geo) => cellCounts.get(`${category.label}::${geo.label}`) || 0)));
   return (
-    <div className="rounded border border-[#DCE3EA] bg-white p-3" data-brd-section-heatmap={kind}>
+    <div
+      className="rounded border border-[#DCE3EA] bg-white p-3"
+      data-brd-section-heatmap={kind}
+      data-display-id={`heatmap-${kind}`}
+      data-display-type="chart"
+      data-purpose="Shows where the records loaded in this view concentrate, by category and geography."
+      data-source="SWFI platform records loaded in this view"
+      data-primary-cta="Click any cell or label to open the matching records"
+      data-cta-href={appHref(`${routeByKind[kind]}/?filter=${encodeURIComponent(categories[0].label)}`)}
+    >
       <h3 className="m-0 mb-1 text-[13px] font-bold text-[#11314F]">Where {sectionNoun(kind)} concentrate</h3>
       <div className="mb-3 text-[12px] text-[#7A8A9B]">
         Records loaded in this view, counted by category and geography. Darker cells hold more records. Click any cell or label to open the matching records.
@@ -1925,7 +2012,16 @@ function SectionInsights({ kind, rows: sourceRows }: { kind: Kind; rows: Row[] }
   }
   if (chips.length < 2) return null;
   return (
-    <div className="rounded border border-[#DCE3EA] bg-white p-3" data-brd-section-insights={kind}>
+    <div
+      className="rounded border border-[#DCE3EA] bg-white p-3"
+      data-brd-section-insights={kind}
+      data-display-id={`insights-${kind}`}
+      data-display-type="insight"
+      data-purpose="Computed observations that appear nowhere on the page as raw data: concentration, recency, largest disclosed figure."
+      data-source="SWFI platform records loaded in this view"
+      data-primary-cta="Each line links to its records"
+      data-cta-href={chips[0].href}
+    >
       <h3 className="m-0 mb-1 text-[13px] font-bold text-[#11314F]">What stands out</h3>
       <div className="mb-2 text-[12px] text-[#7A8A9B]">Computed from the records loaded in this view. Each line links to its records.</div>
       <div className="grid gap-1.5">
@@ -1960,7 +2056,17 @@ function CompassVisualization({ rows: sourceRows, totalRows }: { rows: Row[]; to
     ...regionRows.filter((bucket) => bucket.label !== NOT_DISCLOSED).slice(0, 5).map((bucket) => bucket.label),
   ];
   return (
-    <div className="grid gap-4" data-brd-compass-visualization="true">
+    <div
+      className="grid gap-4"
+      data-brd-compass-visualization="true"
+      data-display-id="compass-visualization"
+      data-display-type="chart"
+      data-title="Compass RFP visualization"
+      data-purpose="Summarizes loaded Compass RFP records: capital sought, ticket size, type, region, and monthly volume."
+      data-source="SWFI Compass RFP records loaded in this view"
+      data-primary-cta="Click a bar to open the matching records"
+      data-cta-href={appHref("/mandates/?filter=")}
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="grid gap-1 text-[12px] text-[#7A8A9B]">
           <span>Updated from SWFI</span>

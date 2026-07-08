@@ -177,7 +177,16 @@ export default function PdfDoctrinePage() {
               <strong className="text-[#11314F]">Updated from SWFI.</strong> Each linked row opens the corresponding SWFI record.
             </section>
 
-            <section data-gsap-reveal className="rounded border border-[#DCE3EA] bg-white px-4 py-3">
+            <section
+              data-gsap-reveal
+              className="rounded border border-[#DCE3EA] bg-white px-4 py-3"
+              data-display-id="reports-visualization"
+              data-display-type="chart"
+              data-purpose="Distribution of SWFI report assets by category, with market, allocator, and transaction context tables."
+              data-source="SWFI report asset records on file"
+              data-primary-cta="Sign in on SWFI to export"
+              data-cta-href="https://www.swfi.com/v1/signin/?msg=auth"
+            >
               <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="m-0 text-[16px] font-bold text-[#11314F]">Reports / League Tables Visualization</h2>

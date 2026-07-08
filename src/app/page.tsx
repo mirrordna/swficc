@@ -1520,7 +1520,7 @@ function ConceptSidebar({ topRows }: { topRows: Record<string, unknown>[] }) {
           {["SWF", "Pensions", "Real Estate"].map((label) => (
             <DashboardLink key={label} href={`/profiles/?filter=${encodeURIComponent(label)}`} className="flex items-center justify-between border-t border-white/10 py-2 text-[11px] font-semibold text-white/70 no-underline first:border-t-0 hover:text-white">
               <span>{label}</span>
-              <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-white/45">View</span>
+              <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-white/45">Open records</span>
             </DashboardLink>
           ))}
         </div>

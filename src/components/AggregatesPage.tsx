@@ -119,7 +119,7 @@ export default function AggregatesPage() {
               </select>
               <div className="ml-auto flex border border-[#C7D2DD]">
                 <button type="button" onClick={() => setView("graph")} className={`px-3 py-2 text-sm font-bold ${view === "graph" ? "bg-[#102A43] text-white" : "bg-white text-[#16538C]"}`}>Graph</button>
-                <button type="button" onClick={() => setView("data")} className={`px-3 py-2 text-sm font-bold ${view === "data" ? "bg-[#102A43] text-white" : "bg-white text-[#16538C]"}`}>Data</button>
+                <button type="button" onClick={() => setView("data")} className={`px-3 py-2 text-sm font-bold ${view === "data" ? "bg-[#102A43] text-white" : "bg-white text-[#16538C]"}`}>Records</button>
               </div>
               {/* Dashboard 2.0 P05: data export requires SWFI authentication — no public downloads. */}
               <a href="https://www.swfi.com/v1/signin/?msg=auth" className="border border-[#C7D2DD] bg-white px-3 py-2 text-sm font-bold text-[#16538C] no-underline">Sign in on SWFI to export</a>
@@ -127,7 +127,17 @@ export default function AggregatesPage() {
           </div>
         </section>
 
-        <section data-brd-aggregates="true" className="border border-[#D7DFE8] bg-white p-5">
+        <section
+          data-brd-aggregates="true"
+          className="border border-[#D7DFE8] bg-white p-5"
+          data-display-id="aggregates-chart"
+          data-display-type="chart"
+          data-title="Historical AUM Charts"
+          data-purpose="Historical AUM aggregates by entity class and region, with smoothing options."
+          data-source="SWFI assets data, aggregated at source"
+          data-primary-cta="Sign in on SWFI to export"
+          data-cta-href="https://www.swfi.com/v1/signin/?msg=auth"
+        >
           {!packet ? <div className="py-14 text-center text-[#526171]">Loading</div> : null}
           {packet && !ready ? (
             <div className="py-14 text-center text-[#526171]">No aggregate rows are available for this selection.</div>

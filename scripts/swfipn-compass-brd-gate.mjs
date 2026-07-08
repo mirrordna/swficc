@@ -33,7 +33,7 @@ async function main() {
   const body = await page.locator("body").innerText();
   const requiredText = [
     "Compass RFP Analytics",
-    "Data",
+    "Records",
     "Visualization",
     "Total Open RFPs",
     "Total Capital Sought",
