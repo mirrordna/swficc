@@ -18,6 +18,7 @@ import {
 import { appHref, isSwfiPlatformRecordHref, selfContainedHref, sourceProvenanceHref, swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
 import { legacyPostId, mandateDetailHref, personDetailHref, profileDetailHref, researchDetailHref, sourceRecordIdFor, transactionDetailHref } from "@/lib/detailRoutes";
 import { closingSoonestRanking, daysUntilLabel, firstStamp, focusRanking, freshnessSummary, largestRanking, mostRecentRanking, previewPageCount, type DashRecord } from "@/lib/sectionDashboards";
+import { DASHBOARD_SECTION_NAV } from "@/lib/dashboardSectionNav";
 import SwfiBrandHeader from "@/components/SwfiBrandHeader";
 import AlertsRuleManager from "@/components/AlertsRuleManager";
 import SavedSearchManager from "@/components/SavedSearchManager";
@@ -33,22 +34,7 @@ const NOT_DISCLOSED = "Not disclosed";
 const LOADING = "Loading";
 const DEFAULT_SEARCH_QUERY = "";
 const SEARCH_PREFETCH_CACHE_PREFIX = "swfipn.search.prefetch.v1:";
-const pageLinks = [
-  ["Dashboard", "/"],
-  ["Institutions", "/profiles"],
-  ["People", "/people"],
-  ["Deals", "/deals"],
-  ["Active Allocators", "/allocators"],
-  ["Comparisons", "/comparisons"],
-  ["RFPs", "/mandates"],
-  // Minutes F: no nav element without working function — Alerts has no data
-  // source yet (empty endpoint), so it leaves the nav until it is real.
-  // AUM History added 2026-07-06 (Paul: "link it").
-  ["AUM History", "/aggregates"],
-  ["Reports", "/reports"],
-  ["Intelligence", "/intelligence"],
-  ["Search", "/search"],
-] as const;
+const pageLinks = DASHBOARD_SECTION_NAV;
 const routeByKind: Record<Kind, string> = {
   profiles: "/profiles",
   people: "/people",

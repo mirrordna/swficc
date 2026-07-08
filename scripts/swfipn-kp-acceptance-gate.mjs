@@ -70,11 +70,11 @@ const dashboardSectionLinks = [
 ];
 const listRoutes = [
   { route: "/profiles/", ready: "Institution Data Visualization", kind: "entity" },
-  { route: "/allocators/", ready: "Data view.", kind: "entity" },
+  { route: "/allocators/", ready: "Data view", kind: "entity" },
   { route: "/transactions/", ready: "Transaction Data Visualization", kind: "transaction" },
   { route: "/deals/", ready: "Transaction Data Visualization", kind: "transaction" },
   { route: "/mandates/", ready: "Compass RFP Analytics", kind: "mandate" },
-  { route: "/research/", ready: "Data view.", kind: "legacy" },
+  { route: "/intelligence/", ready: "Data view", kind: "legacy" },
 ];
 const brandExpectedLinks = [
   ["About Us", "/about/"],

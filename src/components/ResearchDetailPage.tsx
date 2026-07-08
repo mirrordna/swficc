@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { Packet } from "@/lib/sourcePackets";
+import { DASHBOARD_SECTION_NAV } from "@/lib/dashboardSectionNav";
 import { fetchPacket, isFact, packetData, rows, text } from "@/lib/sourcePackets";
 import { appHref, sourceDetailHref, swfiMirrorHref } from "@/lib/selfContainedLinks";
 import SwfiBrandHeader from "@/components/SwfiBrandHeader";
@@ -13,17 +14,7 @@ const NOT_DISCLOSED = "Not disclosed";
 const VERIFIED = "Verified in SWFI records";
 const NOT_AVAILABLE = "Not available from SWFI records";
 const DATE_NOT_PROVIDED = "Date not provided in SWFI record";
-const pageLinks = [
-  ["Dashboard", "/"],
-  ["Institutions", "/profiles"],
-  ["People", "/people"],
-  ["Deals", "/deals"],
-  ["Comparisons", "/comparisons"],
-  ["RFPs", "/mandates"],
-  ["Reports", "/reports"],
-  ["Intelligence", "/intelligence"],
-  ["Search", "/search"],
-] as const;
+const pageLinks = DASHBOARD_SECTION_NAV;
 
 export default function ResearchDetailPage() {
   const queryString = useSyncExternalStore(subscribeToLocation, browserSearch, serverSearch);

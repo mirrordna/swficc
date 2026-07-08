@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useGsapReveal } from "@/hooks/useGsapReveal";
 import type { Packet, Row } from "@/lib/sourcePackets";
+import { DASHBOARD_SECTION_NAV } from "@/lib/dashboardSectionNav";
 import {
   fetchPacket,
   isFact,
@@ -21,17 +22,7 @@ import SwfiBrandHeader from "@/components/SwfiBrandHeader";
 type Packets = Record<string, Packet>;
 type TableCell = string | { label: string; href: string };
 
-const pageLinks = [
-  ["Dashboard", "/"],
-  ["Institutions", "/profiles"],
-  ["People", "/people"],
-  ["Deals", "/deals"],
-  ["Comparisons", "/comparisons"],
-  ["RFPs", "/mandates"],
-  ["Reports", "/reports"],
-  ["Intelligence", "/intelligence"],
-  ["Search", "/search"],
-] as const;
+const pageLinks = DASHBOARD_SECTION_NAV;
 
 const ENDPOINTS = {
   metrics: "/api/swfi/dashboard-metrics/v1",

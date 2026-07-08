@@ -55,7 +55,7 @@ const routes = [
   { path: "/mandates/", mode: "public", required: ["RFPs / Mandates", "Compass RFP Analytics", "RFPs by Investment Type"] },
   { path: "/reports/", mode: "public", required: ["Reports Intelligence", "AUM Rankings"] },
   { path: "/search/", mode: "public", required: ["Smart Search", "Results are ranked for institutional relevance", "TYPE"] },
-  { path: "/research/", mode: "public", required: ["Research / News", "Data view.", "Use this only when you need records"] },
+  { path: "/research/", mode: "public", required: ["Research / News", "Data view", "this table shows the matching records"] },
 ];
 
 const viewportChecks = [
