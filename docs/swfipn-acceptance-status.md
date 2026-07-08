@@ -8,15 +8,15 @@ This does not claim that full BRD Phase 2 productization is complete.
 
 Public URL: `https://swfipn.activemirror.ai/swficc/`
 
-Deployed release: `/opt/swfipn-acceptance/releases/20260708T094124Z`
+Deployed release: `/opt/swfipn-acceptance/releases/20260708T101128Z`
 
-Public asset version: `20260708T094124Z`
+Public asset version: `20260708T101128Z`
 
 ## Verdict
 
 Acceptance lock: `no_go`
 
-Share gate: `pass`, `sendable: true`
+Share gate: `fail`, `sendable: false`
 
 BRD contract truth: `fail`, full-universe parity `UNPROVEN`
 
@@ -32,7 +32,9 @@ Production API DNS cutover: `blocked`
 
 ## Blockers
 
-- swfipn-visible-link-escape-gate: status=fail; failures={'route': '/intelligence/', 'failure': 'page.goto: Timeout 30000ms exceeded.\nCall log:\n\x1b[2m  - navigating to "https://swfipn.activemirror.ai/swficc/intelligence/", waiting until "domcontentloaded"\x1b[22m\n'},{'route': '/intelligence/', 'failure': 'http_missing'},{'route': '/intelligence/', 'failure': 'failed_requests:1'}
+- Latest full stack: `link_escape` failed on `/research/` because a Cloudflare telemetry beacon request failed during Playwright navigation.
+- Patch committed: `1ae905d` ignores Cloudflare telemetry-only failures while still failing product-route/network/link errors.
+- Pending: one clean `acceptance:stack:deploy` rerun from the patched commit.
 
 ## Deferred / Blocked Outside Current Sendable Scope
 
@@ -52,7 +54,7 @@ Production API DNS cutover: `blocked`
 
 | Gate | Result | Receipt |
 | --- | --- | --- |
-| Share/sendability gate | `pass` | `output/swfipn-share-gate-latest.json` |
+| Share/sendability gate | `fail` | `output/swfipn-share-gate-latest.json` |
 | Full-universe mapping gate | `pass` | `output/swfipn-full-universe-mapping-latest.json` |
 | Source/destination manifest gate | `pass` | `output/swfipn-source-destination-manifest-latest.json` |
 | Detail-batch parity gate | `pass` | `output/swfipn-detail-batch-parity-latest.json` |
@@ -85,7 +87,7 @@ Production API DNS cutover: `blocked`
 
 - receipts: `8`
 - screenshots: `3`
-- failures: `0`
+- failures: `1`
 - source_links: `50`
 - detail_links: `0`
 - mirror_record_links: `30`
@@ -106,7 +108,7 @@ Production API DNS cutover: `blocked`
 
 ## Required wording
 
-Use: “The current `/swficc` dashboard/terminal scope is deployed, but it is not sendable until the failing or blocked acceptance receipts pass.”
+Use: “The current `/swficc` dashboard/terminal scope is deployed, but it is not sendable until the clean full acceptance stack passes.”
 
 Use: “corresponding SWFI record/profile page within `/swficc` where an internal record exists.”
 
@@ -116,4 +118,4 @@ Do not use: “All SWFI.com pages are fully migrated.”
 
 ## Final acceptance sentence
 
-Blockers remain within the current `/swficc` dashboard/terminal validation scope. Do not call this ready or sendable until the required receipts pass.
+Blockers remain inside the current `/swficc` dashboard/terminal validation scope until the clean full acceptance stack passes. Full BRD Phase 2 remains active because the explicit deferred productization bucket and production `api.swfi.com` DNS cutover are not complete.
