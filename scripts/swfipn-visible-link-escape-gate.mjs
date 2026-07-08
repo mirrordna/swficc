@@ -8,6 +8,10 @@ const outputDir = path.join(repoRoot, "output");
 const receiptPath = path.join(outputDir, "swfipn-visible-link-escape-gate-latest.json");
 const origin = normalizeOrigin(process.env.SWFIPN_ORIGIN || "http://127.0.0.1:8353/swficc/");
 const originUrl = new URL(origin);
+const routeTimeoutMs = Number(process.env.SWFIPN_LINK_ESCAPE_ROUTE_TIMEOUT_MS || 45_000);
+const detailReadyTimeoutMs = Number(process.env.SWFIPN_LINK_ESCAPE_DETAIL_TIMEOUT_MS || 20_000);
+const bodyReadyTimeoutMs = Number(process.env.SWFIPN_LINK_ESCAPE_BODY_TIMEOUT_MS || 5_000);
+const settleTimeoutMs = Number(process.env.SWFIPN_LINK_ESCAPE_SETTLE_MS || 250);
 const routes = envList("SWFIPN_LINK_ESCAPE_ROUTES", [
   "/",
   "/profiles/",
@@ -79,6 +83,14 @@ function loadPlaywright() {
     if (fs.existsSync(marker)) return createRequire(marker)("playwright");
   }
   return createRequire(import.meta.url)("playwright");
+}
+
+function withTimeout(promise, ms, label) {
+  let timeout;
+  const timer = new Promise((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(`${label}_timeout_${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timer]).finally(() => clearTimeout(timeout));
 }
 
 function isRawSwfiRecordUrl(value) {
@@ -195,10 +207,10 @@ async function inspectRoute(browser, route) {
       await page.waitForFunction(() => {
         const text = document.body?.innerText || "";
         return /Verified in SWFI records|Source record on file|Report Details|Transaction Details|RFP \/ Mandate Details|Person Details|Entity Details|Article Details/i.test(text);
-      }, null, { timeout: 60_000 }).catch(() => null);
+      }, null, { timeout: detailReadyTimeoutMs }).catch(() => null);
     }
-    await page.waitForFunction(() => (document.body?.innerText || "").trim().length > 120, null, { timeout: 10_000 }).catch(() => null);
-    await page.waitForTimeout(500);
+    await page.waitForFunction(() => (document.body?.innerText || "").trim().length > 120, null, { timeout: bodyReadyTimeoutMs }).catch(() => null);
+    await page.waitForTimeout(settleTimeoutMs);
     result.final_url = page.url();
     if (isCanonicalSwfiHandoffUrl(result.final_url) && /\/(?:profiles|transactions|mandates|people)\/detail\/\?/i.test(route)) {
       result.auth_handoff = true;
@@ -312,7 +324,7 @@ async function run() {
     console.error(`[link-escape] inspecting ${route}`);
     const browser = await chromium.launch({ channel: "chrome", headless: true, timeout: 30_000 });
     try {
-      results.push(await inspectRoute(browser, route));
+      results.push(await withTimeout(inspectRoute(browser, route), routeTimeoutMs, `route:${route}`));
     } catch (error) {
       results.push({
         route,
