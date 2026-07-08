@@ -71,4 +71,13 @@ is the authority; this file is the working copy.
   two gate scripts that exercise pagination (table-controls-proof,
   route-parity) click Next once on an enabled button. Full totals remain
   honestly disclosed ("Showing 25 of 595,106"). P02 clause 1 re-verified in
-  code the same day: no middleware.ts, no local login gate greps.
+  code the same day: no middleware.ts, no local login gate greps. The Data
+  view's own framing states its role: "a limited preview, not the database".
+- P04 (fifth pass, same day): the last CTA-less elements gained destinations —
+  heatmap cells click through to their category's records (tooltip says so),
+  all summary tiles on both visualization surfaces carry "Click -> the
+  records" (leading-category tile filters to its category), and both monthly
+  trend charts carry "Open the dated records ->". Standing sanctioned
+  exceptions to "every path ends at SWFI": LinkedIn profile links
+  (Paul-sanctioned 2026-07-06, open in a new tab) and the marketing-footer
+  social links (team ruling still open, F57).

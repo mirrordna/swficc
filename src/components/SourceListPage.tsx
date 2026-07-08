@@ -1391,10 +1391,14 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
     ...categoryRows.filter((bucket) => bucket.label !== NOT_DISCLOSED).slice(0, 5).map((bucket) => bucket.label),
     ...geographyRows.filter((bucket) => bucket.label !== NOT_DISCLOSED).slice(0, 5).map((bucket) => bucket.label),
   ];
+  // P04: every tile carries a destination — the Data-view records, or the
+  // leading category's filtered records.
+  const dataViewHref = appHref(`${routeByKind[kind]}/?filter=`);
+  const leadingCategory = categoryRows[0]?.label;
   const summary = [
-    ["Total in SWFI", totalRows.toLocaleString("en-US")],
-    ["Items in View", sourceRows.length.toLocaleString("en-US")],
-    ["Leading Category", categoryRows[0]?.label || NOT_DISCLOSED],
+    ["Total in SWFI", totalRows.toLocaleString("en-US"), dataViewHref, "Click → the records"],
+    ["Items in View", sourceRows.length.toLocaleString("en-US"), dataViewHref, "Click → the records"],
+    ["Leading Category", leadingCategory || NOT_DISCLOSED, leadingCategory && leadingCategory !== NOT_DISCLOSED ? appHref(`${routeByKind[kind]}/?filter=${encodeURIComponent(leadingCategory)}`) : dataViewHref, "Click → its records"],
   ] as const;
 
   return (
@@ -1410,11 +1414,12 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
         </a>
       </div>
       <div className="grid gap-3 sm:grid-cols-3">
-        {summary.map(([label, value]) => (
-          <div key={label} className="rounded border border-[#DCE3EA] bg-[#F7F9FA] px-3 py-3">
+        {summary.map(([label, value, href, cta]) => (
+          <a key={label} href={href} className="rounded border border-[#DCE3EA] bg-[#F7F9FA] px-3 py-3 no-underline">
             <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#7A8A9B]">{label}</div>
             <div className="mt-1 text-[18px] font-bold text-[#11314F]">{value}</div>
-          </div>
+            <div className="mt-1 text-[11px] font-semibold text-[#16538C]">{cta}</div>
+          </a>
         ))}
       </div>
       <SectionFreshness kind={kind} rows={sourceRows} />
@@ -1455,7 +1460,7 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
           {categoryRows.length > 1 ? <SectionBarChart kind={kind} title="Records by Category (current page)" rows={categoryRows} /> : null}
           {geographyRows.length > 1 ? <SectionBarChart kind={kind} title="Records by Geography (current page)" rows={geographyRows} /> : null}
           {trendRows.length >= 4 ? (
-            <SectionLineChart title="Records by Month (current page)" rows={trendRows} />
+            <SectionLineChart title="Records by Month (current page)" rows={trendRows} recordsHref={dataViewHref} />
           ) : (
             <div className="grid place-items-center rounded border border-[#DCE3EA] bg-[#F7F9FA] px-3 py-3 text-center text-[12px] text-[#7A8A9B]">
               Too few dated records on this page for a meaningful monthly view — open Data for the records themselves.
@@ -1500,7 +1505,7 @@ function SectionBarChart({ kind, title, rows: chartRows }: { kind: Kind; title: 
   );
 }
 
-function SectionLineChart({ title, rows: chartRows }: { title: string; rows: { label: string; count: number }[] }) {
+function SectionLineChart({ title, rows: chartRows, recordsHref }: { title: string; rows: { label: string; count: number }[]; recordsHref?: string }) {
   const visibleRows = chartRows.filter((row) => row.label !== NOT_DISCLOSED).slice(-12);
   const max = Math.max(1, ...visibleRows.map((row) => row.count));
   const points = visibleRows.length
@@ -1524,6 +1529,7 @@ function SectionLineChart({ title, rows: chartRows }: { title: string; rows: { l
           </svg>
           <div className="mt-2 flex justify-between gap-2 text-[11px] text-[#7A8A9B]">
             <span>{visibleRows[0]?.label}</span>
+            {recordsHref ? <a href={recordsHref} className="font-semibold text-[#16538C] no-underline">Open the dated records →</a> : null}
             <span>{visibleRows.at(-1)?.label}</span>
           </div>
         </div>
@@ -1838,7 +1844,7 @@ function SectionHeatmap({ kind, rows: sourceRows }: { kind: Kind; rows: Row[] })
     <div className="rounded border border-[#DCE3EA] bg-white p-3" data-brd-section-heatmap={kind}>
       <h3 className="m-0 mb-1 text-[13px] font-bold text-[#11314F]">Where {sectionNoun(kind)} concentrate</h3>
       <div className="mb-3 text-[12px] text-[#7A8A9B]">
-        Records loaded in this view, counted by category and geography. Darker cells hold more records. Click a row or column label to filter this page to it.
+        Records loaded in this view, counted by category and geography. Darker cells hold more records. Click any cell or label to open the matching records.
       </div>
       <div className="overflow-x-auto">
         <div className="grid min-w-[560px] gap-1" style={{ gridTemplateColumns: `minmax(130px, 1.3fr) repeat(${geographies.length}, minmax(64px, 1fr))` }}>
@@ -1857,14 +1863,15 @@ function SectionHeatmap({ kind, rows: sourceRows }: { kind: Kind; rows: Row[] })
                 const count = cellCounts.get(`${category.label}::${geo.label}`) || 0;
                 const strength = count / max;
                 return (
-                  <div
+                  <a
                     key={`cell-${category.label}-${geo.label}`}
-                    className="grid place-items-center rounded py-1 text-[11px] font-bold"
+                    href={appHref(`${routeByKind[kind]}/?filter=${encodeURIComponent(category.label)}`)}
+                    className="grid place-items-center rounded py-1 text-[11px] font-bold no-underline"
                     style={{ backgroundColor: count ? `rgba(22, 83, 140, ${0.12 + strength * 0.78})` : "#F2F5F8", color: strength > 0.5 ? "#FFFFFF" : "#11314F" }}
-                    title={`${category.label} · ${geo.label}: ${count.toLocaleString("en-US")}`}
+                    title={`${category.label} · ${geo.label}: ${count.toLocaleString("en-US")} — click to open this category's records`}
                   >
                     {count ? count.toLocaleString("en-US") : ""}
-                  </div>
+                  </a>
                 );
               })}
             </Fragment>
@@ -1969,16 +1976,17 @@ function CompassVisualization({ rows: sourceRows, totalRows }: { rows: Row[]; to
       {rankingTabs.length ? <SectionRankings kind="mandates" tabs={rankingTabs} rowCount={sourceRows.length} /> : null}
       <div className="grid gap-3 sm:grid-cols-3">
         {summary.map(([label, value]) => (
-          <div key={label} className="rounded border border-[#DCE3EA] bg-[#F7F9FA] px-3 py-3">
+          <a key={label} href={appHref("/mandates/?filter=")} className="rounded border border-[#DCE3EA] bg-[#F7F9FA] px-3 py-3 no-underline">
             <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#7A8A9B]">{label}</div>
             <div className="mt-1 text-[19px] font-bold text-[#11314F]">{value}</div>
-          </div>
+            <div className="mt-1 text-[11px] font-semibold text-[#16538C]">Click → the records</div>
+          </a>
         ))}
       </div>
       <div className="grid gap-4 lg:grid-cols-3">
         <CompassBarChart title="RFPs by Investment Type" rows={investmentTypeRows} />
         <CompassBarChart title="RFPs by Region" rows={regionRows} />
-        <CompassLineChart title="RFPs Posted Per Month" rows={monthRows} />
+        <CompassLineChart title="RFPs Posted Per Month" rows={monthRows} recordsHref={appHref("/mandates/?filter=")} />
       </div>
     </div>
   );
@@ -2006,7 +2014,7 @@ function CompassBarChart({ title, rows: chartRows }: { title: string; rows: { la
   );
 }
 
-function CompassLineChart({ title, rows: chartRows }: { title: string; rows: { label: string; count: number }[] }) {
+function CompassLineChart({ title, rows: chartRows, recordsHref }: { title: string; rows: { label: string; count: number }[]; recordsHref?: string }) {
   const max = Math.max(1, ...chartRows.map((row) => row.count));
   const points = chartRows.length
     ? chartRows.slice(-12).map((row, index, visibleRows) => {
@@ -2029,6 +2037,7 @@ function CompassLineChart({ title, rows: chartRows }: { title: string; rows: { l
           </svg>
           <div className="mt-2 flex justify-between gap-2 text-[11px] text-[#7A8A9B]">
             <span>{chartRows[0]?.label}</span>
+            {recordsHref ? <a href={recordsHref} className="font-semibold text-[#16538C] no-underline">Open the dated records →</a> : null}
             <span>{chartRows.at(-1)?.label}</span>
           </div>
         </div>
