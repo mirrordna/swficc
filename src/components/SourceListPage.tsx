@@ -1,7 +1,7 @@
 "use client";
 
 import type { MouseEvent } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import type { Packet } from "@/lib/sourcePackets";
 import { useGsapReveal } from "@/hooks/useGsapReveal";
 import {
@@ -1398,6 +1398,7 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
           </div>
         ))}
       </div>
+      <SectionInsights kind={kind} rows={sourceRows} />
       {rankingTabs.length > 0 || quickCountFacets.length > 0 ? (
         <div className="grid items-start gap-4 xl:grid-cols-[1.6fr_1fr]">
           <SectionRankings kind={kind} tabs={rankingTabs} rowCount={sourceRows.length} />
@@ -1441,6 +1442,7 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
           )}
         </div>
       )}
+      <SectionHeatmap kind={kind} rows={sourceRows} />
       <SectionTopRecords kind={kind} rows={topRows} />
     </div>
   );
@@ -1672,6 +1674,128 @@ function SectionQuickCounts({ kind, facets, universeTotal }: { kind: Kind; facet
                 </a>
               ))}
             </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function sectionGeographyLabel(row: Row): string {
+  return businessText(row.country || row.region || row.buyer_region || row.seller_region);
+}
+
+// Dashboard 2.0 P01.1: rich visualization beyond bars — a category x geography
+// heatmap over the records loaded in this view. Renders nothing below 2x2
+// disclosed dimensions (no empty frames, minutes F).
+function SectionHeatmap({ kind, rows: sourceRows }: { kind: Kind; rows: Row[] }) {
+  const categories = bucketRows(sourceRows, (row) => sectionCategoryLabel(kind, row)).filter((bucket) => bucket.label !== NOT_DISCLOSED).slice(0, 6);
+  const geographies = bucketRows(sourceRows, sectionGeographyLabel).filter((bucket) => bucket.label !== NOT_DISCLOSED).slice(0, 6);
+  if (categories.length < 2 || geographies.length < 2) return null;
+  const cellCounts = new Map<string, number>();
+  sourceRows.forEach((row) => {
+    const key = `${sectionCategoryLabel(kind, row)}::${sectionGeographyLabel(row)}`;
+    cellCounts.set(key, (cellCounts.get(key) || 0) + 1);
+  });
+  const max = Math.max(1, ...categories.flatMap((category) => geographies.map((geo) => cellCounts.get(`${category.label}::${geo.label}`) || 0)));
+  return (
+    <div className="rounded border border-[#DCE3EA] bg-white p-3" data-brd-section-heatmap={kind}>
+      <h3 className="m-0 mb-1 text-[13px] font-bold text-[#11314F]">Where {sectionNoun(kind)} concentrate</h3>
+      <div className="mb-3 text-[12px] text-[#7A8A9B]">
+        Records loaded in this view, counted by category and geography. Darker cells hold more records. Click a row or column label to filter this page to it.
+      </div>
+      <div className="overflow-x-auto">
+        <div className="grid min-w-[560px] gap-1" style={{ gridTemplateColumns: `minmax(130px, 1.3fr) repeat(${geographies.length}, minmax(64px, 1fr))` }}>
+          <span />
+          {geographies.map((geo) => (
+            <a key={`geo-${geo.label}`} href={appHref(`${routeByKind[kind]}/?filter=${encodeURIComponent(geo.label)}`)} className="truncate text-center text-[11px] font-bold text-[#41566B] no-underline" title={geo.label}>
+              {geo.label}
+            </a>
+          ))}
+          {categories.map((category) => (
+            <Fragment key={`heat-${category.label}`}>
+              <a href={appHref(`${routeByKind[kind]}/?filter=${encodeURIComponent(category.label)}`)} className="truncate py-1 text-[11px] font-bold text-[#41566B] no-underline" title={category.label}>
+                {category.label}
+              </a>
+              {geographies.map((geo) => {
+                const count = cellCounts.get(`${category.label}::${geo.label}`) || 0;
+                const strength = count / max;
+                return (
+                  <div
+                    key={`cell-${category.label}-${geo.label}`}
+                    className="grid place-items-center rounded py-1 text-[11px] font-bold"
+                    style={{ backgroundColor: count ? `rgba(22, 83, 140, ${0.12 + strength * 0.78})` : "#F2F5F8", color: strength > 0.5 ? "#FFFFFF" : "#11314F" }}
+                    title={`${category.label} · ${geo.label}: ${count.toLocaleString("en-US")}`}
+                  >
+                    {count ? count.toLocaleString("en-US") : ""}
+                  </div>
+                );
+              })}
+            </Fragment>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Dashboard 2.0 P01.2: computed observations that are not written anywhere on
+// the page as raw data — concentration, recency, and the largest disclosed
+// figure, each linking to its records. Renders nothing below 2 findings.
+function SectionInsights({ kind, rows: sourceRows }: { kind: Kind; rows: Row[] }) {
+  const total = sourceRows.length;
+  const chips: { text: string; href: string; linkLabel: string }[] = [];
+  if (total >= 10) {
+    const topCategory = bucketRows(sourceRows, (row) => sectionCategoryLabel(kind, row)).filter((bucket) => bucket.label !== NOT_DISCLOSED)[0];
+    if (topCategory && topCategory.count >= 3) {
+      chips.push({
+        text: `${topCategory.label} leads this view with ${topCategory.count.toLocaleString("en-US")} of ${total.toLocaleString("en-US")} records (${Math.round((topCategory.count / total) * 100)}%).`,
+        href: appHref(`${routeByKind[kind]}/?filter=${encodeURIComponent(topCategory.label)}`),
+        linkLabel: "See them",
+      });
+    }
+    const topGeography = bucketRows(sourceRows, sectionGeographyLabel).filter((bucket) => bucket.label !== NOT_DISCLOSED)[0];
+    if (topGeography && topGeography.count >= 3) {
+      chips.push({
+        text: `${topGeography.label} is the most represented geography: ${topGeography.count.toLocaleString("en-US")} of ${total.toLocaleString("en-US")} records (${Math.round((topGeography.count / total) * 100)}%).`,
+        href: appHref(`${routeByKind[kind]}/?filter=${encodeURIComponent(topGeography.label)}`),
+        linkLabel: "See them",
+      });
+    }
+  }
+  const newest = sourceRows
+    .map((row) => ({ row, stamp: sectionDateStamp(row) }))
+    .filter((entry) => entry.stamp > 0)
+    .sort((a, b) => b.stamp - a.stamp)[0];
+  if (newest) {
+    chips.push({
+      text: `Newest dated record in this view: ${sectionRecordLabel(kind, newest.row)} (${sectionDateDisplay(newest.stamp)}).`,
+      href: productHref(sectionRecordHref(kind, newest.row, sourceHref(newest.row)), routeByKind[kind]),
+      linkLabel: "Open it",
+    });
+  }
+  const largest = sourceRows
+    .map((row) => ({ row, display: sectionMoneyDisplay(kind, row) }))
+    .map((entry) => ({ ...entry, size: numericSortValue(entry.display) ?? -1 }))
+    .filter((entry) => entry.size > 0)
+    .sort((a, b) => b.size - a.size)[0];
+  if (largest) {
+    chips.push({
+      text: `Largest disclosed figure in this view: ${largest.display} (${sectionRecordLabel(kind, largest.row)}).`,
+      href: productHref(sectionRecordHref(kind, largest.row, sourceHref(largest.row)), routeByKind[kind]),
+      linkLabel: "Open it",
+    });
+  }
+  if (chips.length < 2) return null;
+  return (
+    <div className="rounded border border-[#DCE3EA] bg-white p-3" data-brd-section-insights={kind}>
+      <h3 className="m-0 mb-1 text-[13px] font-bold text-[#11314F]">What stands out</h3>
+      <div className="mb-2 text-[12px] text-[#7A8A9B]">Computed from the records loaded in this view. Each line links to its records.</div>
+      <div className="grid gap-1.5">
+        {chips.map((chip) => (
+          <div key={chip.text} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 rounded border border-[#EEF2F6] px-3 py-1.5 text-[12px]">
+            <span className="min-w-0 flex-1 text-[#41566B]">{chip.text}</span>
+            <a href={chip.href} className="shrink-0 font-bold text-[#16538C] no-underline">{chip.linkLabel} →</a>
           </div>
         ))}
       </div>

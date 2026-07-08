@@ -40,3 +40,11 @@ is the authority; this file is the working copy.
   universe charts do not already show; each count links to the filtered view).
 - P06: all new labels are plain business language; each new panel states its
   own logic and destination in one line.
+- P01.1 (second pass, same day): every list page's Visualization view gains a
+  "Where <records> concentrate" category x geography heatmap over the loaded
+  records — darker cells hold more records, row/column labels filter the page.
+- P01.2 (second pass): a "What stands out" strip of computed observations not
+  written anywhere on the page as raw data — category and geography
+  concentration percentages, the newest dated record, and the largest
+  disclosed figure — each line linking to its records. Both panels render
+  nothing instead of empty frames when the loaded records cannot support them.
