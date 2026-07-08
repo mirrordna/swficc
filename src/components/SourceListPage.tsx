@@ -1363,6 +1363,10 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
   const facetData = facetPacket && isFact(facetPacket) ? (packetData(facetPacket) as { total?: number; facets?: FacetBlock[] }) : undefined;
   const universeFacets = (facetData?.facets || []).filter((facet) => facet.rows.length > 0);
   const universeTotal = typeof facetData?.total === "number" ? facetData.total : 0;
+  const rankingTabs = sectionRankingTabs(kind, sourceRows);
+  // Quick Counts uses the source-side facet fields the two universe charts below
+  // do NOT already show, so the rail adds counts instead of repeating the charts.
+  const quickCountFacets = universeFacets.slice(2, 4).filter((facet) => facet.rows.length > 1);
 
   const categoryRows = bucketRows(sourceRows, (row) => sectionCategoryLabel(kind, row));
   const geographyRows = bucketRows(sourceRows, (row) => businessText(row.country || row.region || row.buyer_region || row.seller_region));
@@ -1381,10 +1385,10 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
           <span>SWFI platform data</span>
           <span>This view summarizes {sourceRows.length.toLocaleString("en-US")} visible items from {totalRows.toLocaleString("en-US")} total items.</span>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => downloadSectionCsv(kind, sourceRows)} className="rounded border border-[#C7D2DD] bg-white px-3 py-1.5 text-sm font-semibold text-[#16538C]">Export CSV</button>
-          <button type="button" onClick={() => downloadSectionPng(kind, sourceRows)} className="rounded border border-[#C7D2DD] bg-white px-3 py-1.5 text-sm font-semibold text-[#16538C]">Export PNG</button>
-        </div>
+        {/* Dashboard 2.0 P05: data export requires SWFI authentication — no public downloads. */}
+        <a href="https://www.swfi.com/v1/signin/?msg=auth" className="rounded border border-[#C7D2DD] bg-white px-3 py-1.5 text-sm font-semibold text-[#16538C] no-underline">
+          Sign in on SWFI to export
+        </a>
       </div>
       <div className="grid gap-3 sm:grid-cols-3">
         {summary.map(([label, value]) => (
@@ -1394,6 +1398,12 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
           </div>
         ))}
       </div>
+      {rankingTabs.length > 0 || quickCountFacets.length > 0 ? (
+        <div className="grid items-start gap-4 xl:grid-cols-[1.6fr_1fr]">
+          <SectionRankings kind={kind} tabs={rankingTabs} rowCount={sourceRows.length} />
+          <SectionQuickCounts kind={kind} facets={quickCountFacets} universeTotal={universeTotal} />
+        </div>
+      ) : null}
       {universeFacets.length > 0 ? (
         <div className="grid gap-4" data-brd-universe-facets={kind}>
           <div className="text-[12px] text-[#7A8A9B]">
@@ -1536,95 +1546,137 @@ function sectionRecordHref(kind: Kind, row: Row, source?: string): string {
   return profileDetailHref(row, source);
 }
 
-function downloadSectionCsv(kind: Kind, sourceRows: Row[]) {
-  const fields = sectionCsvFields(kind);
-  const lines = [
-    fields.map((field) => csvEscape(field.label)).join(","),
-    ...sourceRows.map((row) => fields.map((field) => csvEscape(text(row[field.key], ""))).join(",")),
-  ];
-  triggerDownload(`${kind}-swfi-records.csv`, "text/csv;charset=utf-8", lines.join("\n"));
+// Dashboard 2.0 (team principles v1.0, 2026-07-08). P03: tables only as rankings;
+// P04: every row/count is a link with a named destination; P05: the public export
+// buttons were replaced by the SWFI sign-in link; P06: plain user-facing labels.
+
+function sectionNoun(kind: Kind): string {
+  if (kind === "profiles" || kind === "comparisons") return "institutions";
+  if (kind === "people") return "people";
+  if (kind === "transactions") return "transactions";
+  if (kind === "deals") return "deals";
+  if (kind === "allocators") return "active allocators";
+  if (kind === "mandates") return "opportunities";
+  if (kind === "alerts") return "deadlines";
+  if (kind === "research" || kind === "intelligence") return "articles";
+  return "results";
 }
 
-function sectionCsvFields(kind: Kind): Array<{ key: string; label: string }> {
-  if (kind === "people") return [
-    { key: "name", label: "Name" },
-    { key: "title", label: "Title" },
-    { key: "institution", label: "Institution" },
-    { key: "country", label: "Country" },
-    { key: "source_url", label: "Source URL" },
-  ];
-  if (kind === "transactions" || kind === "deals") return [
-    { key: "title", label: "Name" },
-    { key: "buyer_entity", label: "Buyer Entity" },
-    { key: "amount_display", label: "Amount" },
-    { key: "closed_at", label: "Closed At" },
-    { key: "source_url", label: "Source URL" },
-  ];
-  return [
-    { key: "name", label: "Name" },
-    { key: "type", label: "Type" },
-    { key: "country", label: "Country" },
-    { key: "region", label: "Region" },
-    { key: "source_url", label: "Source URL" },
-  ];
+function sectionMoneyDisplay(kind: Kind, row: Row): string {
+  if (kind === "transactions" || kind === "deals") return disclosedMoney(row.amount_display || row.amount || row.value);
+  if (kind === "mandates" || kind === "alerts") return disclosedMoney(row.amount_display || row.amount);
+  return disclosedMoney(row.aum || row.assets);
 }
 
-function csvEscape(value: string): string {
-  return `"${value.replaceAll("\"", "\"\"")}"`;
+function sectionDateStamp(row: Row): number {
+  const raw = text(row.closed_at || row.announced_at || row.published_at || row.deadline || row.due_at || row.most_recent_activity_date || row.updated_at || row.created_at || row.last_updated, "");
+  if (!raw) return 0;
+  const parsed = Date.parse(raw);
+  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
-function downloadSectionPng(kind: Kind, sourceRows: Row[]) {
-  if (typeof document === "undefined") return;
-  const rowsForChart = bucketRows(sourceRows, (row) => sectionCategoryLabel(kind, row)).slice(0, 8);
-  const canvas = document.createElement("canvas");
-  canvas.width = 960;
-  canvas.height = 540;
-  const context = canvas.getContext("2d");
-  if (!context) return;
-  context.fillStyle = "#FFFFFF";
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  context.fillStyle = "#11314F";
-  context.font = "bold 28px Arial";
-  context.fillText(sectionVisualizationTitle(kind), 32, 48);
-  context.fillStyle = "#617386";
-  context.font = "16px Arial";
-  context.fillText("Updated from SWFI", 32, 78);
-  const max = Math.max(1, ...rowsForChart.map((row) => row.count));
-  rowsForChart.forEach((row, index) => {
-    const y = 125 + index * 46;
-    const width = Math.max(18, (row.count / max) * 620);
-    context.fillStyle = "#E8EDF2";
-    context.fillRect(285, y - 18, 640, 24);
-    context.fillStyle = "#5C9BD6";
-    context.fillRect(285, y - 18, width, 24);
-    context.fillStyle = "#11314F";
-    context.font = "14px Arial";
-    context.fillText(row.label.slice(0, 28), 32, y);
-    context.fillText(row.count.toLocaleString("en-US"), 285 + width + 10, y);
-  });
-  canvas.toBlob((blob) => {
-    if (!blob) return;
-    const url = URL.createObjectURL(blob);
-    triggerDownloadUrl(`${kind}-swfi-visualization.png`, url);
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }, "image/png");
+function sectionDateDisplay(stamp: number): string {
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit", year: "numeric" }).format(new Date(stamp));
 }
 
-function triggerDownload(filename: string, mimeType: string, content: string) {
-  if (typeof document === "undefined") return;
-  const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  triggerDownloadUrl(filename, url);
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+type RankingTab = { id: string; label: string; explain: string; entries: { row: Row; value: string }[] };
+
+function sectionRankingTabs(kind: Kind, sourceRows: Row[]): RankingTab[] {
+  const tabs: RankingTab[] = [];
+  const bySize = sourceRows
+    .map((row) => ({ row, display: sectionMoneyDisplay(kind, row) }))
+    .map((entry) => ({ ...entry, size: numericSortValue(entry.display) ?? -1 }))
+    .filter((entry) => entry.size > 0)
+    .sort((a, b) => b.size - a.size)
+    .slice(0, 5);
+  if (bySize.length >= 3) {
+    tabs.push({
+      id: "largest",
+      label: kind === "transactions" || kind === "deals" || kind === "mandates" || kind === "alerts" ? "Largest disclosed value" : "Largest disclosed AUM",
+      explain: "Ranked by the figure disclosed on each record, largest first,",
+      entries: bySize.map((entry) => ({ row: entry.row, value: entry.display })),
+    });
+  }
+  const byDate = sourceRows
+    .map((row) => ({ row, stamp: sectionDateStamp(row) }))
+    .filter((entry) => entry.stamp > 0)
+    .sort((a, b) => b.stamp - a.stamp)
+    .slice(0, 5);
+  if (byDate.length >= 3) {
+    tabs.push({
+      id: "recent",
+      label: "Most recent",
+      explain: "Ranked by each record's own most recent date, newest first,",
+      entries: byDate.map((entry) => ({ row: entry.row, value: sectionDateDisplay(entry.stamp) })),
+    });
+  }
+  return tabs;
 }
 
-function triggerDownloadUrl(filename: string, url: string) {
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
+function SectionRankings({ kind, tabs, rowCount }: { kind: Kind; tabs: RankingTab[]; rowCount: number }) {
+  const [activeTab, setActiveTab] = useState(0);
+  const tab = tabs[Math.min(activeTab, Math.max(0, tabs.length - 1))];
+  if (!tab) return null;
+  return (
+    <div className="rounded border border-[#DCE3EA] bg-white p-3" data-brd-section-rankings={kind}>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="m-0 text-[13px] font-bold text-[#11314F]">Top {sectionNoun(kind)}</h3>
+        {tabs.length > 1 ? (
+          <div className="flex gap-1 rounded bg-[#EDF1F5] p-1 text-[12px]">
+            {tabs.map((entry, index) => (
+              <button key={entry.id} type="button" onClick={() => setActiveTab(index)} className={`rounded px-2.5 py-1 font-semibold ${index === activeTab ? "bg-white text-[#11314F] shadow-sm" : "text-[#617386]"}`}>
+                {entry.label}
+              </button>
+            ))}
+          </div>
+        ) : <span className="text-[12px] font-semibold text-[#7A8A9B]">{tab.label}</span>}
+      </div>
+      <div className="mb-2 text-[12px] text-[#7A8A9B]">{tab.explain} among the {rowCount.toLocaleString("en-US")} records loaded in this view. Click a name to open its SWFI page.</div>
+      <div className="grid gap-1">
+        {tab.entries.map(({ row, value }, index) => {
+          const source = sourceHref(row);
+          const href = productHref(sectionRecordHref(kind, row, source), routeByKind[kind]);
+          return (
+            <a key={`${tab.id}-${index}`} href={href} data-source-state={source ? "on-file" : undefined} className="flex items-center gap-3 rounded border border-[#EEF2F6] px-3 py-2 no-underline hover:bg-[#F7F9FA]">
+              <span className="w-5 shrink-0 text-[12px] font-bold text-[#7A8A9B]">{index + 1}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13px] font-bold text-[#11314F]">{sectionRecordLabel(kind, row)}</span>
+                <span className="block truncate text-[11px] text-[#7A8A9B]">{sectionCategoryLabel(kind, row)}</span>
+              </span>
+              <span className="shrink-0 text-[12px] font-bold text-[#16538C]">{value}</span>
+            </a>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function SectionQuickCounts({ kind, facets, universeTotal }: { kind: Kind; facets: FacetBlock[]; universeTotal: number }) {
+  if (!facets.length) return null;
+  return (
+    <div className="rounded border border-[#DCE3EA] bg-white p-3" data-brd-section-quick-counts={kind}>
+      <h3 className="m-0 mb-1 text-[13px] font-bold text-[#11314F]">Quick Counts</h3>
+      <div className="mb-2 text-[12px] text-[#7A8A9B]">
+        Counts cover all {universeTotal.toLocaleString("en-US")} records in SWFI, computed at source. Click a value to filter this page to it.
+      </div>
+      <div className="grid gap-3">
+        {facets.map((facet) => (
+          <div key={facet.field}>
+            <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.08em] text-[#7A8A9B]">{facet.label}</div>
+            <div className="grid gap-1">
+              {facet.rows.slice(0, 5).map((row) => (
+                <a key={`${facet.field}-${row.label}`} href={appHref(`${routeByKind[kind]}/?filter=${encodeURIComponent(row.label)}`)} className="flex items-center justify-between gap-2 rounded px-1 py-0.5 text-[12px] no-underline hover:bg-[#F7F9FA]">
+                  <span className="truncate font-semibold text-[#41566B]">{row.label}</span>
+                  <span className="shrink-0 font-bold text-[#11314F]">{row.count.toLocaleString("en-US")}</span>
+                </a>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function CompassVisualization({ rows: sourceRows, totalRows }: { rows: Row[]; totalRows: number }) {
@@ -1646,10 +1698,10 @@ function CompassVisualization({ rows: sourceRows, totalRows }: { rows: Row[]; to
           <span>Updated from SWFI</span>
           <span>Showing {sourceRows.length.toLocaleString("en-US")} loaded Compass rows from {totalRows.toLocaleString("en-US")} total records.</span>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => downloadSectionCsv("mandates", sourceRows)} className="rounded border border-[#C7D2DD] bg-white px-3 py-1.5 text-sm font-semibold text-[#16538C]">Export CSV</button>
-          <button type="button" onClick={() => downloadSectionPng("mandates", sourceRows)} className="rounded border border-[#C7D2DD] bg-white px-3 py-1.5 text-sm font-semibold text-[#16538C]">Export PNG</button>
-        </div>
+        {/* Dashboard 2.0 P05: data export requires SWFI authentication — no public downloads. */}
+        <a href="https://www.swfi.com/v1/signin/?msg=auth" className="rounded border border-[#C7D2DD] bg-white px-3 py-1.5 text-sm font-semibold text-[#16538C] no-underline">
+          Sign in on SWFI to export
+        </a>
       </div>
       <div className="grid gap-3 sm:grid-cols-3">
         {summary.map(([label, value]) => (
