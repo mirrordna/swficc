@@ -2233,7 +2233,7 @@ function DealEnginePanel() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="m-0 text-[16px] font-bold text-[#11314F]">Capital Deal Engine</h2>
-          <div className="mt-1 text-[12px] text-[#7A8A9B]">Ticket size, investment frequency, and co-investment intelligence from transaction activity.</div>
+          <div className="mt-1 text-[12px] text-[#7A8A9B]">Limited preview of analytical deal records: ticket size, investment frequency, and co-investment intelligence from transaction activity.</div>
         </div>
         <div className="rounded border border-[#DCE3EA] px-3 py-2 text-[12px] text-[#41566B]">
           {readyCount === 3 ? "3 of 3 SWFI record sets ready" : `Loading ${readyCount} of 3 SWFI record sets`}
@@ -2379,7 +2379,7 @@ function ComparisonWorkbench({ records, packets }: { records: Row[]; packets: Re
         <div>
           <h2 className="m-0 text-[16px] font-bold text-[#11314F]">Current Peer Set</h2>
           <div className="mt-1 text-[12px] text-[#7A8A9B]">
-            Peer group: {businessText(hydrated[0]?.type || hydrated[0]?.entity_type)} — comparisons stay within one entity type. Exact profile packets hydrated: {hydrated.filter((row) => row.__profile_fact === true).length} of {hydrated.length}
+            Limited preview peer matrix. Peer group: {businessText(hydrated[0]?.type || hydrated[0]?.entity_type)} — comparisons stay within one entity type. Exact profile packets hydrated: {hydrated.filter((row) => row.__profile_fact === true).length} of {hydrated.length}
           </div>
         </div>
         <div className="rounded border border-[#DCE3EA] px-3 py-2 text-[12px] text-[#41566B]">

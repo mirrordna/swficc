@@ -86,14 +86,17 @@ function readDeployReceipt() {
 }
 
 async function fetchJsonUrl(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), Number(process.env.SWFIPN_FETCH_TIMEOUT_MS || 20_000));
   const response = await fetch(url, {
     cache: "no-store",
+    signal: controller.signal,
     headers: {
       Accept: "application/json",
       "Cache-Control": "no-cache",
       Pragma: "no-cache",
     },
-  });
+  }).finally(() => clearTimeout(timeout));
   const text = await response.text();
   let json = null;
   try {
@@ -204,7 +207,7 @@ function chunkRefs(html) {
   return refs;
 }
 
-async function waitForBody(page, required, timeout = 90_000) {
+async function waitForBody(page, required, timeout = Number(process.env.SWFIPN_ROUTE_BODY_TIMEOUT_MS || 30_000)) {
   const start = Date.now();
   let body = "";
   while (Date.now() - start < timeout) {
@@ -339,6 +342,7 @@ async function run() {
     }
     if (publicMarker.ok) {
       for (const spec of routeSpecs) {
+        console.error(`[runtime-staleness] inspecting ${spec.route}`);
         checks.push(await inspectRoute(browser, spec, deploy, publicMarker));
       }
     }
