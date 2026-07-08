@@ -185,7 +185,8 @@ async function inspectRoute(browser, route) {
     });
     page.on("requestfailed", (request) => {
       const url = request.url();
-      if (!url.includes("/cdn-cgi/rum")) failedRequests.push(url);
+      const ignoredTelemetry = url.includes("/cdn-cgi/rum") || /^https:\/\/static\.cloudflareinsights\.com\/beacon\.min\.js/i.test(url);
+      if (!ignoredTelemetry) failedRequests.push(url);
     });
 
     const response = await page.goto(result.url, { waitUntil: "domcontentloaded", timeout: 30_000 });
