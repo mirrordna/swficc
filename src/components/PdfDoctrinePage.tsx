@@ -555,7 +555,7 @@ function linkedName(row: Row, kind: "entity" | "transaction" | "compass" | "news
 
 function rowSourceHref(row: Row, kind: "entity" | "transaction" | "compass" | "news" | "report"): string {
   let provenance = "";
-  for (const key of ["source_url", "swfi_url", "profile_url", "url", "institution_url", "buyer_entity_url"]) {
+  for (const key of ["source_url", "swfi_url", "profile_url", "url", "institution_url", "buyer_entity_url", "report_url", "download_url", "file_url", "asset_url"]) {
     const value = clean(row[key]);
     if (!value.startsWith("http://") && !value.startsWith("https://")) continue;
     provenance = normalizeSwfiUrl(value);
@@ -568,8 +568,7 @@ function rowSourceHref(row: Row, kind: "entity" | "transaction" | "compass" | "n
   if (kind === "entity") return profileDetailHref(row, provenance || undefined);
   if (kind === "transaction") return transactionDetailHref(row, provenance || undefined);
   if (kind === "report") {
-    const key = clean(row.report_key || row.report_id || row.id || row.source_record_id);
-    return key ? appHref(`/reports/detail/?key=${encodeURIComponent(key)}`) : "";
+    return provenance;
   }
   return mandateDetailHref(row, provenance || undefined);
 }

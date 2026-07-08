@@ -1,5 +1,9 @@
 export type SearchKind = "entity" | "person" | "transaction" | "rfp" | "news";
 
+// Canonical-name aliases: common acronyms/short forms clients type, mapped to the exact
+// entity name that carries the record (verified present with transactions in the source).
+// A query hitting one of these pins that canonical entity to the top of the results (see
+// searchRelevanceScore) so an exact match on a short/side name cannot outrank the real fund.
 const QUERY_SYNONYMS: Record<string, string[]> = {
   adia: ["Abu Dhabi Investment Authority"],
   adq: ["Abu Dhabi Developmental Holding Company"],
@@ -9,6 +13,9 @@ const QUERY_SYNONYMS: Record<string, string[]> = {
   pif: ["Public Investment Fund"],
   qia: ["Qatar Investment Authority"],
   safe: ["State Administration of Foreign Exchange"],
+  "jp morgan": ["JPMorgan Chase & Co"],
+  jpmorgan: ["JPMorgan Chase & Co"],
+  calpers: ["California Public Employees Retirement System"],
 };
 
 const SHORT_QUERY_MAX = 3;
@@ -47,6 +54,98 @@ export function rankSearchRecords<T extends Record<string, unknown>>(sourceRows:
     .map((item) => item.row);
 }
 
+// INTERIM hierarchy pending the official ordering list from the data team.
+// Coarse business/customer hierarchy tier used ONLY as a stable secondary tiebreak. Higher sorts first.
+// Sovereign Wealth Fund > Public Pension/Pension > Government Fund/SOE/Development Bank/Bank > Company/Other.
+export function businessHierarchyTier(row: Record<string, unknown>): number {
+  const type = normalizeSearchText(text(row.type || row.entity_type || row.asset_class_or_strategy || row.strategy, ""));
+  if (/sovereign wealth fund/.test(type)) return 6;
+  if (/public pension|pension fund|pension/.test(type)) return 5;
+  if (/government fund|investment authority|central bank/.test(type)) return 4;
+  if (/development bank|state owned enterprise|state-owned enterprise|sovereign owned|soe/.test(type)) return 3;
+  if (/bank|insurance|asset manager|fund manager|advisor|nonbank/.test(type)) return 2;
+  if (/government/.test(type)) return 1;
+  return 0;
+}
+
+// True when the query is a strong name match (exact / slug-exact / alias-exact / acronym for a short
+// query / prefix / all multi-word terms present as name tokens). Such rows must not be demoted by the
+// hierarchy tiebreak nor dropped by junk suppression.
+export function isStrongNameMatch(row: Record<string, unknown>, query: string, kind: SearchKind = "entity"): boolean {
+  const clean = normalizeSearchText(query);
+  if (!clean) return false;
+  const name = normalizeSearchText(text(row.name || row.title || row.institution || row.buyer_entity, ""));
+  const slug = normalizeSearchText(text(row.slug || "", "").replaceAll("-", " "));
+  const shortQuery = clean.length <= SHORT_QUERY_MAX;
+  const acronym = acronymForName(name);
+  const aliasTargets = (QUERY_SYNONYMS[clean] || []).map(normalizeSearchText);
+  if (name === clean || slug === clean) return true;
+  if (aliasTargets.some((target) => target && name === target)) return true;
+  if (shortQuery && acronym === clean.toUpperCase()) return true;
+  if (shortQuery && tokenStartsWith(name, clean)) return true;
+  if (!shortQuery && name.startsWith(clean)) return true;
+  const terms = clean.split(/\s+/).filter(Boolean);
+  if (!shortQuery && terms.length > 1 && terms.every((term) => name.includes(term))) return true;
+  return kind === "entity" ? false : searchRelevanceScore(row, query, kind) > 0 && name.includes(clean);
+}
+
+// True when the query only appears as an incidental substring inside a longer token (e.g. "pif" inside
+// "Piffle"/"Trippifi"/"Bpifrance") with no strong name match. Callers suppress these ONLY when a strong
+// match also exists (so junk sits far below); a strong match is never treated as weak.
+export function isWeakSubstringMatch(row: Record<string, unknown>, query: string, kind: SearchKind = "entity"): boolean {
+  const clean = normalizeSearchText(query);
+  if (!clean) return false;
+  if (isStrongNameMatch(row, query, kind)) return false;
+  const name = normalizeSearchText(text(row.name || row.title || row.institution || row.buyer_entity, ""));
+  if (!name) return false;
+  return name.includes(clean) && !tokenStartsWith(name, clean);
+}
+
+// Search merge intent: treat /api/v1/public/search order as the primary ordering source. Entities from
+// the /api/source-data collection are appended only when not already present (they must not reorder above
+// the public/search order). The INTERIM business hierarchy is applied as a stable secondary tiebreak that
+// only reorders rows left as ties and never demotes a strong exact/prefix/acronym match. Weak-substring
+// junk is suppressed only when a strong match also exists.
+export function mergeSearchRecordsPreferPrimary<T extends Record<string, unknown>>(
+  primaryRows: T[],
+  appendRows: T[],
+  query: string,
+  kind: SearchKind = "entity",
+): T[] {
+  const clean = query.trim();
+  const primary = dedupeSearchRecords(primaryRows);
+  const seen = new Set(primary.map((row) => searchRecordKey(row)));
+  const appended = rankSearchRecords(dedupeSearchRecords(appendRows), query, kind)
+    .filter((row) => {
+      const key = searchRecordKey(row);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  const merged = [...primary, ...appended];
+  if (!clean) return merged;
+
+  const STRONG_TIER_FLOOR = 100;
+  const decorated = merged.map((row, index) => {
+    const strong = isStrongNameMatch(row, clean, kind);
+    return {
+      row,
+      index,
+      strong,
+      tier: strong ? STRONG_TIER_FLOOR + businessHierarchyTier(row) : businessHierarchyTier(row),
+      weak: isWeakSubstringMatch(row, clean, kind),
+    };
+  });
+  const strongCount = decorated.filter((item) => item.strong).length;
+  const ordered = decorated.sort((a, b) => {
+    if (a.strong !== b.strong) return a.strong ? -1 : 1;
+    if (a.tier !== b.tier) return b.tier - a.tier;
+    return a.index - b.index;
+  });
+  const suppressed = ordered.filter((item) => !(item.weak && strongCount > 0));
+  return (suppressed.length ? suppressed : ordered).map((item) => item.row);
+}
+
 export function searchRelevanceScore(row: Record<string, unknown>, query: string, kind: SearchKind = "entity"): number {
   const clean = normalizeSearchText(query);
   if (!clean) return 0;
@@ -61,10 +160,18 @@ export function searchRelevanceScore(row: Record<string, unknown>, query: string
   const acronym = acronymForName(name);
   const aliasTargets = (QUERY_SYNONYMS[clean] || []).map(normalizeSearchText);
 
+  // Canonical alias pin: when the query is a known acronym/short form (ADIA, CIC,
+  // "JP Morgan", CalPERS...), the mapped canonical entity must win outright - an exact
+  // match on a short/side name (e.g. an entity literally named "Adia") must NOT outrank
+  // Abu Dhabi Investment Authority. Return a score no name-match combination can reach,
+  // ordered among multiple aliases by prominence.
+  if (aliasTargets.some((target) => target && name === target)) {
+    return 100000 + businessHierarchyScore(type) + capitalScaleScore(row);
+  }
+
   let baseScore = 0;
   if (name === clean) baseScore += 3000;
   if (slug === clean) baseScore += 2600;
-  if (aliasTargets.some((target) => target && name === target)) baseScore += 2800;
   if (shortQuery && acronym === clean.toUpperCase()) baseScore += 2400;
   if (shortQuery && tokenStartsWith(name, clean)) baseScore += 700;
   if (!shortQuery && name.startsWith(clean)) baseScore += 1000;

@@ -278,6 +278,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
   useEffect(() => {
     try {
       if (new URLSearchParams(window.location.search).has("filter")) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- must set before paint (probe-pinned: filter arrivals land on Data view); a deferred update would flash the Visualization view first
         setSectionView("data");
       }
     } catch {
@@ -1251,8 +1252,11 @@ function compareCells(a: Cell | undefined, b: Cell | undefined, dir: "asc" | "de
   const bv = cellText(b);
   const an = numericSortValue(av);
   const bn = numericSortValue(bv);
-  if (an !== null && bn === null) return dir === "asc" ? -1 : 1;
-  if (an === null && bn !== null) return dir === "asc" ? 1 : -1;
+  // Missing / "Not disclosed" values always sink to the bottom, regardless of sort
+  // direction — a "Not disclosed" AUM must never outrank a real maximum in a descending
+  // sort (KP feedback 2026-07-06). Only the real numeric values obey the direction.
+  if (an !== null && bn === null) return -1;
+  if (an === null && bn !== null) return 1;
   const result = an !== null && bn !== null
     ? an - bn
     : av.localeCompare(bv, undefined, { numeric: true, sensitivity: "base" });
@@ -1416,8 +1420,8 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
            happened), and never render an EMPTY chart frame (a chart with no
            rows is a dead element — minutes F). */
         <div className="grid gap-4 lg:grid-cols-3">
-          {categoryRows.length ? <SectionBarChart kind={kind} title="Records by Category (current page)" rows={categoryRows} /> : null}
-          {geographyRows.length ? <SectionBarChart kind={kind} title="Records by Geography (current page)" rows={geographyRows} /> : null}
+          {categoryRows.length > 1 ? <SectionBarChart kind={kind} title="Records by Category (current page)" rows={categoryRows} /> : null}
+          {geographyRows.length > 1 ? <SectionBarChart kind={kind} title="Records by Geography (current page)" rows={geographyRows} /> : null}
           {trendRows.length >= 4 ? (
             <SectionLineChart title="Records by Month (current page)" rows={trendRows} />
           ) : (
@@ -1436,7 +1440,7 @@ function sectionCategoryLabel(kind: Kind, row: Row): string {
   if (kind === "profiles" || kind === "comparisons") return businessText(row.type || row.entity_type);
   if (kind === "people") return businessText(row.institution || row.title || row.country);
   if (kind === "transactions" || kind === "deals") return businessText(row.industry || row.category || row.sector || row.investment_type);
-  if (kind === "allocators") return businessText(row.activity_reason || row.entity_type || row.type);
+  if (kind === "allocators") return businessText(row.entity_type || row.type);
   if (kind === "intelligence") return businessText(row.source);
   return businessText(row.type || row.strategy || row.investment_type || row.asset_class_or_strategy);
 }
@@ -1631,7 +1635,7 @@ function CompassVisualization({ rows: sourceRows, totalRows }: { rows: Row[]; to
   const totalCapital = disclosedAmounts.reduce((sum, value) => sum + value, 0);
   const averageTicket = disclosedAmounts.length ? totalCapital / disclosedAmounts.length : 0;
   const summary = [
-    ["Total Open RFPs", totalRows.toLocaleString("en-US")],
+    ["Total RFP Records", totalRows.toLocaleString("en-US")],
     ["Total Capital Sought", totalCapital ? compactMoney(totalCapital) : NOT_DISCLOSED],
     ["Average Ticket Size", averageTicket ? compactMoney(averageTicket) : NOT_DISCLOSED],
   ] as const;

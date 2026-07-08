@@ -58,7 +58,7 @@ export default function SwfiBrandHeader({
             return (
               <div key={label} className="group relative">
                 <a
-                  href={gated ? loginHref(target) : target}
+                  href={gated ? loginHref() : target}
                   data-dashboard-target={gated ? target : undefined}
                   className={`relative inline-flex items-center gap-1 text-white no-underline after:absolute after:left-0 after:top-[calc(100%+5px)] after:h-[3px] after:w-full after:scale-x-0 after:rounded after:bg-white after:transition-transform hover:after:scale-x-100 ${label === "Sign In" ? "rounded-full border border-transparent px-4 py-3 hover:border-white hover:after:scale-x-0" : ""}`}
                 >
@@ -68,13 +68,13 @@ export default function SwfiBrandHeader({
                   ) : null}
                 </a>
                 {dropdown.length ? (
-                  <div className="invisible absolute left-0 top-[calc(100%+27px)] z-50 grid min-w-[280px] translate-y-2 gap-1 bg-white p-3 text-[14px] font-normal text-[#22272F] opacity-0 shadow-lg transition group-hover:visible group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:visible group-focus-within:translate-y-0 group-focus-within:opacity-100">
+                  <div className="invisible absolute left-0 top-[calc(100%+27px)] z-50 hidden min-w-[280px] translate-y-2 gap-1 bg-white p-3 text-[14px] font-normal text-[#22272F] opacity-0 shadow-lg transition group-hover:visible group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:visible group-focus-within:translate-y-0 group-focus-within:opacity-100 lg:grid">
                     {dropdown.map(([itemLabel, itemHref]) => {
                       const itemTarget = absoluteOrAppHref(itemHref);
                       return (
                         <a
                           key={itemLabel}
-                          href={gated ? loginHref(itemTarget) : itemTarget}
+                          href={gated ? loginHref() : itemTarget}
                           data-dashboard-target={gated ? itemTarget : undefined}
                           className="px-3 py-2 text-[#70798B] no-underline hover:bg-[#F8F8F8] hover:text-[#A61C20]"
                         >
@@ -111,7 +111,7 @@ export default function SwfiBrandHeader({
   );
 }
 
-function loginHref(_target: string): string {
+function loginHref(): string {
   // Gated links go to the platform sign-in; the dashboard has no login of
   // its own (data-dashboard-target still carries the intended destination).
   return SWFI_SIGNIN;

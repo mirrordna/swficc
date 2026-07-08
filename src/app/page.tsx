@@ -18,7 +18,7 @@ import {
 } from "@/lib/sourcePackets";
 import { useGsapReveal } from "@/hooks/useGsapReveal";
 import { HOME_PACKET_SNAPSHOT } from "@/lib/homeSourceSnapshot";
-import { appHref, appRouteForHref, assetHref, isSwfiPlatformRecordHref, sourceProvenanceHref, swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
+import { appHref, assetHref, isSwfiPlatformRecordHref, sourceProvenanceHref, swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
 import WorldCapitalMap, { type WorldFlowPair } from "@/components/WorldCapitalMap";
 
 // Deal-flow pairs for the map's interactive layer (Paul 2026-07-06: "where
@@ -136,6 +136,11 @@ export default function DashboardPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchPacket, setSearchPacket] = useState<Packet | undefined>();
   const [searchEntityPackets, setSearchEntityPackets] = useState<Packet[]>([]);
+  // Entity->transactions join: when the query resolves to a strong entity, we fetch
+  // THAT entity's transactions so the Transactions category is populated by the
+  // buyer/seller entity reference join instead of a text match that never hits
+  // (transactions reference entities by a reference id, not by their display name).
+  const [searchTransactionPacket, setSearchTransactionPacket] = useState<Packet | undefined>();
   const [searchLoading, setSearchLoading] = useState(false);
   const [activeSearchIndex, setActiveSearchIndex] = useState(0);
   const [newsTab, setNewsTab] = useState<"latest" | "referenced" | "topics">("latest");
@@ -211,14 +216,35 @@ export default function DashboardPage() {
     newsRows,
   }), [searchQuery, dashboardEntitySearchRows, peopleRows, transactionRows, rfpRows, newsRows]);
   const liveSearchGroups = useMemo(() => brdPublicSearchGroups(searchQuery, searchPacket, searchEntityPackets), [searchQuery, searchPacket, searchEntityPackets]);
+  const baseSearchGroups = useMemo(() => mergeSearchGroups(liveSearchGroups, dashboardSearchGroups), [liveSearchGroups, dashboardSearchGroups]);
+  // Resolve the top-ranked entity candidates for the query; their names drive the
+  // entity->transactions fetch. We keep the top few (not just #1) so the join can fall
+  // through to the real fund when the #1 result is a short/side entity with no deals.
+  const topSearchEntityNames = useMemo(() => {
+    if (searchQuery.trim().length < 2) return [] as string[];
+    const entities = baseSearchGroups.find((group) => group.label === "Entities");
+    return entities ? entities.items.slice(0, 3).map((item) => item.label).filter(Boolean) : [];
+  }, [baseSearchGroups, searchQuery]);
+  // Transaction lookup candidates: put any known alias target (e.g. "JP Morgan" ->
+  // "JPMorgan Chase & Co") FIRST and independent of the entity search settling, so the
+  // Transactions section fills immediately instead of after a second entity-resolve hop
+  // (that double-hop was the latency that briefly showed "No matches" for alias queries).
+  const transactionCandidateKey = useMemo(() => {
+    const clean = searchQuery.trim();
+    if (clean.length < 2) return "";
+    const aliasTargets = businessSearchQueryVariants(clean).slice(1);
+    return [...new Set([...aliasTargets, ...topSearchEntityNames])].join("|");
+  }, [searchQuery, topSearchEntityNames]);
   const searchGroups = useMemo(() => {
     const clean = searchQuery.trim();
     if (clean.length >= 2) {
       if (isShortBusinessQuery(clean) && searchLoading && !hasAnySearchItems(liveSearchGroups) && !hasAnySearchItems(dashboardSearchGroups)) return completeSearchGroups([]);
-      return completeSearchGroups(mergeSearchGroups(liveSearchGroups, dashboardSearchGroups));
+      // entity->transaction group is PRIMARY so a resolved entity's real
+      // transactions lead the Transactions category (fills the "No matches" gap).
+      return completeSearchGroups(mergeSearchGroups(entityTransactionSearchGroups(searchTransactionPacket, clean), baseSearchGroups));
     }
     return dashboardSearchGroups;
-  }, [dashboardSearchGroups, liveSearchGroups, searchLoading, searchQuery]);
+  }, [baseSearchGroups, dashboardSearchGroups, liveSearchGroups, searchLoading, searchQuery, searchTransactionPacket]);
   const searchItems = useMemo(() => searchGroups.flatMap((group) => group.items), [searchGroups]);
 
   useEffect(() => {
@@ -285,6 +311,40 @@ export default function DashboardPage() {
       controller.abort();
     };
   }, [searchOpen, searchQuery]);
+
+  // Entity->transactions join: once the query resolves to a top entity, fetch that
+  // entity's transactions by exact name (buyer/seller entity reference join, returned
+  // pre-built with swfi.com transaction URLs). This is what fixes the
+  // "No matches in Transactions" gap for entities like GIC that have deals but are
+  // referenced in transaction records by a reference id, not by their display name.
+  useEffect(() => {
+    if (!searchOpen) return;
+    const names = transactionCandidateKey.split("|").filter(Boolean).slice(0, 4);
+    const controller = new AbortController();
+    // Every state update runs from the scheduled callback, never synchronously in
+    // the effect body (React cascading-render rule): empty candidates clear the
+    // packet on the next tick; real candidates fetch after the 120ms debounce.
+    const timer = window.setTimeout(() => {
+      if (!names.length) {
+        setSearchTransactionPacket(undefined);
+        return;
+      }
+      // Fetch the candidates' transactions in PARALLEL (alias target first, cache-first),
+      // then use the first candidate in order that returns rows. The alias target is
+      // resolvable from the synonym map without waiting for the slow cold entity search,
+      // so the Transactions section fills in ~1s instead of after the ~8s search.
+      void Promise.all(names.map((entityName) => fetchEntityTransactions(entityName, controller.signal)))
+        .then((packets) => {
+          if (controller.signal.aborted) return;
+          const hit = packets.find((packet) => packet && isFact(packet) && (rows(packet, "results").length || rows(packet).length));
+          setSearchTransactionPacket(hit || undefined);
+        });
+    }, names.length ? 120 : 0);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [transactionCandidateKey, searchOpen]);
 
   function togglePanel(id: string) {
     setExpandedPanel((current) => current === id ? "" : id);
@@ -371,7 +431,7 @@ function BrdCommandCenterSidebar({ topRows, pending = false }: { topRows: Record
         <img src={assetHref("/swfi-assets/logo.svg")} alt="SWFI Sovereign Wealth Fund Institute" className="h-11 w-[132px] object-contain" />
       </div>
       <div className="px-4 py-3">
-        <div className="mb-2 text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#4A5665]">Command Center</div>
+        <div className="mb-2 text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#4A5665]">Dashboard Navigation</div>
         <nav className="grid gap-1">
           {sidebarNav.map(([label, href], index) => (
             <DashboardLink
@@ -1136,6 +1196,65 @@ function brdSearchKindForLabel(label: string): SearchKind {
   if (label === "RFPs & Opportunities") return "rfp";
   if (label === "News & Articles") return "news";
   return "entity";
+}
+
+// Client-side KV-style cache for entity->transactions results (sessionStorage, 5-min TTL),
+// keyed by exact entity name. Makes repeat and pre-warmed lookups instant, so the
+// Transactions section does not flash "No matches" while a cold fetch is in flight.
+const TXN_CACHE_PREFIX = "swfipn.entityTxn.v1:";
+function txnCacheKey(name: string): string {
+  return `${TXN_CACHE_PREFIX}${name.trim().toLowerCase()}`;
+}
+function cachedTxnPacket(name: string): Packet | undefined {
+  if (typeof window === "undefined" || !name.trim()) return undefined;
+  try {
+    const raw = window.sessionStorage.getItem(txnCacheKey(name));
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as { stored_at?: number; packet?: Packet };
+    if (!parsed.stored_at || Date.now() - parsed.stored_at > 300_000) return undefined;
+    return parsed.packet && isFact(parsed.packet) ? parsed.packet : undefined;
+  } catch {
+    return undefined;
+  }
+}
+function storeTxnPacket(name: string, packet: Packet): void {
+  if (typeof window === "undefined" || !name.trim() || !isFact(packet)) return;
+  try {
+    window.sessionStorage.setItem(txnCacheKey(name), JSON.stringify({ stored_at: Date.now(), packet }));
+  } catch {
+    // sessionStorage is an optimization only; the live fetch still runs.
+  }
+}
+async function fetchEntityTransactions(name: string, signal: AbortSignal): Promise<Packet | undefined> {
+  const cached = cachedTxnPacket(name);
+  if (cached) return cached;
+  const packet = await fetchPacket(`/api/entity-transactions/v1?name=${encodeURIComponent(name)}&limit=8`, 10_000, {
+    signal,
+    attempts: 1,
+  }).catch(() => undefined);
+  if (packet && isFact(packet)) storeTxnPacket(name, packet);
+  return packet;
+}
+
+// Build the Transactions search group from an entity's real transactions
+// (/api/entity-transactions/v1, the buyer/seller entity reference join). Rows arrive
+// pre-built with swfi.com transaction URLs (source_url/swfi_url), so links resolve to
+// the SWFI platform per the source-of-truth rule.
+function entityTransactionSearchGroups(packet: Packet | undefined, query: string): BrdSearchGroup[] {
+  if (!packet || !isFact(packet) || query.trim().length < 2) return [];
+  const txnRows = rows(packet, "results").length ? rows(packet, "results") : rows(packet);
+  const items = txnRows.slice(0, 5).map((row) => ({
+    label: brdText(row.name || row.title, "Transaction"),
+    detail: [
+      brdText(row.role, ""),
+      cleanMoney(row.amount_display || row.amount),
+      brdText(row.announced_at || row.closed_at, ""),
+      brdText(row.country, ""),
+    ].filter(Boolean).join(" · "),
+    href: dashboardTransactionHref(row),
+    sourceHref: sourceHref(row),
+  }));
+  return items.length ? [{ label: "Transactions", items }] : [];
 }
 
 function brdSearchGroups({ query, entityRows, peopleRows, transactionRows, rfpRows, newsRows }: {
@@ -2917,7 +3036,7 @@ function DashboardLink({ href, children, ...props }: AnchorHTMLAttributes<HTMLAn
 
 function researchRecordHref(row: Record<string, unknown>) {
   const source = sourceHref(row) || researchSourceUrl(row);
-  if (source) return appRouteForHref(source, "/research");
+  if (source) return source;
   return dashboardSearchFallback(row, "/intelligence");
 }
 
@@ -3188,6 +3307,14 @@ function timelineDate(row: Record<string, unknown>) {
   const parsed = Date.parse(value);
   if (!Number.isFinite(parsed)) return brdText(value, "Not disclosed");
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit" }).format(new Date(parsed));
+}
+
+function recordDateValue(row: Record<string, unknown>) {
+  // Sortable transaction timestamp, same field precedence as recordDate() below.
+  // Undated rows return 0 so they sink to the bottom of a most-recent-first sort.
+  const value = text(row.closed_at || row.announced_at || row.deadline || row.due_at || row.published_at || row.updated_at || row.last_updated || row.created_at || row.date, "");
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function recordDate(row: Record<string, unknown>) {

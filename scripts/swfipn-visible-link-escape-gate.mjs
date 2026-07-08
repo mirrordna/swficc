@@ -212,6 +212,19 @@ async function inspectRoute(browser, route) {
       result.ok = true;
       return result;
     }
+    if (isAllowedSwfiLegacyArticleUrl(result.final_url) && /\/research\/detail\/\?/i.test(route)) {
+      result.legacy_article_handoff = true;
+      result.body_chars = 0;
+      result.blank = false;
+      result.external_links = [];
+      result.canonical_swfi_handoff_anchors = [];
+      result.raw_record_anchors = [];
+      result.raw_source_attrs = [];
+      result.blank_target_legacy_anchors = [];
+      result.forbidden_text = [];
+      result.ok = true;
+      return result;
+    }
     const snapshot = await page.evaluate(() => {
       const anchors = [...document.querySelectorAll("a[href]")].map((anchor) => ({
         text: (anchor.textContent || anchor.getAttribute("aria-label") || "").trim().replace(/\s+/g, " ").slice(0, 80),

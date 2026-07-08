@@ -1,6 +1,6 @@
 # Current Version
 
-Last updated: 2026-07-04
+Last updated: 2026-07-08
 
 ## Canonical Working Version
 
@@ -14,12 +14,14 @@ https://swfipn.activemirror.ai/swficc/
 
 ## Release Identity
 
-- Release path: `/opt/swfipn-acceptance/releases/20260704T090806Z`
+- Release path: `/opt/swfipn-acceptance/releases/20260707T142032Z`
+- Public release marker (live check 2026-07-08): asset version `20260707T142032Z`
 - Primary site addresses: `swfipn.activemirror.ai, dashboard.swfi.com`
 - DNS record: `dashboard.swfi.com A 161.35.56.218`
 - DNS TTL: `300`
-- Git SHA from deploy receipt: `b428b5f1644546837b090b994913ff3a5d51300a`
+- Git SHA from deploy receipt: `6efe114a12589816c5cf90f543e17b5c823a15a5`
 - Git dirty at deploy: `true`
+- 2026-07-08 note: working-tree fixes (sidebar caption "Dashboard Navigation", search entity->transactions join polish, lint fixes) are committed on the branch and NOT live until the next receipted deploy.
 
 The `git_dirty` flag matters. It means the deployed release includes uncommitted working tree changes. Do not treat the git SHA alone as a complete build identity.
 

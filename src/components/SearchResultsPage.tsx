@@ -5,7 +5,7 @@ import SwfiBrandHeader from "@/components/SwfiBrandHeader";
 import type { Packet } from "@/lib/sourcePackets";
 import { fetchPacket, isFact, money, rows, text } from "@/lib/sourcePackets";
 import { appHref, isSwfiPlatformRecordHref, selfContainedHref, swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
-import { businessSearchQueryVariants, dedupeSearchRecords, rankSearchRecords, searchRelevanceScore as businessSearchRelevanceScore } from "@/lib/searchRelevance";
+import { businessSearchQueryVariants, mergeSearchRecordsPreferPrimary } from "@/lib/searchRelevance";
 
 const SEARCH_PREFETCH_CACHE_PREFIX = "swfipn.search.prefetch.v1:";
 
@@ -89,9 +89,15 @@ export default function SearchResultsPage() {
   }, []);
 
   const resultRows = useMemo(() => {
+    // The /api/v1/public/search order is the PRIMARY ranking (it already returns the
+    // right top hit, e.g. PIF -> Public Investment Fund, Abu Dhabi -> ADIA). The
+    // /api/source-data entities collection is APPENDED only for entities not already
+    // present — it must not reorder above the good public-search order. Interim
+    // business hierarchy (SWF > pension > ...) is a stable tiebreak, pending the
+    // official ordering list from the data team.
     const packetRows = packet && isFact(packet) ? rows(packet, "results") : [];
     const entityRows = entityPackets.flatMap((entityPacket) => rows(entityPacket, "results"));
-    return rankSearchRows(dedupeSearchRecords([...entityRows, ...packetRows]), query);
+    return mergeSearchRecordsPreferPrimary(packetRows, entityRows, query, "entity");
   }, [entityPackets, packet, query]);
   const sortedRows = useMemo(() => sortSearchRows(resultRows, sortKey, sortDir), [resultRows, sortDir, sortKey]);
   const visibleRows = sortedRows.slice(0, rowLimit);
@@ -218,14 +224,6 @@ function searchSortValue(row: Record<string, unknown>, sortKey: "type" | "result
   if (sortKey === "result") return text(row.name, "");
   if (sortKey === "source") return "SWFI";
   return [text(row.type, ""), text(row.country || row.region, ""), money(row.aum || row.assets)].filter(Boolean).join(" / ");
-}
-
-function rankSearchRows(sourceRows: Record<string, unknown>[], query: string) {
-  return rankSearchRecords(sourceRows, query, "entity");
-}
-
-function searchScore(row: Record<string, unknown>, query: string) {
-  return businessSearchRelevanceScore(row, query, "entity");
 }
 
 function productHref(href: string | undefined, fallback = "/"): string {

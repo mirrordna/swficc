@@ -29,7 +29,9 @@ function RedirectInner({ kind }: { kind: string }) {
   const params = useSearchParams();
   const target = useMemo(() => {
     const source = params.get("source") || "";
-    if (source && isSwfiPlatformRecordHref(source)) return swfiAuthHandoffHref(source);
+    if (/^https?:\/\//i.test(source)) return isSwfiPlatformRecordHref(source) ? swfiAuthHandoffHref(source) : source;
+    const legacy = (params.get("legacy") || "").trim();
+    if (kind === "research" && /^\d+$/.test(legacy)) return `https://www.swfi.com/?p=${encodeURIComponent(legacy)}`;
     const id = (params.get("id") || "").trim();
     if (id) return swfiAuthHandoffHref(recordUrl(kind, id));
     // Slug/name-only rows carry no record id. swfi.com's public search is a
