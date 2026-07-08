@@ -629,8 +629,8 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
         ) : null}
 
         <section data-gsap-reveal className={`rounded border border-[#DCE3EA] bg-white px-4 py-3 text-sm text-[#41566B] ${showRecordData ? "" : "hidden"}`}>
-		          <strong className="text-[#11314F]">Data view.</strong>
-		          <span className="mt-1 block text-[#7A8A9B]">Use this only when you need records, filters, sorting, and pagination.</span>
+		          <strong className="text-[#11314F]">Data view — a limited preview, not the database.</strong>
+		          <span className="mt-1 block text-[#7A8A9B]">Reached from a chart, ranking, or filter, this table shows the matching records; unfiltered, it shows the first preview pages only. Every row links to its SWFI platform page, where the full record lives.</span>
         </section>
 
         <section data-gsap-reveal className={`grid gap-2 rounded border border-[#DCE3EA] bg-white px-4 py-3 text-sm sm:items-center ${showRecordData ? "" : "hidden"} ${kind === "allocators" ? "sm:grid-cols-[minmax(0,1fr)_180px_150px_190px]" : kind === "deals" ? "sm:grid-cols-[minmax(0,1fr)_180px_210px_150px]" : "sm:grid-cols-[minmax(0,1fr)_180px_150px]"}`}>
