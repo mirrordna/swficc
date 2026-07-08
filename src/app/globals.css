@@ -35,3 +35,59 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #9ca3af;
 }
+
+/* ---- Sovereign Registry identity layer (Dashboard 2.0 design pass) ----
+   State money has a visual vernacular: engraved certificates, banknote
+   guilloché, treasury ledgers. Additive tokens only — body/UI faces and
+   the existing palette stay untouched. Bullion gold appears ONLY in the
+   registry band and never as a fill. */
+:root {
+  --swfi-ink: #11314f;
+  --swfi-bullion: #9c7c38;
+  --swfi-registry-line: #d8dee6;
+  --font-registry-serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, ui-serif, serif;
+}
+
+@theme inline {
+  --font-serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, ui-serif, serif;
+}
+
+/* Banknote numerals: engraved serif with tabular figures for headline money
+   numbers; .swfi-tabular aligns small data columns without changing family. */
+.swfi-numeral {
+  font-family: var(--font-registry-serif);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: 0.01em;
+}
+.swfi-tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The registry band: one guilloché strip under the brand header — the page's
+   single signature element. Pure data-URI SVG; no external assets. */
+.swfi-registry-band {
+  position: relative;
+  height: 22px;
+  border-top: 1px solid var(--swfi-registry-line);
+  border-bottom: 1px solid var(--swfi-registry-line);
+  background-color: #fdfdfc;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='22' viewBox='0 0 120 22'%3E%3Cpath d='M0 11 C 15 2, 45 2, 60 11 S 105 20, 120 11' fill='none' stroke='%2311314F' stroke-opacity='0.16' stroke-width='1'/%3E%3Cpath d='M0 11 C 15 20, 45 20, 60 11 S 105 2, 120 11' fill='none' stroke='%2311314F' stroke-opacity='0.10' stroke-width='1'/%3E%3Cpath d='M0 11 C 20 6, 40 16, 60 11 S 100 6, 120 11' fill='none' stroke='%239C7C38' stroke-opacity='0.55' stroke-width='0.75'/%3E%3C/svg%3E");
+  background-repeat: repeat-x;
+  background-size: 120px 22px;
+}
+.swfi-registry-band span {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--swfi-ink);
+}
+.swfi-registry-band span em {
+  font-style: normal;
+  background: #fdfdfc;
+  padding: 0 14px;
+}

@@ -1426,7 +1426,7 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
         {summary.map(([label, value, href, cta]) => (
           <a key={label} href={href} className="rounded border border-[#DCE3EA] bg-[#F7F9FA] px-3 py-3 no-underline">
             <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#7A8A9B]">{label}</div>
-            <div className="mt-1 text-[18px] font-bold text-[#11314F]">{value}</div>
+            <div className="swfi-numeral mt-1 text-[18px] font-bold text-[#11314F]">{value}</div>
             <div className="mt-1 text-[11px] font-semibold text-[#16538C]">{cta}</div>
           </a>
         ))}
@@ -1855,7 +1855,7 @@ function SectionRankings({ kind, tabs, rowCount }: { kind: Kind; tabs: RankingTa
                 <span className="block truncate text-[13px] font-bold text-[#11314F]">{sectionRecordLabel(kind, row)}</span>
                 <span className="block truncate text-[11px] text-[#7A8A9B]">{sectionCategoryLabel(kind, row)}</span>
               </span>
-              <span className="shrink-0 text-[12px] font-bold text-[#16538C]">{value}</span>
+              <span className="swfi-tabular shrink-0 text-[12px] font-bold text-[#16538C]">{value}</span>
             </a>
           );
         })}
@@ -1890,7 +1890,7 @@ function SectionQuickCounts({ kind, facets, universeTotal }: { kind: Kind; facet
               {facet.rows.slice(0, 5).map((row) => (
                 <a key={`${facet.field}-${row.label}`} href={appHref(`${routeByKind[kind]}/?filter=${encodeURIComponent(row.label)}`)} className="flex items-center justify-between gap-2 rounded px-1 py-0.5 text-[12px] no-underline hover:bg-[#F7F9FA]">
                   <span className="truncate font-semibold text-[#41566B]">{row.label}</span>
-                  <span className="shrink-0 font-bold text-[#11314F]">{row.count.toLocaleString("en-US")}</span>
+                  <span className="swfi-tabular shrink-0 font-bold text-[#11314F]">{row.count.toLocaleString("en-US")}</span>
                 </a>
               ))}
             </div>
@@ -2084,7 +2084,7 @@ function CompassVisualization({ rows: sourceRows, totalRows }: { rows: Row[]; to
         {summary.map(([label, value]) => (
           <a key={label} href={appHref("/mandates/?filter=")} className="rounded border border-[#DCE3EA] bg-[#F7F9FA] px-3 py-3 no-underline">
             <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#7A8A9B]">{label}</div>
-            <div className="mt-1 text-[19px] font-bold text-[#11314F]">{value}</div>
+            <div className="swfi-numeral mt-1 text-[19px] font-bold text-[#11314F]">{value}</div>
             <div className="mt-1 text-[11px] font-semibold text-[#16538C]">Click → the records</div>
           </a>
         ))}

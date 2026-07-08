@@ -1620,7 +1620,7 @@ function ConceptKpiCard({ label, value, note, href, series, color, statusLabel =
     <DashboardLink href={href} title={explain || undefined} data-qa-min="150" className="min-w-0 border border-[#C9D3DE] bg-white px-3 py-2.5 text-inherit no-underline shadow-[0_1px_2px_rgba(20,44,70,0.05)] hover:border-[#D51E29]/50">
       <div className="text-[9px] font-extrabold uppercase tracking-[0.12em] text-[#7B8996]">{label}</div>
       <div className="mt-1 flex items-end justify-between gap-2">
-        <div className="break-words text-[20px] font-extrabold leading-none text-[#13283D]">{value}</div>
+        <div className="swfi-numeral break-words text-[20px] font-extrabold leading-none text-[#13283D]">{value}</div>
         <MiniSparkline series={series} color={color} large />
       </div>
       <div className="mt-2 flex min-h-[14px] items-center justify-between gap-2 text-[10.5px]">
@@ -1806,7 +1806,7 @@ function InstitutionIntelligenceOverview({
       <div className="grid gap-3 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
         <VisualPanel title="Total Institutions Tracked by Entity Type" source={ENDPOINTS.institutionTypes} empty={DASHBOARD_EMPTY} hasRows={institutionTypeRows.length > 0}>
           <div className="mb-3 flex items-end justify-between gap-3">
-            <div className="text-[28px] font-extrabold leading-none text-[#11314F]">{totalInstitutions ? compactNumber(totalInstitutions) : "Not disclosed"}</div>
+            <div className="swfi-numeral text-[28px] font-extrabold leading-none text-[#11314F]">{totalInstitutions ? compactNumber(totalInstitutions) : "Not disclosed"}</div>
             <DashboardLink href="/profiles" className="text-[11px] font-extrabold text-[#0A3A7A] underline">View records</DashboardLink>
           </div>
           <div className="grid gap-2">

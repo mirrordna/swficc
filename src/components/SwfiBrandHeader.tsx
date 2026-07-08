@@ -44,6 +44,7 @@ export default function SwfiBrandHeader({
   showSearch?: boolean;
 }) {
   return (
+    <>
     <header data-gsap-reveal className="relative z-50 shrink-0 border-b border-[#7E1417] bg-[#A61C20] text-white">
       <div className="mx-auto flex min-h-[80px] max-w-[1296px] flex-wrap items-center gap-5 px-4 py-3 lg:flex-nowrap lg:px-[72px]">
         <a href={appHref("/")} className="flex min-w-[150px] items-center text-white no-underline" aria-label="SWFI home">
@@ -108,6 +109,11 @@ export default function SwfiBrandHeader({
         </form>
       </div> : null}
     </header>
+    {/* Sovereign Registry signature: guilloché band, one per page, decorative. */}
+    <div className="swfi-registry-band shrink-0" aria-hidden="true">
+      <span><em>Sovereign Wealth Fund Institute · Official Records Preview</em></span>
+    </div>
+  </>
   );
 }
 
