@@ -48,3 +48,18 @@ is the authority; this file is the working copy.
   concentration percentages, the newest dated record, and the largest
   disclosed figure — each line linking to its records. Both panels render
   nothing instead of empty frames when the loaded records cannot support them.
+- Third pass (user-lens wave, same day): (1) "New & updated in this view" —
+  a freshness strip classifying loaded records as new or updated inside a
+  7-day window (widening once to 30 days), newest first, each row linking
+  through the SWFI record chain; (2) a "Closing soonest" rankings tab wherever
+  loaded records carry future deadlines ("Closes in N days", soonest first,
+  past deadlines excluded) — including the mandates/Compass view; (3) a
+  "Focus (optional)" lens: the visitor picks category/geography terms, a
+  "Your focus" rankings tab pins matching records first; terms live in
+  localStorage only (P02: no login, no server profile) and the panel states
+  that in plain language. All ranking/freshness/focus math lives in
+  `src/lib/sectionDashboards.ts` with an injected clock, fixture-tested by
+  `scripts/swfipn-section-dashboard-logic-test.mjs` (25 checks). AUM history
+  sparklines were requested but are blocked: no history/time-series endpoint
+  is wired in this repo's frontend surface (checked 2026-07-08); backend wish
+  list.

@@ -17,6 +17,7 @@ import {
 } from "@/lib/sourcePackets";
 import { appHref, isSwfiPlatformRecordHref, selfContainedHref, sourceProvenanceHref, swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
 import { legacyPostId, mandateDetailHref, personDetailHref, profileDetailHref, researchDetailHref, sourceRecordIdFor, transactionDetailHref } from "@/lib/detailRoutes";
+import { closingSoonestRanking, daysUntilLabel, firstStamp, focusRanking, freshnessSummary, largestRanking, mostRecentRanking, type DashRecord } from "@/lib/sectionDashboards";
 import SwfiBrandHeader from "@/components/SwfiBrandHeader";
 import AlertsRuleManager from "@/components/AlertsRuleManager";
 import SavedSearchManager from "@/components/SavedSearchManager";
@@ -1363,7 +1364,6 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
   const facetData = facetPacket && isFact(facetPacket) ? (packetData(facetPacket) as { total?: number; facets?: FacetBlock[] }) : undefined;
   const universeFacets = (facetData?.facets || []).filter((facet) => facet.rows.length > 0);
   const universeTotal = typeof facetData?.total === "number" ? facetData.total : 0;
-  const rankingTabs = sectionRankingTabs(kind, sourceRows);
   // Quick Counts uses the source-side facet fields the two universe charts below
   // do NOT already show, so the rail adds counts instead of repeating the charts.
   const quickCountFacets = universeFacets.slice(2, 4).filter((facet) => facet.rows.length > 1);
@@ -1372,6 +1372,13 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
   const geographyRows = bucketRows(sourceRows, (row) => businessText(row.country || row.region || row.buyer_region || row.seller_region));
   const trendRows = bucketRows(sourceRows, (row) => monthBucket(row.closed_at || row.announced_at || row.published_at || row.updated_at || row.created_at || row.last_updated)).reverse();
   const topRows = [...sourceRows].slice(0, 8);
+  const { focusTerms, toggleFocusTerm, clearFocusTerms } = useFocusTerms();
+  const now = useNowOnce();
+  const rankingTabs = sectionRankingTabs(kind, sourceRows, now, focusTerms);
+  const focusChips = [
+    ...categoryRows.filter((bucket) => bucket.label !== NOT_DISCLOSED).slice(0, 5).map((bucket) => bucket.label),
+    ...geographyRows.filter((bucket) => bucket.label !== NOT_DISCLOSED).slice(0, 5).map((bucket) => bucket.label),
+  ];
   const summary = [
     ["Total in SWFI", totalRows.toLocaleString("en-US")],
     ["Items in View", sourceRows.length.toLocaleString("en-US")],
@@ -1398,7 +1405,9 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
           </div>
         ))}
       </div>
+      <SectionFreshness kind={kind} rows={sourceRows} />
       <SectionInsights kind={kind} rows={sourceRows} />
+      <SectionFocusLens chips={focusChips} focusTerms={focusTerms} onToggle={toggleFocusTerm} onClear={clearFocusTerms} />
       {rankingTabs.length > 0 || quickCountFacets.length > 0 ? (
         <div className="grid items-start gap-4 xl:grid-cols-[1.6fr_1fr]">
           <SectionRankings kind={kind} tabs={rankingTabs} rowCount={sourceRows.length} />
@@ -1570,49 +1579,164 @@ function sectionMoneyDisplay(kind: Kind, row: Row): string {
   return disclosedMoney(row.aum || row.assets);
 }
 
-function sectionDateStamp(row: Row): number {
-  const raw = text(row.closed_at || row.announced_at || row.published_at || row.deadline || row.due_at || row.most_recent_activity_date || row.updated_at || row.created_at || row.last_updated, "");
-  if (!raw) return 0;
-  const parsed = Date.parse(raw);
-  return Number.isNaN(parsed) ? 0 : parsed;
-}
-
 function sectionDateDisplay(stamp: number): string {
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit", year: "numeric" }).format(new Date(stamp));
 }
 
+type RankedRow = DashRecord & { row: Row };
+
+// One descriptor per row feeds every Dashboard 2.0 panel; the ranking math
+// itself lives in src/lib/sectionDashboards.ts and is fixture-tested under
+// node by scripts/swfipn-section-dashboard-logic-test.mjs.
+function dashRecordFor(kind: Kind, row: Row): RankedRow {
+  const sizeDisplay = sectionMoneyDisplay(kind, row);
+  return {
+    row,
+    label: sectionRecordLabel(kind, row),
+    category: sectionCategoryLabel(kind, row),
+    geography: sectionGeographyLabel(row),
+    sizeDisplay,
+    sizeValue: numericSortValue(sizeDisplay),
+    dateStamp: firstStamp([row.closed_at, row.announced_at, row.published_at, row.deadline, row.due_at, row.most_recent_activity_date, row.updated_at, row.created_at, row.last_updated]),
+    createdStamp: firstStamp([row.created_at, row.posted_at, row.announced_at, row.published_at]),
+    updatedStamp: firstStamp([row.updated_at, row.last_updated, row.most_recent_activity_date]),
+    deadlineStamp: firstStamp([row.deadline, row.due_at]),
+  };
+}
+
 type RankingTab = { id: string; label: string; explain: string; entries: { row: Row; value: string }[] };
 
-function sectionRankingTabs(kind: Kind, sourceRows: Row[]): RankingTab[] {
+function sectionRankingTabs(kind: Kind, sourceRows: Row[], now: number, focusTerms: string[]): RankingTab[] {
+  const records = sourceRows.map((row) => dashRecordFor(kind, row));
   const tabs: RankingTab[] = [];
-  const bySize = sourceRows
-    .map((row) => ({ row, display: sectionMoneyDisplay(kind, row) }))
-    .map((entry) => ({ ...entry, size: numericSortValue(entry.display) ?? -1 }))
-    .filter((entry) => entry.size > 0)
-    .sort((a, b) => b.size - a.size)
-    .slice(0, 5);
-  if (bySize.length >= 3) {
+  const byFocus = focusRanking(records, focusTerms);
+  if (byFocus.length) {
+    tabs.push({
+      id: "focus",
+      label: "Your focus",
+      explain: `Records matching the focus you chose (${focusTerms.join(", ")}), largest first,`,
+      entries: byFocus.map((record) => ({ row: record.row, value: record.sizeValue ? record.sizeDisplay : record.dateStamp ? sectionDateDisplay(record.dateStamp) : record.category })),
+    });
+  }
+  const byDeadline = closingSoonestRanking(records, now);
+  if (byDeadline.length) {
+    tabs.push({
+      id: "closing",
+      label: "Closing soonest",
+      explain: "Ranked by each record's stated deadline, soonest first,",
+      entries: byDeadline.map((record) => ({ row: record.row, value: `${daysUntilLabel(record.deadlineStamp, now)} · ${sectionDateDisplay(record.deadlineStamp)}` })),
+    });
+  }
+  const bySize = largestRanking(records);
+  if (bySize.length) {
     tabs.push({
       id: "largest",
       label: kind === "transactions" || kind === "deals" || kind === "mandates" || kind === "alerts" ? "Largest disclosed value" : "Largest disclosed AUM",
       explain: "Ranked by the figure disclosed on each record, largest first,",
-      entries: bySize.map((entry) => ({ row: entry.row, value: entry.display })),
+      entries: bySize.map((record) => ({ row: record.row, value: record.sizeDisplay })),
     });
   }
-  const byDate = sourceRows
-    .map((row) => ({ row, stamp: sectionDateStamp(row) }))
-    .filter((entry) => entry.stamp > 0)
-    .sort((a, b) => b.stamp - a.stamp)
-    .slice(0, 5);
-  if (byDate.length >= 3) {
+  const byDate = mostRecentRanking(records);
+  if (byDate.length) {
     tabs.push({
       id: "recent",
       label: "Most recent",
       explain: "Ranked by each record's own most recent date, newest first,",
-      entries: byDate.map((entry) => ({ row: entry.row, value: sectionDateDisplay(entry.stamp) })),
+      entries: byDate.map((record) => ({ row: record.row, value: sectionDateDisplay(record.dateStamp) })),
     });
   }
   return tabs;
+}
+
+// The clock is read once per mount (lazy state initializer), so renders stay
+// pure (react-hooks/purity) and re-renders never shift the rankings mid-view.
+function useNowOnce(): number {
+  const [now] = useState(() => Date.now());
+  return now;
+}
+
+// Focus terms persist in this browser only (localStorage) — P02: no login and
+// no server-side profile; the panels state the chosen terms in plain language.
+// Lazy initializer instead of an effect: at prerender there is no window, so
+// the server markup and the first client render both start from the same
+// empty-rows null panels and no hydration mismatch is possible.
+function useFocusTerms(): { focusTerms: string[]; toggleFocusTerm: (term: string) => void; clearFocusTerms: () => void } {
+  const [focusTerms, setFocusTerms] = useState<string[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem("swfipn.focus.v1") || "{}") as { terms?: unknown };
+      return Array.isArray(parsed.terms) ? parsed.terms.filter((term): term is string => typeof term === "string").slice(0, 8) : [];
+    } catch {
+      return [];
+    }
+  });
+  const persist = (next: string[]) => {
+    try {
+      window.localStorage.setItem("swfipn.focus.v1", JSON.stringify({ terms: next }));
+    } catch {
+      /* storage unavailable: focus lasts for this visit only */
+    }
+  };
+  const toggleFocusTerm = (term: string) => setFocusTerms((current) => {
+    const next = current.includes(term) ? current.filter((existing) => existing !== term) : [...current, term].slice(0, 8);
+    persist(next);
+    return next;
+  });
+  const clearFocusTerms = () => setFocusTerms(() => {
+    persist([]);
+    return [];
+  });
+  return { focusTerms, toggleFocusTerm, clearFocusTerms };
+}
+
+function SectionFocusLens({ chips, focusTerms, onToggle, onClear }: { chips: string[]; focusTerms: string[]; onToggle: (term: string) => void; onClear: () => void }) {
+  if (chips.length < 2 && !focusTerms.length) return null;
+  return (
+    <div className="rounded border border-[#DCE3EA] bg-white p-3" data-brd-section-focus="true">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="m-0 text-[13px] font-bold text-[#11314F]">Focus (optional)</h3>
+        {focusTerms.length ? <button type="button" onClick={onClear} className="rounded border border-[#C7D2DD] bg-white px-2 py-0.5 text-[11px] font-semibold text-[#16538C]">Clear focus</button> : null}
+      </div>
+      <div className="mb-2 mt-1 text-[12px] text-[#7A8A9B]">Pick terms to pin matching records first under Top rankings. Your choice is stored only in this browser.</div>
+      <div className="flex flex-wrap gap-1.5">
+        {[...new Set([...focusTerms, ...chips])].map((term) => {
+          const active = focusTerms.includes(term);
+          return (
+            <button key={term} type="button" onClick={() => onToggle(term)} className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${active ? "border-[#16538C] bg-[#16538C] text-white" : "border-[#C7D2DD] bg-white text-[#41566B]"}`}>
+              {term}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function SectionFreshness({ kind, rows: sourceRows }: { kind: Kind; rows: Row[] }) {
+  const now = useNowOnce();
+  const summary = freshnessSummary(sourceRows.map((row) => dashRecordFor(kind, row)), now);
+  if (!summary) return null;
+  return (
+    <div className="rounded border border-[#DCE3EA] bg-white p-3" data-brd-section-freshness={kind}>
+      <h3 className="m-0 mb-1 text-[13px] font-bold text-[#11314F]">New &amp; updated in this view</h3>
+      <div className="mb-2 text-[12px] text-[#7A8A9B]">
+        {summary.newCount.toLocaleString("en-US")} new and {summary.updatedCount.toLocaleString("en-US")} updated records among the ones loaded in this view, dated within the last {summary.windowDays} days. Click a name to open its SWFI page.
+      </div>
+      <div className="grid gap-1">
+        {summary.entries.map(({ record, changeKind, stamp }, index) => {
+          const source = sourceHref(record.row);
+          const href = productHref(sectionRecordHref(kind, record.row, source), routeByKind[kind]);
+          return (
+            <a key={`${changeKind}-${index}`} href={href} data-source-state={source ? "on-file" : undefined} className="flex items-center gap-3 rounded border border-[#EEF2F6] px-3 py-1.5 no-underline hover:bg-[#F7F9FA]">
+              <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] ${changeKind === "new" ? "bg-[#E7F2EA] text-[#1F7A3D]" : "bg-[#EAF1F8] text-[#16538C]"}`}>{changeKind}</span>
+              <span className="min-w-0 flex-1 truncate text-[13px] font-bold text-[#11314F]">{record.label}</span>
+              <span className="shrink-0 text-[12px] text-[#7A8A9B]">{sectionDateDisplay(stamp)}</span>
+            </a>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function SectionRankings({ kind, tabs, rowCount }: { kind: Kind; tabs: RankingTab[]; rowCount: number }) {
@@ -1763,25 +1887,19 @@ function SectionInsights({ kind, rows: sourceRows }: { kind: Kind; rows: Row[] }
       });
     }
   }
-  const newest = sourceRows
-    .map((row) => ({ row, stamp: sectionDateStamp(row) }))
-    .filter((entry) => entry.stamp > 0)
-    .sort((a, b) => b.stamp - a.stamp)[0];
+  const records = sourceRows.map((row) => dashRecordFor(kind, row));
+  const newest = mostRecentRanking(records, 1, 1)[0];
   if (newest) {
     chips.push({
-      text: `Newest dated record in this view: ${sectionRecordLabel(kind, newest.row)} (${sectionDateDisplay(newest.stamp)}).`,
+      text: `Newest dated record in this view: ${newest.label} (${sectionDateDisplay(newest.dateStamp)}).`,
       href: productHref(sectionRecordHref(kind, newest.row, sourceHref(newest.row)), routeByKind[kind]),
       linkLabel: "Open it",
     });
   }
-  const largest = sourceRows
-    .map((row) => ({ row, display: sectionMoneyDisplay(kind, row) }))
-    .map((entry) => ({ ...entry, size: numericSortValue(entry.display) ?? -1 }))
-    .filter((entry) => entry.size > 0)
-    .sort((a, b) => b.size - a.size)[0];
+  const largest = largestRanking(records, 1, 1)[0];
   if (largest) {
     chips.push({
-      text: `Largest disclosed figure in this view: ${largest.display} (${sectionRecordLabel(kind, largest.row)}).`,
+      text: `Largest disclosed figure in this view: ${largest.sizeDisplay} (${largest.label}).`,
       href: productHref(sectionRecordHref(kind, largest.row, sourceHref(largest.row)), routeByKind[kind]),
       linkLabel: "Open it",
     });
@@ -1815,6 +1933,13 @@ function CompassVisualization({ rows: sourceRows, totalRows }: { rows: Row[]; to
     ["Total Capital Sought", totalCapital ? compactMoney(totalCapital) : NOT_DISCLOSED],
     ["Average Ticket Size", averageTicket ? compactMoney(averageTicket) : NOT_DISCLOSED],
   ] as const;
+  const { focusTerms, toggleFocusTerm, clearFocusTerms } = useFocusTerms();
+  const now = useNowOnce();
+  const rankingTabs = sectionRankingTabs("mandates", sourceRows, now, focusTerms);
+  const focusChips = [
+    ...investmentTypeRows.filter((bucket) => bucket.label !== NOT_DISCLOSED).slice(0, 5).map((bucket) => bucket.label),
+    ...regionRows.filter((bucket) => bucket.label !== NOT_DISCLOSED).slice(0, 5).map((bucket) => bucket.label),
+  ];
   return (
     <div className="grid gap-4" data-brd-compass-visualization="true">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1827,6 +1952,9 @@ function CompassVisualization({ rows: sourceRows, totalRows }: { rows: Row[]; to
           Sign in on SWFI to export
         </a>
       </div>
+      <SectionFreshness kind="mandates" rows={sourceRows} />
+      <SectionFocusLens chips={focusChips} focusTerms={focusTerms} onToggle={toggleFocusTerm} onClear={clearFocusTerms} />
+      {rankingTabs.length ? <SectionRankings kind="mandates" tabs={rankingTabs} rowCount={sourceRows.length} /> : null}
       <div className="grid gap-3 sm:grid-cols-3">
         {summary.map(([label, value]) => (
           <div key={label} className="rounded border border-[#DCE3EA] bg-[#F7F9FA] px-3 py-3">
