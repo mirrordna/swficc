@@ -99,3 +99,12 @@ export function daysUntilLabel(deadlineStamp: number, now: number): string {
   if (days === 1) return "Closes tomorrow";
   return `Closes in ${days} days`;
 }
+
+// Dashboard 2.0 P02 ("only a limited preview of SWFI data") + P03 ("raw
+// database dumps are not allowed"): Data views paginate at most this many
+// pages; beyond it the pager hands off to SWFI sign-in for the full universe.
+export const PREVIEW_PAGE_CAP = 4;
+
+export function previewPageCount(totalPages: number, cap = PREVIEW_PAGE_CAP): number {
+  return Math.max(1, Math.min(Math.floor(totalPages), cap));
+}

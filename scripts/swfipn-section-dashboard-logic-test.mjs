@@ -11,6 +11,8 @@ import {
   focusRanking,
   freshnessSummary,
   daysUntilLabel,
+  previewPageCount,
+  PREVIEW_PAGE_CAP,
 } from "../src/lib/sectionDashboards.ts";
 
 const NOW = Date.parse("2026-07-08T12:00:00Z");
@@ -162,6 +164,12 @@ check("a recently created record counts once, as new", newIsNotAlsoUpdated.entri
 check("daysUntil today", daysUntilLabel(NOW - 1, NOW), "Closes today");
 check("daysUntil tomorrow", daysUntilLabel(NOW + 1 * DAY, NOW), "Closes tomorrow");
 check("daysUntil N days", daysUntilLabel(NOW + 9 * DAY, NOW), "Closes in 9 days");
+
+// previewPageCount (P02 limited-preview cap)
+check("preview cap bounds a universe-sized pager", previewPageCount(23805), PREVIEW_PAGE_CAP);
+check("preview cap passes small pagers through", previewPageCount(3), 3);
+check("preview cap floors at one page", previewPageCount(0), 1);
+check("preview cap truncates fractional page counts", previewPageCount(2.9), 2);
 
 console.log(failures === 0 ? `ALL CHECKS PASS (${failures} failures)` : `${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

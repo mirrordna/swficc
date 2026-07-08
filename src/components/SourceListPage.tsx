@@ -17,7 +17,7 @@ import {
 } from "@/lib/sourcePackets";
 import { appHref, isSwfiPlatformRecordHref, selfContainedHref, sourceProvenanceHref, swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
 import { legacyPostId, mandateDetailHref, personDetailHref, profileDetailHref, researchDetailHref, sourceRecordIdFor, transactionDetailHref } from "@/lib/detailRoutes";
-import { closingSoonestRanking, daysUntilLabel, firstStamp, focusRanking, freshnessSummary, largestRanking, mostRecentRanking, type DashRecord } from "@/lib/sectionDashboards";
+import { closingSoonestRanking, daysUntilLabel, firstStamp, focusRanking, freshnessSummary, largestRanking, mostRecentRanking, previewPageCount, type DashRecord } from "@/lib/sectionDashboards";
 import SwfiBrandHeader from "@/components/SwfiBrandHeader";
 import AlertsRuleManager from "@/components/AlertsRuleManager";
 import SavedSearchManager from "@/components/SavedSearchManager";
@@ -452,7 +452,11 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
     if (kind === "allocators") return filtered;
     return [...filtered].sort((a, b) => compareCells(a[sortColumn], b[sortColumn], sortDir));
   }, [kind, sourceRows, sortColumn, sortDir, tableFilter]);
-  const pageCount = Math.max(1, Math.ceil((serverPaged ? totalRows : filteredRows.length) / rowLimit));
+  const fullPageCount = Math.max(1, Math.ceil((serverPaged ? totalRows : filteredRows.length) / rowLimit));
+  // Dashboard 2.0 P02/P03: the Data view is a limited preview — the pager stops
+  // at the cap and hands off to SWFI sign-in for the full universe.
+  const pageCount = previewPageCount(fullPageCount);
+  const previewCapped = fullPageCount > pageCount;
   const safePageIndex = Math.min(pageIndex, pageCount - 1);
   const pageStart = serverPaged ? 0 : safePageIndex * rowLimit;
   const visibleRows = filteredRows.slice(pageStart, pageStart + rowLimit);
@@ -780,8 +784,11 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
         </div>
         {showRecordData && pageCount > 1 ? (
         <div data-gsap-reveal className="flex flex-wrap items-center justify-between gap-2 rounded border border-[#DCE3EA] bg-white px-4 py-3 text-sm text-[#41566B]">
-          <div>Page {(safePageIndex + 1).toLocaleString("en-US")} of {pageCount.toLocaleString("en-US")}</div>
-          <div className="flex gap-2">
+          <div>
+            Page {(safePageIndex + 1).toLocaleString("en-US")} of {pageCount.toLocaleString("en-US")}{previewCapped ? " preview pages" : ""}
+            {previewCapped ? <span className="ml-2 text-[12px] text-[#7A8A9B]">This dashboard shows a limited preview of SWFI data.</span> : null}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               className="rounded border border-[#C7D2DD] bg-white px-3 py-1 text-[#16538C] disabled:opacity-40"
@@ -798,6 +805,11 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
             >
               Next
             </button>
+            {previewCapped && safePageIndex >= pageCount - 1 ? (
+              <a href="https://www.swfi.com/v1/signin/?msg=auth" className="rounded border border-[#16538C] bg-[#16538C] px-3 py-1 font-semibold text-white no-underline">
+                Continue on SWFI →
+              </a>
+            ) : null}
           </div>
         </div>
         ) : null}

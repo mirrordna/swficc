@@ -63,3 +63,12 @@ is the authority; this file is the working copy.
   sparklines were requested but are blocked: no history/time-series endpoint
   is wired in this repo's frontend surface (checked 2026-07-08); backend wish
   list.
+- P02/P03 (fourth pass, same day): the Data-view pager is capped at 4 preview
+  pages (`PREVIEW_PAGE_CAP` in the tested lib; 4 more fixture checks). Beyond
+  the cap the pager states "This dashboard shows a limited preview of SWFI
+  data" and offers "Continue on SWFI ->" to the platform sign-in. Row-limit
+  controls (5/10/25/50/100) and one enabled Next click are preserved — the
+  two gate scripts that exercise pagination (table-controls-proof,
+  route-parity) click Next once on an enabled button. Full totals remain
+  honestly disclosed ("Showing 25 of 595,106"). P02 clause 1 re-verified in
+  code the same day: no middleware.ts, no local login gate greps.
