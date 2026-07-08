@@ -510,6 +510,17 @@ async function main() {
         ["pass", "blocked"]
       ));
     }
+    if (includeShare) {
+      fs.rmSync(path.join(outputDir, "swfipn-public-gc1-link-proof-latest.json"), { force: true });
+      fs.rmSync(path.join(outputDir, "swfipn-public-gc1-link-proof.png"), { force: true });
+      steps.push(runCommand(
+        "gc1_link_proof",
+        "node",
+        ["scripts/swfipn-gc1-link-proof.mjs"],
+        { env: { SWFIPN_ORIGIN: publicOrigin }, timeout: 120_000 }
+      ));
+      steps.push(npmGate("share_gate", "share:gate:public", "swfipn-share-gate-latest.json", { SWFIPN_ORIGIN: publicOrigin }));
+    }
     fs.rmSync(path.join(outputDir, "swfipn-acceptance-lock-tool-latest.json"), { force: true });
     const acceptanceLockTool = runCommand("acceptance_lock_tool", "python3", [
       "tools/loop-budget/swficc_acceptance_lock.py",
@@ -538,17 +549,6 @@ async function main() {
       receipt: receiptSummary("swfipn-loop-collapse-latest.json", undefined, loopCollapse.started_at_ms),
     });
     writeReceipt(steps);
-    if (includeShare) {
-      fs.rmSync(path.join(outputDir, "swfipn-public-gc1-link-proof-latest.json"), { force: true });
-      fs.rmSync(path.join(outputDir, "swfipn-public-gc1-link-proof.png"), { force: true });
-      steps.push(runCommand(
-        "gc1_link_proof",
-        "node",
-        ["scripts/swfipn-gc1-link-proof.mjs"],
-        { env: { SWFIPN_ORIGIN: publicOrigin }, timeout: 120_000 }
-      ));
-      steps.push(npmGate("share_gate", "share:gate:public", "swfipn-share-gate-latest.json", { SWFIPN_ORIGIN: publicOrigin }));
-    }
 
     const receipt = writeReceipt(steps);
     console.log(JSON.stringify({

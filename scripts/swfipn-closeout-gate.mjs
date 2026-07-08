@@ -31,7 +31,7 @@ const listRoutes = [
   { id: "transactions", route: "/transactions/", api: "/api/transactions/v1", totalAtLeast: 180_000, kind: "transaction", pattern: /\/swficc\/transactions\/detail\/\?(?=[^#]*(?:title|id)=)/i },
   { id: "deals", route: "/deals/", api: "/api/transactions/v1", totalAtLeast: 180_000, kind: "transaction", pattern: /\/swficc\/transactions\/detail\/\?(?=[^#]*(?:title|id)=)/i },
   { id: "mandates", route: "/mandates/", api: "/api/live-opportunities/v1", totalAtLeast: 30, kind: "compass", pattern: /\/swficc\/mandates\/detail\/\?(?=[^#]*(?:title|id)=)/i },
-  { id: "research", route: "/research/", api: "/api/source-intelligence/news/v1", totalAtLeast: 10, kind: "legacy", pattern: /\/swficc\/research\/detail\/\?(?:[^#]*&)?legacy=\d+/i },
+  { id: "intelligence", route: "/intelligence/", api: "/api/source-intelligence/news/v1", totalAtLeast: 10, kind: "legacy", pattern: /\/swficc\/research\/detail\/\?(?:[^#]*&)?legacy=\d+/i },
 ];
 
 const forbiddenText = [
@@ -271,7 +271,7 @@ async function listPageCheck(browser) {
         );
         let body = await page.locator("body").innerText();
         if ((!body.includes("Filter") || !body.includes("Rows")) && /Visualization-first view/i.test(body)) {
-          await page.getByRole("button", { name: /^Data$/i }).click({ timeout: 10_000 }).catch(() => {});
+          await page.getByRole("button", { name: /^Records$/i }).click({ timeout: 10_000 }).catch(() => {});
           await page.waitForFunction(
             () => /Filter/i.test(document.body.innerText) && /Rows/i.test(document.body.innerText),
             null,
