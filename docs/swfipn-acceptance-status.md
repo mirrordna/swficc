@@ -8,9 +8,9 @@ This does not claim that full BRD Phase 2 productization is complete.
 
 Public URL: `https://swfipn.activemirror.ai/swficc/`
 
-Deployed release: `/opt/swfipn-acceptance/releases/20260708T112550Z`
+Deployed release: `/opt/swfipn-acceptance/releases/20260708T122221Z`
 
-Public asset version: `20260708T112550Z`
+Public asset version: `20260708T122221Z`
 
 ## Verdict
 

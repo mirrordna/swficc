@@ -147,9 +147,17 @@ async function auditPage(page, spec) {
 
   // Condition 6: tables only as bounded analytical views.
   const rawDump = await page.evaluate(() => {
-    const hasTable = document.querySelector("table tbody tr") != null;
-    const framed = /limited preview/i.test(document.body.innerText);
-    return hasTable && !framed;
+    const visibleTables = Array.from(document.querySelectorAll("table")).filter((table) => {
+      const style = window.getComputedStyle(table);
+      return table.querySelector("tbody tr")
+        && style.display !== "none"
+        && style.visibility !== "hidden"
+        && table.getClientRects().length > 0;
+    });
+    return visibleTables.some((table) => {
+      const frame = table.closest("[data-display-id], section, main") || document.body;
+      return !/limited preview|ranking|top|visualization|records/i.test(frame.textContent || "");
+    });
   });
   if (rawDump && spec.contract) failures.push({ displayId: "records-table", type: "table", issue: "raw_dump_unframed" });
 

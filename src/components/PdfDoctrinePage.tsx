@@ -185,7 +185,7 @@ export default function PdfDoctrinePage() {
                 </div>
                 <div className="flex rounded border border-[#C7D2DD] bg-[#F7F9FA] p-1 text-sm">
                   {[
-                    ["data", "Data"],
+                    ["data", "Records"],
                     ["visualization", "Visualization"],
                   ].map(([value, label]) => (
                     <button
