@@ -73,6 +73,17 @@ is the authority; this file is the working copy.
   honestly disclosed ("Showing 25 of 595,106"). P02 clause 1 re-verified in
   code the same day: no middleware.ts, no local login gate greps. The Data
   view's own framing states its role: "a limited preview, not the database".
+- P05 (sixth pass, same day — exhaustive sweep): four more unauthenticated
+  download surfaces found and sign-in gated: the research detail
+  "Download Source Data" .txt link, the Reports page's Export CSV/PNG pair
+  AND its per-table "Download CSV" buttons, and the Aggregates page's
+  Export CSV/PNG pair. All download helper code deleted; a residual sweep
+  for createObjectURL / link.download / download= across src returns
+  nothing. The four gate scripts that asserted the old buttons/text
+  (section-visualization, aggregates, e2e, record-mirror) now assert the
+  sign-in-gated export instead — without this the next deploy would have
+  self-blocked on missing_export_csv, since the morning's P05 fix had
+  already removed the buttons the section-visualization gate counted.
 - P04 (fifth pass, same day): the last CTA-less elements gained destinations —
   heatmap cells click through to their category's records (tooltip says so),
   all summary tiles on both visualization surfaces carry "Click -> the

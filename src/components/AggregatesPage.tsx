@@ -121,8 +121,8 @@ export default function AggregatesPage() {
                 <button type="button" onClick={() => setView("graph")} className={`px-3 py-2 text-sm font-bold ${view === "graph" ? "bg-[#102A43] text-white" : "bg-white text-[#16538C]"}`}>Graph</button>
                 <button type="button" onClick={() => setView("data")} className={`px-3 py-2 text-sm font-bold ${view === "data" ? "bg-[#102A43] text-white" : "bg-white text-[#16538C]"}`}>Data</button>
               </div>
-              <button type="button" onClick={() => downloadCsv(points, rawPoints)} disabled={!ready} className="border border-[#C7D2DD] bg-white px-3 py-2 text-sm font-bold text-[#16538C] disabled:opacity-50">Export CSV</button>
-              <button type="button" onClick={() => downloadPng(points, `${selectedLabel} - ${selectedRegion}`)} disabled={!ready} className="border border-[#C7D2DD] bg-white px-3 py-2 text-sm font-bold text-[#16538C] disabled:opacity-50">Export PNG</button>
+              {/* Dashboard 2.0 P05: data export requires SWFI authentication — no public downloads. */}
+              <a href="https://www.swfi.com/v1/signin/?msg=auth" className="border border-[#C7D2DD] bg-white px-3 py-2 text-sm font-bold text-[#16538C] no-underline">Sign in on SWFI to export</a>
             </div>
           </div>
         </section>
@@ -244,76 +244,3 @@ function labelFor(values: readonly (readonly [string, string])[], selected: stri
   return values.find(([value]) => value === selected)?.[1] || selected;
 }
 
-function downloadCsv(points: AggregatePoint[], rawPoints: AggregatePoint[]) {
-  const rawByYear = new Map(rawPoints.map((point) => [String(point.year), point]));
-  const csv = [
-    ["Year", "Smoothed AUM", "Raw AUM", "Point Type"],
-    ...points.map((point) => {
-      const raw = rawByYear.get(String(point.year));
-      return [
-        String(point.year || ""),
-        String(point.amount || ""),
-        String(raw?.amount || ""),
-        point.estimated ? "Smoothed" : point.gap ? "Gap" : "Raw",
-      ];
-    }),
-  ].map((row) => row.map((cell) => `"${cell.replaceAll("\"", "\"\"")}"`).join(",")).join("\n");
-  downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), "swfi-entity-aggregates.csv");
-}
-
-function downloadPng(points: AggregatePoint[], title: string) {
-  const canvas = document.createElement("canvas");
-  canvas.width = 960;
-  canvas.height = 540;
-  const context = canvas.getContext("2d");
-  if (!context) return;
-  context.fillStyle = "#FFFFFF";
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  context.fillStyle = "#102A43";
-  context.font = "bold 24px Arial";
-  context.fillText(title, 40, 48);
-  const numeric = points.filter((point) => typeof point.amount === "number");
-  const max = Math.max(...numeric.map((point) => Number(point.amount || 0)), 1);
-  const minYear = Math.min(...points.map((point) => Number(point.year || 0)));
-  const maxYear = Math.max(...points.map((point) => Number(point.year || 0)), minYear + 1);
-  const left = 60;
-  const top = 84;
-  const width = 840;
-  const height = 360;
-  context.strokeStyle = "#AAB7C4";
-  context.beginPath();
-  context.moveTo(left, top);
-  context.lineTo(left, top + height);
-  context.lineTo(left + width, top + height);
-  context.stroke();
-  context.strokeStyle = "#1F4E79";
-  context.lineWidth = 3;
-  context.beginPath();
-  let started = false;
-  for (const point of points) {
-    if (typeof point.amount !== "number") continue;
-    const x = left + ((Number(point.year) - minYear) / Math.max(1, maxYear - minYear)) * width;
-    const y = top + height - (Number(point.amount) / max) * height;
-    if (!started) {
-      context.moveTo(x, y);
-      started = true;
-    } else {
-      context.lineTo(x, y);
-    }
-  }
-  context.stroke();
-  context.fillStyle = "#526171";
-  context.font = "14px Arial";
-  context.fillText(`Latest: ${money(numeric.at(-1)?.amount)}`, 40, 500);
-  canvas.toBlob((blob) => {
-    if (blob) downloadBlob(blob, "swfi-entity-aggregates.png");
-  }, "image/png");
-}
-
-function downloadBlob(blob: Blob, filename: string) {
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(blob);
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(link.href);
-}

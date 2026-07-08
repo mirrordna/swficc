@@ -117,16 +117,16 @@ async function checkPage() {
 
   const body = await page.locator("body").innerText();
   const chartPresent = await page.locator("[data-brd-aggregates='true'] svg").count();
-  const exportCsv = await page.getByRole("button", { name: "Export CSV" }).count();
-  const exportPng = await page.getByRole("button", { name: "Export PNG" }).count();
+  // Dashboard 2.0 P05: exports are sign-in gated — the gate asserts the
+  // sign-in export link instead of public download buttons.
+  const signinExport = await page.getByRole("link", { name: "Sign in on SWFI to export" }).count();
   const smoothing = await page.locator("#aggregate-smoothing").count();
   const classButtons = await page.locator("button", { hasText: "Pensions" }).count();
   const regionButtons = await page.locator("button", { hasText: "United States" }).count();
   const internalLeaks = ["Active Mirror", "source_gap", "backend_http", "backend_fetch", "undefined", "null"].filter((needle) => body.includes(needle));
   if ((response?.status() || 0) >= 400) failures.push(`http_${response?.status() || 0}`);
   if (!chartPresent) failures.push("missing_chart");
-  if (!exportCsv) failures.push("missing_export_csv");
-  if (!exportPng) failures.push("missing_export_png");
+  if (!signinExport) failures.push("missing_signin_gated_export");
   if (!smoothing) failures.push("missing_smoothing_dropdown");
   if (!classButtons) failures.push("missing_entity_class_tabs");
   if (!regionButtons) failures.push("missing_region_tabs");

@@ -167,7 +167,7 @@ export default function PdfDoctrinePage() {
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h1 className="m-0 text-[19px] font-bold text-[#11314F]">Reports</h1>
-                  <p className="m-0 mt-1 text-[12px] text-[#7A8A9B]">Downloadable rankings, allocator activity, transactions, mandates, and market-flow tables. For the live news feed, see Research &amp; Analytics.</p>
+                  <p className="m-0 mt-1 text-[12px] text-[#7A8A9B]">Rankings, allocator activity, transactions, mandates, and market-flow tables; sign in on SWFI to export them. For the live news feed, see Research &amp; Analytics.</p>
                 </div>
                 <a href="/swficc/" className="rounded border border-[#DCE3EA] px-3 py-2 text-[12px] text-[#16538C] no-underline">Dashboard</a>
               </div>
@@ -313,8 +313,8 @@ function ReportsVisualization({ reportRows, marketRows, allocatorRows, transacti
           <span>League Tables and reports are represented from the report asset records on file.</span>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => downloadReportsVisualizationCsv(reportRows, marketRows, allocatorRows, transactionRows)} className="rounded border border-[#C7D2DD] bg-white px-3 py-1.5 text-sm font-semibold text-[#16538C]">Export CSV</button>
-          <button type="button" onClick={() => downloadReportsVisualizationPng(reportBuckets)} className="rounded border border-[#C7D2DD] bg-white px-3 py-1.5 text-sm font-semibold text-[#16538C]">Export PNG</button>
+          {/* Dashboard 2.0 P05: data export requires SWFI authentication — no public downloads. */}
+          <a href="https://www.swfi.com/v1/signin/?msg=auth" className="rounded border border-[#C7D2DD] bg-white px-3 py-1.5 text-sm font-semibold text-[#16538C] no-underline">Sign in on SWFI to export</a>
         </div>
       </div>
       <div className="grid gap-3 sm:grid-cols-4">
@@ -416,13 +416,10 @@ function ReportTable({ headers, rows: tableRows, filename, empty }: { headers: s
             </select>
           </label>
         ) : null}
-        <button
-          type="button"
-          onClick={() => downloadCsv(filename, headers, sortedRows)}
-          className="min-h-8 rounded border border-[#C7D2DD] bg-white px-3 text-[#16538C]"
-        >
-          Download CSV
-        </button>
+        {/* Dashboard 2.0 P05: data export requires SWFI authentication — no public downloads. */}
+        <a href="https://www.swfi.com/v1/signin/?msg=auth" className="grid min-h-8 place-items-center rounded border border-[#C7D2DD] bg-white px-3 text-[#16538C] no-underline">
+          Sign in on SWFI to export
+        </a>
       </div>
       <div className="grid gap-3 sm:hidden">
         {visibleRows.map((row, rowIndex) => (
@@ -593,85 +590,6 @@ function bucketTableRows(tableRows: TableCell[][], columnIndex: number) {
   return [...buckets.entries()]
     .map(([label, count]) => ({ label, count }))
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
-}
-
-function downloadReportsVisualizationCsv(reportRows: TableCell[][], marketRows: TableCell[][], allocatorRows: TableCell[][], transactionRows: TableCell[][]) {
-  const rowsForCsv = [
-    ["Section", "Name", "Value"],
-    ...reportRows.map((row) => ["Reports", displayText(row[0]), displayText(row[1])]),
-    ...marketRows.map((row) => ["Market Activity", displayText(row[0]), displayText(row[1])]),
-    ...allocatorRows.map((row) => ["Active Allocators", displayText(row[0]), displayText(row[4])]),
-    ...transactionRows.map((row) => ["Transactions", displayText(row[0]), displayText(row[3])]),
-  ];
-  const blob = new Blob([`${rowsForCsv.map((row) => row.map(csvCell).join(",")).join("\n")}\n`], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = "swfi-reports-visualization.csv";
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-}
-
-function downloadReportsVisualizationPng(rowsForChart: { label: string; count: number }[]) {
-  const canvas = document.createElement("canvas");
-  canvas.width = 960;
-  canvas.height = 540;
-  const context = canvas.getContext("2d");
-  if (!context) return;
-  context.fillStyle = "#FFFFFF";
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  context.fillStyle = "#11314F";
-  context.font = "bold 28px Arial";
-  context.fillText("Reports / League Tables Visualization", 32, 48);
-  context.fillStyle = "#617386";
-  context.font = "16px Arial";
-  context.fillText("Updated from SWFI", 32, 78);
-  const max = Math.max(1, ...rowsForChart.map((row) => row.count));
-  rowsForChart.slice(0, 8).forEach((row, index) => {
-    const y = 125 + index * 46;
-    const width = Math.max(18, (row.count / max) * 620);
-    context.fillStyle = "#E8EDF2";
-    context.fillRect(285, y - 18, 640, 24);
-    context.fillStyle = "#5C9BD6";
-    context.fillRect(285, y - 18, width, 24);
-    context.fillStyle = "#11314F";
-    context.font = "14px Arial";
-    context.fillText(row.label.slice(0, 28), 32, y);
-    context.fillText(row.count.toLocaleString("en-US"), 285 + width + 10, y);
-  });
-  canvas.toBlob((blob) => {
-    if (!blob) return;
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "swfi-reports-visualization.png";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }, "image/png");
-}
-
-function downloadCsv(filename: string, headers: string[], tableRows: TableCell[][]) {
-  const lines = [
-    headers,
-    ...tableRows.map((row) => headers.map((_, index) => displayText(row[index]))),
-  ].map((row) => row.map(csvCell).join(","));
-  const blob = new Blob([`${lines.join("\n")}\n`], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-}
-
-function csvCell(value: string): string {
-  return `"${value.replace(/"/g, '""')}"`;
 }
 
 function slugify(value: string): string {

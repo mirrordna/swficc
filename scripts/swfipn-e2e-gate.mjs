@@ -141,7 +141,7 @@ const DETAIL_CASES = [
       "Ireland Strategic Investment Fund Reveals 4 Local Housing Investment Commitments",
       "Article Details",
       "Article / Report Body",
-      "Download Source Data",
+      "Sign in on SWFI for source data",
       "Verified in SWFI records",
       "SWFI Page",
     ],

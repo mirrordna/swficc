@@ -89,8 +89,9 @@ async function checkRoute(page, spec) {
   const body = await page.locator("body").innerText();
   const panelText = await page.locator(spec.selector).innerText({ timeout: 10_000 }).catch(() => "");
   const missing = spec.required.filter((item) => !body.includes(item));
-  const exportCsvButtons = await page.locator(`${spec.selector} button`, { hasText: "Export CSV" }).count();
-  const exportPngButtons = await page.locator(`${spec.selector} button`, { hasText: "Export PNG" }).count();
+  // Dashboard 2.0 P05: exports are sign-in gated — the gate asserts the
+  // sign-in export link instead of public download buttons.
+  const signinExportLinks = await page.locator(`${spec.selector} a`, { hasText: "Sign in on SWFI to export" }).count();
   const { chartFilterLinks, svgCount } = await page.evaluate((selector) => {
     const panel = document.querySelector(selector);
     return {
@@ -102,8 +103,7 @@ async function checkRoute(page, spec) {
 
   if ((response?.status() || 0) >= 400) failures.push(`http_${response?.status() || 0}`);
   if (missing.length) failures.push(`missing_text:${missing.join("|")}`);
-  if (exportCsvButtons < 1) failures.push("missing_export_csv");
-  if (exportPngButtons < 1) failures.push("missing_export_png");
+  if (signinExportLinks < 1) failures.push("missing_signin_gated_export");
   if (chartFilterLinks < 1) failures.push("missing_clickable_chart_filters");
   if (chartFilterLinks < 1 && svgCount < 1) failures.push("missing_chart_visual");
   if (internalLeaks.length) failures.push(`internal_leaks:${internalLeaks.join("|")}`);

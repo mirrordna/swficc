@@ -72,7 +72,6 @@ export default function ResearchDetailPage() {
   const sourceUrl = text(record.source_url || params.source, "");
   const title = text(record.title || record.name || params.title, "Research / News Detail");
   const status = !hasIdentifier ? "No record selected" : effectivePacket == null ? "Loading" : isFact(effectivePacket) ? VERIFIED : NOT_AVAILABLE;
-  const textDownload = useMemo(() => makeDataUrl(renderTextExport(record), "text/plain"), [record]);
   const sourceLinks = useMemo(() => normalizeSourceLinks(record.source_links), [record]);
 
   return (
@@ -100,7 +99,8 @@ export default function ResearchDetailPage() {
             </div>
           ) : null}
           <div className="mt-3 flex flex-wrap gap-2">
-            <a download={`${downloadSlug(title)}.txt`} href={textDownload} className="rounded border border-[#C7D2DD] bg-white px-3 py-2 text-[12px] text-[#16538C] no-underline">Download Source Data</a>
+            {/* Dashboard 2.0 P05: data export requires SWFI authentication — no public downloads. */}
+            <a href="https://www.swfi.com/v1/signin/?msg=auth" className="rounded border border-[#C7D2DD] bg-white px-3 py-2 text-[12px] text-[#16538C] no-underline">Sign in on SWFI for source data</a>
           </div>
         </section>
 
@@ -176,25 +176,6 @@ function browserSearch() {
 
 function serverSearch() {
   return "";
-}
-
-function makeDataUrl(textValue: string, mimeType: string) {
-  return `data:${mimeType};charset=utf-8,${encodeURIComponent(textValue)}`;
-}
-
-function renderTextExport(record: Row) {
-  const sourceLinks = normalizeSourceLinks(record.source_links);
-  return [
-    `Title: ${text(record.title || record.name, NOT_DISCLOSED)}`,
-    `SWFI Page: ${text(record.source_url, "") ? "SWFI record" : NOT_DISCLOSED}`,
-    sourceLinks.length ? `Source Links: ${sourceLinks.length} references on file` : "",
-    "",
-    text(record.content || record.excerpt, NOT_DISCLOSED),
-  ].join("\n");
-}
-
-function downloadSlug(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80) || "swfi-research-record";
 }
 
 function normalizeSourceLinks(value: unknown): SourceLink[] {

@@ -70,7 +70,7 @@ const classes = [
       "Verified in SWFI records",
       "Article Details",
       "Article / Report Body",
-      "Download Source Data",
+      "Sign in on SWFI for source data",
     ],
   },
 ];
