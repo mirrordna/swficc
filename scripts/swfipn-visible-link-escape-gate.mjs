@@ -244,6 +244,18 @@ async function inspectRoute(browser, route) {
     });
     result.body_chars = snapshot.bodyChars;
     result.blank = snapshot.blank;
+    const internalRedirectAnchor = snapshot.anchors.find((anchor) => {
+      try {
+        const parsed = new URL(anchor.href);
+        return parsed.origin === originUrl.origin && parsed.pathname === `${originUrl.pathname.replace(/\/$/, "")}/intelligence/`;
+      } catch {
+        return false;
+      }
+    });
+    if (route === "/research/" && /Research is now Intelligence/i.test(snapshot.bodyText || "") && internalRedirectAnchor) {
+      result.legacy_internal_redirect = true;
+      result.blank = false;
+    }
     result.external_links = snapshot.anchors.filter((anchor) => {
       try {
         const parsed = new URL(anchor.href);

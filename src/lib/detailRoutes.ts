@@ -130,17 +130,25 @@ export function legacyPostId(sourceUrl: string | undefined): string {
   if (!sourceUrl) return "";
   try {
     const parsed = new URL(sourceUrl);
-    return parsed.searchParams.get("p") || "";
+    return isAllowedSwfiHost(parsed.hostname) ? parsed.searchParams.get("p") || "" : "";
   } catch {
     const match = String(sourceUrl || "").match(/[?&]p=(\d+)/);
     return match?.[1] || "";
   }
 }
 
+function isAllowedSwfiUrl(value: string): boolean {
+  try {
+    return isAllowedSwfiHost(new URL(value).hostname);
+  } catch {
+    return false;
+  }
+}
+
 function researchDetailUrl(row: Row, options: DashboardDetailOptions): string {
   const label = text(options.label || row.title || row.name, "");
   const source = text(options.sourceUrl || row.source_url || row.swfi_url || row.url, "");
-  if (/^https?:\/\//i.test(source)) {
+  if (/^https?:\/\//i.test(source) && isAllowedSwfiUrl(source)) {
     const sourceRecord = parseSwfiRecordSource(source);
     return sourceRecord.id ? swfiAuthHandoffHref(source) : source;
   }

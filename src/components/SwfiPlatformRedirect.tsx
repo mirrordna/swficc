@@ -9,7 +9,7 @@
 
 import { Suspense, useEffect, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
-import { isSwfiPlatformRecordHref, swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
+import { isAllowedSwfiHost, isSwfiPlatformRecordHref, swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
 
 const KIND_COLLECTION: Record<string, string> = {
   profile: "entities",
@@ -25,11 +25,19 @@ function recordUrl(kind: string, id: string): string {
   return `https://www.swfi.com/v1/${collection}/${encodeURIComponent(id)}`;
 }
 
+function isAllowedSwfiUrl(value: string): boolean {
+  try {
+    return isAllowedSwfiHost(new URL(value).hostname);
+  } catch {
+    return false;
+  }
+}
+
 function RedirectInner({ kind }: { kind: string }) {
   const params = useSearchParams();
   const target = useMemo(() => {
     const source = params.get("source") || "";
-    if (/^https?:\/\//i.test(source)) return isSwfiPlatformRecordHref(source) ? swfiAuthHandoffHref(source) : source;
+    if (/^https?:\/\//i.test(source) && isAllowedSwfiUrl(source)) return isSwfiPlatformRecordHref(source) ? swfiAuthHandoffHref(source) : source;
     const legacy = (params.get("legacy") || "").trim();
     if (kind === "research" && /^\d+$/.test(legacy)) return `https://www.swfi.com/?p=${encodeURIComponent(legacy)}`;
     const id = (params.get("id") || "").trim();
