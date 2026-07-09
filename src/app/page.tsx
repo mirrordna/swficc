@@ -63,6 +63,7 @@ const ENDPOINTS = {
   allocators30: "/api/allocator-activity/v1?days=30&limit=25&page=1&sort=deal_count&direction=desc",
   allocators90: "/api/active-allocators/v1?days=90&limit=1",
   rfps: "/api/live-opportunities/v1?limit=25&page=1",
+  mandates: "/api/live-mandates/v1?limit=25&page=1",
   transactions30: "/api/recent-transactions/v1?days=30&limit=25&page=1",
   entities: "/api/source-data/search/v1?collection=entities&limit=25&page=1",
   people: "/api/source-data/search/v1?collection=people&limit=25&page=1",
@@ -74,7 +75,7 @@ const ENDPOINTS = {
 const LOADING = "Loading";
 const DASHBOARD_EMPTY = "No current items available";
 const SEARCH_PREFETCH_CACHE_PREFIX = "swfipn.search.prefetch.v1:";
-const DASHBOARD_LOAD_ORDER: PacketKey[] = ["top20", "allocators30", "sectorFlows", "transactions30", "rfps", "metrics", "institutionTypes", "allocators90", "entities", "people", "news"];
+const DASHBOARD_LOAD_ORDER: PacketKey[] = ["top20", "allocators30", "sectorFlows", "transactions30", "rfps", "mandates", "metrics", "institutionTypes", "allocators90", "entities", "people", "news"];
 const SEARCH_CATEGORY_LABELS = ["All", "Entities", "RFPs & Opportunities", "Transactions", "News & Articles", "People"] as const;
 const insightNav = [
   ["Top Investors", "/allocators"],
@@ -180,6 +181,11 @@ export default function DashboardPage() {
   const peopleRows = factRows(packets.people).slice(0, 25);
   const transactionRows = factRows(packets.transactions30).slice(0, 25);
   const rfpRows = factRows(packets.rfps).slice(0, 25);
+  // Investment "Opportunities" live in a separate source (/api/live-mandates/v1 — 26 records,
+  // all type "Opportunity") that Smart Search never loaded (Jaykesh 2026-07-08: "Opportunities
+  // missing"). Merged into the RFPs & Opportunities SEARCH group only (below); the RFP-specific
+  // widgets keep the original rfpRows untouched so nothing that already works regresses.
+  const mandateRows = factRows(packets.mandates).slice(0, 25);
   const newsRows = factRows(packets.news).slice(0, 25);
   const allocatorRows = factRows(packets.allocators30).slice(0, 25);
   const institutionTypeRows = institutionTypeFacetRows(packets.institutionTypes).slice(0, 8);
@@ -212,9 +218,9 @@ export default function DashboardPage() {
     entityRows: dashboardEntitySearchRows,
     peopleRows,
     transactionRows,
-    rfpRows,
+    rfpRows: dedupeSearchRecords([...rfpRows, ...mandateRows]),
     newsRows,
-  }), [searchQuery, dashboardEntitySearchRows, peopleRows, transactionRows, rfpRows, newsRows]);
+  }), [searchQuery, dashboardEntitySearchRows, peopleRows, transactionRows, rfpRows, mandateRows, newsRows]);
   const liveSearchGroups = useMemo(() => brdPublicSearchGroups(searchQuery, searchPacket, searchEntityPackets), [searchQuery, searchPacket, searchEntityPackets]);
   const baseSearchGroups = useMemo(() => mergeSearchGroups(liveSearchGroups, dashboardSearchGroups), [liveSearchGroups, dashboardSearchGroups]);
   // Resolve the top-ranked entity candidates for the query; their names drive the
