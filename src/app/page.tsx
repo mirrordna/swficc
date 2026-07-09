@@ -600,6 +600,7 @@ function VisualExecutiveOverview({
           ))}
         </div>
         <div className="grid gap-3">
+          <MostRecentDisclosedDeals rows={transactionRows} />
           <div className="grid gap-3 md:grid-cols-2">
             <DashboardLink href="/mandates" className="border border-[#C9D3DE] bg-white px-3 py-2.5 text-inherit no-underline shadow-[0_1px_2px_rgba(20,44,70,0.05)] hover:border-[#D51E29]/50">
               <span className="block text-[10px] font-extrabold tracking-[0.08em] text-[#7B8996]">Recently Fundraising Institutions</span>
@@ -2267,6 +2268,48 @@ function DealIntelligencePanel({ rows: sourceRows, sectorRows }: { rows: Record<
         </div>
       ) : null}
     </div>
+  );
+}
+
+// Client item #8 (SWFI): "Restrict Disclosed Deal Value to the 10 most recent
+// disclosed deals only." The DISCLOSED DEAL VALUE KPI above stays as the headline
+// sum; this panel is the required list. It reuses the already-loaded transactionRows
+// (ENDPOINTS.transactions30 — the most-recent records, no new endpoint) and:
+//   1. keeps only DISCLOSED deals — a positive transaction value on file, the same
+//      amountValue gate DealIntelligencePanel sorts by, so "Not disclosed" rows drop out;
+//   2. orders by transaction date, newest first (recordDateValue: closed_at → announced_at);
+//   3. takes the top 10.
+// Honest scope: the source window is the loaded rows only, so if fewer than 10 of them
+// are disclosed the panel shows every disclosed deal it has (up to 10) and never pads
+// with undisclosed rows. Each deal links to its swfi.com transaction record exactly like
+// every other deal link on this page (dashboardTransactionHref + sourceHref).
+function MostRecentDisclosedDeals({ rows: sourceRows }: { rows: Record<string, unknown>[] }) {
+  const deals = [...sourceRows]
+    .filter((row) => amountValue(row) > 0)
+    .sort((a, b) => recordDateValue(b) - recordDateValue(a))
+    .slice(0, 10);
+  return (
+    <VisualPanel title="Most Recent Disclosed Deals" source={ENDPOINTS.transactions30} empty={DASHBOARD_EMPTY} hasRows={deals.length > 0}>
+      <div className="grid gap-1.5 sm:grid-cols-2">
+        {deals.map((row, index) => (
+          <DataLink
+            key={`${brdText(row.title || row.name)}-${index}`}
+            href={dashboardTransactionHref(row)}
+            sourceHref={sourceHref(row)}
+            className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-2 rounded-[5px] border border-[#E5EBF1] bg-[#F8FAFC] px-2.5 py-2 text-inherit no-underline hover:bg-white"
+          >
+            <span className="min-w-0">
+              <span className="block truncate text-[12px] font-bold text-[#0A3A7A]">{brdText(row.title || row.name)}</span>
+              <span className="mt-0.5 block truncate text-[11px] text-[#7B8996]">{brdText(row.buyer_entity || row.institution, "Not disclosed")}</span>
+            </span>
+            <span className="shrink-0 text-right">
+              <span className="block text-[12px] font-extrabold text-[#13283D]">{cleanMoney(row.amount_display || row.capital_display || row.amount)}</span>
+              <span className="mt-0.5 block text-[11px] text-[#7B8996]">{recordDate(row)}</span>
+            </span>
+          </DataLink>
+        ))}
+      </div>
+    </VisualPanel>
   );
 }
 

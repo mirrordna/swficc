@@ -210,7 +210,9 @@ const allocatorSortOptions = [
 ] as const;
 
 function defaultSortColumn(kind: Kind): number {
-  return kind === "allocators" ? 5 : 0;
+  // Allocators default to "Most Recent Activity Date" (column index 6) so the
+  // reverse-chronological server sort and the header indicator agree.
+  return kind === "allocators" ? 6 : 0;
 }
 
 function defaultSortDir(kind: Kind): "asc" | "desc" {
@@ -251,10 +253,12 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
   const [tableFilter, setTableFilter] = useState("");
   const [sortColumn, setSortColumn] = useState(() => defaultSortColumn(kind));
   const [sortDir, setSortDir] = useState<"asc" | "desc">(() => defaultSortDir(kind));
-  const [allocatorSort, setAllocatorSort] = useState("activity_count");
+  const [allocatorSort, setAllocatorSort] = useState("most_recent_activity_date");
   const [selectedDealEntityTypes, setSelectedDealEntityTypes] = useState<string[]>([]);
   const [sectionView, setSectionView] = useState<"data" | "visualization">(() => supportsSectionVisualization(kind) ? "visualization" : "data");
-  const [rowLimit, setRowLimit] = useState(25);
+  // Client fix (7-Jul): Active Allocators is restricted to the 10 most recent.
+  // Other list kinds keep the 25-row default preview.
+  const [rowLimit, setRowLimit] = useState(() => (kind === "allocators" ? 10 : 25));
   // Paul-reported live bug 2026-07-06 (/mandates/?filter=...: "this site
   // links dont lead anywhere"): arriving with ?filter= means the visitor
   // clicked a chart segment and came for RECORDS — but the default
@@ -441,7 +445,9 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
   const fullPageCount = Math.max(1, Math.ceil((serverPaged ? totalRows : filteredRows.length) / rowLimit));
   // Dashboard 2.0 P02/P03: the Data view is a limited preview — the pager stops
   // at the cap and hands off to SWFI sign-in for the full universe.
-  const pageCount = previewPageCount(fullPageCount);
+  // Allocators are capped at the 10 most recent (single page, no deeper paging);
+  // other kinds keep the multi-page preview handoff.
+  const pageCount = kind === "allocators" ? 1 : previewPageCount(fullPageCount);
   const previewCapped = fullPageCount > pageCount;
   const safePageIndex = Math.min(pageIndex, pageCount - 1);
   const pageStart = serverPaged ? 0 : safePageIndex * rowLimit;
@@ -650,7 +656,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
               }}
               className="min-h-9 rounded border border-[#C7D2DD] bg-white px-2"
             >
-              {[5, 10, 25, 50, 100].map((value) => <option key={value} value={value}>{value}</option>)}
+              {(kind === "allocators" ? [5, 10] : [5, 10, 25, 50, 100]).map((value) => <option key={value} value={value}>{value}</option>)}
             </select>
 	          </label>
 	          {kind === "deals" ? (
@@ -1380,9 +1386,16 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
   // P04: every tile carries a destination — the Data-view records, or the
   // leading category's filtered records.
   const dataViewHref = appHref(`${routeByKind[kind]}/?filter=`);
+  // Client fix (7-Jul): "Total in SWFI" is the platform's full universe, so on
+  // Active Allocators it hands off to the SWFI platform (auth-gated) rather than
+  // the dashboard's own empty ?filter= preview. Other sections keep the in-tab
+  // records link. Mirrors the swfiAuthHandoffHref sign-in convention used across
+  // this repo for platform handoffs.
+  const totalInSwfiHref = kind === "allocators" ? "https://www.swfi.com/v1/signin/?msg=auth" : dataViewHref;
+  const totalInSwfiCta = kind === "allocators" ? "Open on SWFI →" : "Click → the records";
   const leadingCategory = categoryRows[0]?.label;
   const summary = [
-    ["Total in SWFI", totalRows.toLocaleString("en-US"), dataViewHref, "Click → the records"],
+    ["Total in SWFI", totalRows.toLocaleString("en-US"), totalInSwfiHref, totalInSwfiCta],
     ["Items in View", sourceRows.length.toLocaleString("en-US"), dataViewHref, "Click → the records"],
     ["Leading Category", leadingCategory || NOT_DISCLOSED, leadingCategory && leadingCategory !== NOT_DISCLOSED ? appHref(`${routeByKind[kind]}/?filter=${encodeURIComponent(leadingCategory)}`) : dataViewHref, "Click → its records"],
   ] as const;
@@ -1464,7 +1477,9 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
         </div>
       )}
       <SectionHeatmap kind={kind} rows={sourceRows} />
-      <SectionTopRecords kind={kind} rows={topRows} />
+      {/* Client fix (7-Jul): "Highlighted SWFI Pages" removed from the Active
+          Allocators view; other sections keep the shortcut cards. */}
+      {kind === "allocators" ? null : <SectionTopRecords kind={kind} rows={topRows} />}
     </div>
   );
 }
