@@ -16,6 +16,14 @@ const QUERY_SYNONYMS: Record<string, string[]> = {
   "jp morgan": ["JPMorgan Chase & Co"],
   jpmorgan: ["JPMorgan Chase & Co"],
   calpers: ["California Public Employees Retirement System"],
+  // Added 2026-07-09 after the browser-driven search harness found these acronyms don't
+  // auto-resolve: acronymForName strips corporate suffixes (AIMCo/ICD -> wrong entity) or the
+  // acronym isn't in the fund's registered name (NBIM). Full names verified to resolve via sweep.
+  nbim: ["Norway Government Pension Fund Global"],
+  norges: ["Norway Government Pension Fund Global"],
+  aimco: ["Alberta Investment Management Corporation"],
+  icd: ["Investment Corporation of Dubai"],
+  kic: ["Korea Investment Corporation"],
 };
 
 const SHORT_QUERY_MAX = 3;
