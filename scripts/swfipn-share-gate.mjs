@@ -182,12 +182,17 @@ async function renderedPublicCheck() {
     result.final_url = page.url();
     if (!response || response.status() >= 400) result.failures.push(`http_${response?.status() || "missing"}`);
     if (!result.final_url.startsWith(origin.replace(/\/$/, ""))) result.failures.push(`wrong_final_url:${result.final_url}`);
-    const body = await waitForBody(page, ["SWFI", "TOTAL AUM ENGAGED", "ACTIVE ALLOCATORS", "DEALS & TRANSACTIONS"], 20_000);
+    // Hydration markers must be phrases that ACTUALLY render post-hydration. "TOTAL AUM ENGAGED"
+    // and "DEALS & TRANSACTIONS" were removed from the product (2026-07 rename), so the old list
+    // never matched -> waitForBody always timed out at 20s and the link audit could read a
+    // pre-hydration page (the source_links=0 flake). Verified present on live 2026-07-09:
+    // "TOP-RANKED AUM TOTAL", "ACTIVE ALLOCATORS", "DISCLOSED DEAL VALUE".
+    const body = await waitForBody(page, ["SWFI", "TOP-RANKED AUM TOTAL", "ACTIVE ALLOCATORS", "DISCLOSED DEAL VALUE"], 20_000);
     for (const text of forbiddenVisible) {
       if (body.includes(text)) result.failures.push(`forbidden_visible:${text}`);
     }
     result.counts.showing = (body.match(/Showing [^\n]+/g) || []).slice(0, 8);
-    const linkAudit = await waitForLinkAudit(page, 20_000);
+    const linkAudit = await waitForLinkAudit(page, 40_000);
     result.counts.source_links = linkAudit.filter((link) => link.sourceState === "on-file" || link.sourcePath).length;
     result.counts.detail_links = linkAudit.filter((link) => /\/swficc\/(profiles|transactions|mandates|people|research)\/detail\//.test(link.href) || /\/(profiles|transactions|mandates|people|research)\/detail\//.test(link.dashboardTarget)).length;
     result.counts.approved_swfi_handoffs = linkAudit.filter((link) => isApprovedSwfiRecordHandoff(link.href) || isApprovedSwfiRecordHandoff(link.raw)).length;
@@ -245,7 +250,10 @@ async function waitForLinkAudit(page, timeout) {
     const sourceLinks = lastAudit.filter((link) => link.sourceState === "on-file" || link.sourcePath).length;
     const detailLinks = lastAudit.filter((link) => /\/swficc\/(profiles|transactions|mandates|people|research)\/detail\//.test(link.href) || /\/(profiles|transactions|mandates|people|research)\/detail\//.test(link.dashboardTarget)).length;
     const approvedSwfiPlatformLinks = lastAudit.filter((link) => isApprovedSwfiPlatformLink(link.href) || isApprovedSwfiPlatformLink(link.raw)).length;
-    if (sourceLinks >= 8 && (detailLinks >= 8 || approvedSwfiPlatformLinks >= 8)) return lastAudit;
+    // Early-return only once BOTH counts the gate actually asserts (source_links >= 8 AND
+    // approved_swfi_platform_links >= 8, lines 198-199) are satisfied, so the audit never returns
+    // mid-hydration with approved still < 8 and then fails.
+    if (sourceLinks >= 8 && approvedSwfiPlatformLinks >= 8) return lastAudit;
     await page.waitForTimeout(500).catch(() => {});
   }
   return lastAudit;
