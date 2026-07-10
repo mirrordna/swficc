@@ -64,7 +64,7 @@ const ENDPOINTS = {
   allocators90: "/api/active-allocators/v1?days=90&limit=1",
   rfps: "/api/live-opportunities/v1?limit=25&page=1",
   mandates: "/api/live-mandates/v1?limit=25&page=1",
-  transactions30: "/api/recent-transactions/v1?days=30&limit=25&page=1",
+  transactions30: "/api/recent-transactions/v1?days=30&limit=50&page=1",
   entities: "/api/source-data/search/v1?collection=entities&limit=25&page=1",
   people: "/api/source-data/search/v1?collection=people&limit=25&page=1",
   top20: "/v1/swfi/top20?limit=25",
@@ -142,6 +142,11 @@ export default function DashboardPage() {
   // buyer/seller entity reference join instead of a text match that never hits
   // (transactions reference entities by a reference id, not by their display name).
   const [searchTransactionPacket, setSearchTransactionPacket] = useState<Packet | undefined>();
+  // People live search: the homepage otherwise ranks only the 25 pre-loaded peopleRows,
+  // so it can't find most people. When the query is >=2 chars we fetch the PII-safe
+  // /api/people/search/v1 live and feed its matches into the People search category as
+  // the primary source (same shape as the entity->transactions join above).
+  const [searchPeoplePacket, setSearchPeoplePacket] = useState<Packet | undefined>();
   const [searchLoading, setSearchLoading] = useState(false);
   const [activeSearchIndex, setActiveSearchIndex] = useState(0);
   const [newsTab, setNewsTab] = useState<"latest" | "referenced" | "topics">("latest");
@@ -180,6 +185,14 @@ export default function DashboardPage() {
   const entityRows = factRows(packets.entities).slice(0, 25);
   const peopleRows = factRows(packets.people).slice(0, 25);
   const transactionRows = factRows(packets.transactions30).slice(0, 25);
+  // #8 "Most Recent Disclosed Deals" needs >=10 DISCLOSED deals. Only ~half of any
+  // 30-day window has a disclosed amount, so that widget alone reads the fuller 50-row
+  // transactions30 fetch instead of the 25-row transactionRows every other panel slices.
+  // The first 25 rows of the limit=50 response are row-for-row the old limit=25 response
+  // (verified 2026-07-10: 13 disclosed either way), so transactionRows and its consumers
+  // do not change; limit=50 yields 28 disclosed, so the widget's own filter->sort->slice(0,10)
+  // reliably lands 10. Same endpoint, no padding with undisclosed rows.
+  const disclosedDealRows = factRows(packets.transactions30).slice(0, 50);
   const rfpRows = factRows(packets.rfps).slice(0, 25);
   // Investment "Opportunities" live in a separate source (/api/live-mandates/v1 — 26 records,
   // all type "Opportunity") that Smart Search never loaded (Jaykesh 2026-07-08: "Opportunities
@@ -245,12 +258,17 @@ export default function DashboardPage() {
     const clean = searchQuery.trim();
     if (clean.length >= 2) {
       if (isShortBusinessQuery(clean) && searchLoading && !hasAnySearchItems(liveSearchGroups) && !hasAnySearchItems(dashboardSearchGroups)) return completeSearchGroups([]);
-      // entity->transaction group is PRIMARY so a resolved entity's real
-      // transactions lead the Transactions category (fills the "No matches" gap).
-      return completeSearchGroups(mergeSearchGroups(entityTransactionSearchGroups(searchTransactionPacket, clean), baseSearchGroups));
+      // Live groups are PRIMARY so a resolved entity's real transactions lead the
+      // Transactions category (fills the "No matches" gap) and the live /api/people/search
+      // matches lead the People category instead of the 25-row pre-loaded slice.
+      const primaryLiveGroups = [
+        ...entityTransactionSearchGroups(searchTransactionPacket, clean),
+        ...peopleSearchGroups(searchPeoplePacket, clean),
+      ];
+      return completeSearchGroups(mergeSearchGroups(primaryLiveGroups, baseSearchGroups));
     }
     return dashboardSearchGroups;
-  }, [baseSearchGroups, dashboardSearchGroups, liveSearchGroups, searchLoading, searchQuery, searchTransactionPacket]);
+  }, [baseSearchGroups, dashboardSearchGroups, liveSearchGroups, searchLoading, searchQuery, searchTransactionPacket, searchPeoplePacket]);
   const searchItems = useMemo(() => searchGroups.flatMap((group) => group.items), [searchGroups]);
 
   useEffect(() => {
@@ -352,6 +370,30 @@ export default function DashboardPage() {
     };
   }, [transactionCandidateKey, searchOpen]);
 
+  // People live search: fetch /api/people/search/v1 for the raw query (the endpoint does
+  // its own PII-safe matching, so no entity-resolve hop is needed). Mirrors the
+  // entity->transactions effect: cache-first, aborts in flight, and every state update is
+  // scheduled from the debounce callback so nothing mutates state synchronously in render.
+  useEffect(() => {
+    if (!searchOpen) return;
+    const clean = searchQuery.trim();
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      if (clean.length < 2) {
+        setSearchPeoplePacket(undefined);
+        return;
+      }
+      void fetchPeopleSearch(clean, controller.signal).then((packet) => {
+        if (controller.signal.aborted) return;
+        setSearchPeoplePacket(packet && isFact(packet) ? packet : undefined);
+      });
+    }, clean.length >= 2 ? 120 : 0);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [searchQuery, searchOpen]);
+
   function togglePanel(id: string) {
     setExpandedPanel((current) => current === id ? "" : id);
   }
@@ -369,6 +411,7 @@ export default function DashboardPage() {
             institutionTypeRows={institutionTypeRows}
             allocatorRows={allocatorRows}
             transactionRows={transactionRows}
+            disclosedDealRows={disclosedDealRows}
             rfpRows={rfpRows}
             newsRows={newsRows}
             sectorRows={sectorRows}
@@ -566,6 +609,7 @@ function VisualExecutiveOverview({
   institutionTypeRows,
   allocatorRows,
   transactionRows,
+  disclosedDealRows,
   rfpRows,
   newsRows,
   sectorRows,
@@ -580,6 +624,7 @@ function VisualExecutiveOverview({
   institutionTypeRows: Record<string, unknown>[];
   allocatorRows: Record<string, unknown>[];
   transactionRows: Record<string, unknown>[];
+  disclosedDealRows: Record<string, unknown>[];
   rfpRows: Record<string, unknown>[];
   newsRows: Record<string, unknown>[];
   sectorRows: Record<string, unknown>[];
@@ -600,7 +645,7 @@ function VisualExecutiveOverview({
           ))}
         </div>
         <div className="grid gap-3">
-          <MostRecentDisclosedDeals rows={transactionRows} />
+          <MostRecentDisclosedDeals rows={disclosedDealRows} />
           <div className="grid gap-3 md:grid-cols-2">
             <DashboardLink href="/mandates" className="border border-[#C9D3DE] bg-white px-3 py-2.5 text-inherit no-underline shadow-[0_1px_2px_rgba(20,44,70,0.05)] hover:border-[#D51E29]/50">
               <span className="block text-[10px] font-extrabold tracking-[0.08em] text-[#7B8996]">Recently Fundraising Institutions</span>
@@ -1232,6 +1277,33 @@ function storeTxnPacket(name: string, packet: Packet): void {
     // sessionStorage is an optimization only; the live fetch still runs.
   }
 }
+
+// Same client-side KV cache pattern as the entity->transactions lookup above, keyed by the
+// lowercased people-search query, so repeat queries are instant and don't re-hit the API.
+const PEOPLE_CACHE_PREFIX = "swfipn.peopleSearch.v1:";
+function peopleCacheKey(query: string): string {
+  return `${PEOPLE_CACHE_PREFIX}${query.trim().toLowerCase()}`;
+}
+function cachedPeoplePacket(query: string): Packet | undefined {
+  if (typeof window === "undefined" || !query.trim()) return undefined;
+  try {
+    const raw = window.sessionStorage.getItem(peopleCacheKey(query));
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as { stored_at?: number; packet?: Packet };
+    if (!parsed.stored_at || Date.now() - parsed.stored_at > 300_000) return undefined;
+    return parsed.packet && isFact(parsed.packet) ? parsed.packet : undefined;
+  } catch {
+    return undefined;
+  }
+}
+function storePeoplePacket(query: string, packet: Packet): void {
+  if (typeof window === "undefined" || !query.trim() || !isFact(packet)) return;
+  try {
+    window.sessionStorage.setItem(peopleCacheKey(query), JSON.stringify({ stored_at: Date.now(), packet }));
+  } catch {
+    // sessionStorage is an optimization only; the live fetch still runs.
+  }
+}
 async function fetchEntityTransactions(name: string, signal: AbortSignal): Promise<Packet | undefined> {
   const cached = cachedTxnPacket(name);
   if (cached) return cached;
@@ -1240,6 +1312,21 @@ async function fetchEntityTransactions(name: string, signal: AbortSignal): Promi
     attempts: 1,
   }).catch(() => undefined);
   if (packet && isFact(packet)) storeTxnPacket(name, packet);
+  return packet;
+}
+
+// Live people lookup for Smart Search. Mirrors fetchEntityTransactions: cache-first, a
+// single attempt, abortable. /api/people/search/v1 is PII-safe (name/title/institution/
+// city/region/country/linkedin_url/photo_url/source_url only) and returns swfi.com record
+// URLs, so results link straight to the SWFI platform per the source-of-truth rule.
+async function fetchPeopleSearch(query: string, signal: AbortSignal): Promise<Packet | undefined> {
+  const cached = cachedPeoplePacket(query);
+  if (cached) return cached;
+  const packet = await fetchPacket(`/api/people/search/v1?q=${encodeURIComponent(query)}&limit=8`, 10_000, {
+    signal,
+    attempts: 1,
+  }).catch(() => undefined);
+  if (packet && isFact(packet)) storePeoplePacket(query, packet);
   return packet;
 }
 
@@ -1262,6 +1349,22 @@ function entityTransactionSearchGroups(packet: Packet | undefined, query: string
     sourceHref: sourceHref(row),
   }));
   return items.length ? [{ label: "Transactions", items }] : [];
+}
+
+// Build the People search group from the live /api/people/search/v1 packet. Row shape is
+// kept identical to the pre-loaded People group in brdSearchGroups (label=name,
+// detail=title · institution, href=dashboardPersonHref, sourceHref=sourceHref) so the two
+// merge into one visually-consistent category, with these live matches leading.
+function peopleSearchGroups(packet: Packet | undefined, query: string): BrdSearchGroup[] {
+  if (!packet || !isFact(packet) || query.trim().length < 2) return [];
+  const peopleResults = rows(packet, "results").length ? rows(packet, "results") : rows(packet);
+  const items = peopleResults.slice(0, 8).map((row) => ({
+    label: brdText(row.name),
+    detail: [brdText(row.title, ""), brdText(row.institution, "")].filter(Boolean).join(" · "),
+    href: dashboardPersonHref(row),
+    sourceHref: sourceHref(row),
+  }));
+  return items.length ? [{ label: "People", items }] : [];
 }
 
 function brdSearchGroups({ query, entityRows, peopleRows, transactionRows, rfpRows, newsRows }: {
@@ -2273,8 +2376,8 @@ function DealIntelligencePanel({ rows: sourceRows, sectorRows }: { rows: Record<
 
 // Client item #8 (SWFI): "Restrict Disclosed Deal Value to the 10 most recent
 // disclosed deals only." The DISCLOSED DEAL VALUE KPI above stays as the headline
-// sum; this panel is the required list. It reuses the already-loaded transactionRows
-// (ENDPOINTS.transactions30 — the most-recent records, no new endpoint) and:
+// sum; this panel is the required list. It reads disclosedDealRows — the fuller 50-row
+// slice of the same already-loaded ENDPOINTS.transactions30 fetch (no new endpoint) and:
 //   1. keeps only DISCLOSED deals — a positive transaction value on file, the same
 //      amountValue gate DealIntelligencePanel sorts by, so "Not disclosed" rows drop out;
 //   2. orders by transaction date, newest first (recordDateValue: closed_at → announced_at);
