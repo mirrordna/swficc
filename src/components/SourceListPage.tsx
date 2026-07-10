@@ -2193,6 +2193,10 @@ function DealEnginePanel() {
   const sources = useMemo(() => {
     const encoded = encodeURIComponent(submittedQuery.trim() || "infrastructure");
     return {
+      // Latest transactions for the searched industry (sector), newest first.
+      // transaction-drilldown returns clean, single-sector rows already sorted
+      // by transaction date desc (verified against SWFI production).
+      latestTransactions: `/api/transaction-drilldown/v1?field=sector&value=${encoded}&days=${days}&limit=8`,
       ticketSize: `/api/deal-intelligence/ticket-size/v1?q=${encoded}&days=${days}&limit=5`,
       frequency: `/api/deal-intelligence/investment-frequency/v1?q=${encoded}&days=${days}&limit=5`,
       coInvestments: `/api/co-investments/v1?days=${days}&limit=5`,
@@ -2241,17 +2245,32 @@ function DealEnginePanel() {
       disclosedMoney(row.amount_display || row.total_amount || row.amount),
     ])
     : [];
-  const readyCount = [packets.ticketSize, packets.frequency, packets.coInvestments].filter(isFact).length;
+  const latestTransactionDate = (row: Row): string => text(row.activity_date || row.announced_at || row.relevant_date || row.closed_at || row.date, "");
+  const latestTransactionRows: Cell[][] = isFact(packets.latestTransactions)
+    ? rows(packets.latestTransactions)
+      // ISO YYYY-MM-DD sorts lexicographically == chronologically; newest first.
+      // The endpoint already returns this order; the sort guarantees it in the UI.
+      .slice()
+      .sort((a, b) => latestTransactionDate(b).localeCompare(latestTransactionDate(a)))
+      .map((row) => [
+        transactionCell(row),
+        entityListCell(row, "buyer"),
+        transactionFactCell(row, text(row.industry || row.sector)),
+        transactionFactCell(row, disclosedMoney(row.amount_display || row.capital_display || row.amount || row.capital || row.value)),
+        transactionFactCell(row, latestTransactionDate(row) || NOT_DISCLOSED),
+      ])
+    : [];
+  const readyCount = [packets.latestTransactions, packets.ticketSize, packets.frequency, packets.coInvestments].filter(isFact).length;
 
   return (
     <section data-gsap-reveal className="grid gap-3 rounded border border-[#DCE3EA] bg-white px-4 py-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="m-0 text-[16px] font-bold text-[#11314F]">Capital Deal Engine</h2>
-          <div className="mt-1 text-[12px] text-[#7A8A9B]">Limited preview of analytical deal records: ticket size, investment frequency, and co-investment intelligence from transaction activity.</div>
+          <div className="mt-1 text-[12px] text-[#7A8A9B]">Latest transactions for the industry (newest first), plus analytical deal records: ticket size, investment frequency, and co-investment intelligence from transaction activity.</div>
         </div>
         <div className="rounded border border-[#DCE3EA] px-3 py-2 text-[12px] text-[#41566B]">
-          {readyCount === 3 ? "3 of 3 SWFI record sets ready" : `Loading ${readyCount} of 3 SWFI record sets`}
+          {readyCount === 4 ? "4 of 4 SWFI record sets ready" : `Loading ${readyCount} of 4 SWFI record sets`}
         </div>
       </div>
 
@@ -2282,6 +2301,12 @@ function DealEnginePanel() {
         </label>
         <button type="submit" className="min-h-9 rounded border border-[#C7D2DD] bg-white px-3 text-sm font-semibold text-[#16538C]">Apply</button>
       </form>
+
+      <DealEngineTable
+        title={`Latest transactions — ${submittedQuery.trim() || "Infrastructure"} (newest first)`}
+        columns={["Transaction", "Investors", "Industry", "Amount", "Date"]}
+        rows={latestTransactionRows}
+      />
 
       <div className="grid gap-3 xl:grid-cols-3">
         {/* Audit 2026-07-06: the Deal Engine's own data was table-only —
