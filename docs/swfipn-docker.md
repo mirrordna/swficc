@@ -17,7 +17,7 @@ http://127.0.0.1:8353/swficc/
 ```
 
 The frontend container proxies same-origin `/api/*` and `/v1/*` calls to
-`SWFIPN_BACKEND`. On Hetzner this should point at the existing SWFI backend
+`SWFIPN_BACKEND`. On the production droplet (`swfipn-do`) this should point at the existing SWFI backend
 service, not at `swfi.com`.
 
 ## Runtime Contract

@@ -105,5 +105,5 @@ Docker health fails
 ## Production Boundary
 
 This loop does not deploy, restart production, edit Cloudflare, or mutate
-Hetzner. Those actions require the deploy gate. The loop can prove whether the
+the production droplet. Those actions require the deploy gate. The loop can prove whether the
 candidate is ready to be deployed.
