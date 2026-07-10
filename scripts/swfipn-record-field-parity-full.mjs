@@ -401,7 +401,16 @@ function loadState() {
   if (process.env.SWFIPN_RESET_STATE === "1") return emptyState();
   try {
     const parsed = JSON.parse(fs.readFileSync(statePath, "utf8"));
-    return { ...emptyState(), ...parsed, collections: { ...emptyState().collections, ...(parsed.collections || {}) } };
+    const state = { ...emptyState(), ...parsed, collections: { ...emptyState().collections, ...(parsed.collections || {}) } };
+    if (process.env.SWFIPN_RESUME_CLEAR_BLOCKS === "1") {
+      // 2026-07-10: resuming after transient infra blocks. The cursor never advances
+      // past a blocked page (see runCollection), so those records re-check on resume.
+      // Clearing journey-noise counters keeps the final receipt an end-state coverage
+      // record: any block still present at the end survived a full retry cycle.
+      state.failures = [];
+      for (const entry of Object.values(state.collections)) entry.blocked = 0;
+    }
+    return state;
   } catch {
     return emptyState();
   }
@@ -418,7 +427,14 @@ async function runCollection(collection, spec, mongoUri, state) {
     state.collections[collection].pages += 1;
     const page = state.collections[collection].pages;
     console.error(`[field-parity] ${collection}: page=${page} after=${after || "START"}`);
-    const packet = await fetchJson(scanUrl(collection, pageLimit, after));
+    // 2026-07-10: retry transient scan failures (backend fail-closed envelopes under
+    // load) before recording a block — one blip must not abort a multi-hour full run.
+    let packet = await fetchJson(scanUrl(collection, pageLimit, after));
+    for (let attempt = 1; attempt <= 2 && (packet.status !== 200 || packet.body?.status !== "ok"); attempt += 1) {
+      console.error(`[field-parity] ${collection}: scan retry ${attempt} after http_${packet.status}_${packet.body?.status || "missing"}`);
+      await new Promise((resolve) => setTimeout(resolve, 20_000 * attempt));
+      packet = await fetchJson(scanUrl(collection, pageLimit, after));
+    }
     if (packet.status !== 200 || packet.body?.status !== "ok") {
       state.collections[collection].blocked += 1;
       state.failures.push({ collection, id: "scan_failed", reason: `http_${packet.status}_${packet.body?.status || "missing"}` });
@@ -430,11 +446,22 @@ async function runCollection(collection, spec, mongoUri, state) {
     if (!rows.length) break;
     const idRows = rows.map((row) => ({ id: rowId(row, spec), row })).filter((item) => /^[a-f0-9]{24}$/i.test(item.id));
     let docs;
-    try {
-      docs = fetchMongoDocs(spec.mongoCollection, idRows.map((item) => item.id), mongoUri, spec.mongoProjection);
-    } catch (error) {
+    let lookupError = null;
+    // 2026-07-10: mongosh spawnSync can ETIMEDOUT transiently against Atlas; retry
+    // before blocking the page — run-1 receipt: 1002 blocked, 0 real mismatches.
+    for (let attempt = 0; attempt < 3 && !docs; attempt += 1) {
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 20_000 * attempt));
+      try {
+        docs = fetchMongoDocs(spec.mongoCollection, idRows.map((item) => item.id), mongoUri, spec.mongoProjection);
+        lookupError = null;
+      } catch (error) {
+        lookupError = error;
+        console.error(`[field-parity] ${collection}: mongo retry ${attempt + 1} after ${String(error.message).slice(0, 120)}`);
+      }
+    }
+    if (!docs) {
       state.collections[collection].blocked += idRows.length;
-      state.failures.push({ collection, id: "mongo_lookup_failed", reason: error.message });
+      state.failures.push({ collection, id: "mongo_lookup_failed", reason: lookupError ? lookupError.message : "unknown" });
       break;
     }
     for (const item of idRows) {

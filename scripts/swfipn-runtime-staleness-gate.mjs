@@ -13,7 +13,7 @@ const resolveIp = process.env.SWFIPN_RESOLVE_IP || "";
 const originHost = new URL(origin).hostname;
 const deployReceiptPath = path.join(outputDir, "swfipn-strict-acceptance-deploy-latest.json");
 const assetReceiptPath = path.join(outputDir, "swfipn-asset-version-latest.json");
-const remoteHost = process.env.SWFIPN_RUNTIME_REMOTE_HOST || "hetzner";
+const remoteHost = process.env.SWFIPN_RUNTIME_REMOTE_HOST || "swfipn-do";
 const remoteCheck = process.env.SWFIPN_RUNTIME_REMOTE_CHECK !== "0";
 const remoteWebContainer = process.env.SWFIPN_RUNTIME_WEB_CONTAINER || "swfipn_acceptance-swfipn-web-1";
 const maxReleaseAgeHours = Number(process.env.SWFIPN_MAX_RELEASE_AGE_HOURS || 72);

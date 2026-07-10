@@ -65,9 +65,12 @@ function loadNdjsonRecords(collectionName) {
   const files = fs.readdirSync(UNIVERSE_DIR).filter((f) => f.includes(`-${collectionName}.ndjson`)).sort().reverse();
   if (!files.length) throw new Error(`No NDJSON file found for ${collectionName} in ${UNIVERSE_DIR}. Run npm run universe:map:public first.`);
   const filePath = path.join(UNIVERSE_DIR, files[0]);
-  const lines = fs.readFileSync(filePath, "utf-8").split("\n").filter(Boolean);
+  // 2026-07-10: the entities NDJSON exceeds V8's max string length, so one
+  // readFileSync string crashes with ERR_STRING_TOO_LONG. Read in chunks and
+  // split on newline bytes, decoding whole lines only (no mid-character splits).
   const records = [];
-  for (const line of lines) {
+  const parseLine = (line) => {
+    if (!line) return;
     try {
       const row = JSON.parse(line);
       const id = row.id || "";
@@ -75,6 +78,25 @@ function loadNdjsonRecords(collectionName) {
       const family = row.family || collectionName;
       if (id) records.push({ id, name: String(name).trim(), family });
     } catch { /* skip malformed lines */ }
+  };
+  const fd = fs.openSync(filePath, "r");
+  try {
+    const chunk = Buffer.alloc(8 * 1024 * 1024);
+    let carry = Buffer.alloc(0);
+    let bytesRead;
+    while ((bytesRead = fs.readSync(fd, chunk, 0, chunk.length, null)) > 0) {
+      const buf = carry.length ? Buffer.concat([carry, chunk.subarray(0, bytesRead)]) : Buffer.from(chunk.subarray(0, bytesRead));
+      let start = 0;
+      let idx;
+      while ((idx = buf.indexOf(0x0a, start)) !== -1) {
+        parseLine(buf.toString("utf-8", start, idx));
+        start = idx + 1;
+      }
+      carry = Buffer.from(buf.subarray(start));
+    }
+    if (carry.length) parseLine(carry.toString("utf-8"));
+  } finally {
+    fs.closeSync(fd);
   }
   return records;
 }

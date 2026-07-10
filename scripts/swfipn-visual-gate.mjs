@@ -16,11 +16,16 @@ const shouldProxyBackend = process.env.SWFIPN_PROXY_BACKEND === "1"
 const apiPattern = /api\/(source-data|source-intelligence|recent-transactions|live-opportunities|sector-flows|allocator-activity|swfi)|\/v1\/swfi\//;
 
 const REQUIRED_TEXT = [
-  "TOTAL AUM ENGAGED",
+  // 2026-07-10 gate-law amendment: "TOTAL AUM ENGAGED" was banned + removed from the
+  // product on 2026-07-05 (replaced by "TOP-RANKED AUM TOTAL"); the share gate got the
+  // same marker fix in 2aab616. This gate encoded the pre-2026-07-05 law.
+  "TOP-RANKED AUM TOTAL",
   "ACTIVE ALLOCATORS",
   "DISCLOSED DEAL VALUE",
   "Global Capital Map",
-  "Top SWF AUM locations",
+  // 2026-07-10: "Top SWF AUM locations" removed — it lives only in an aria-label
+  // (page.tsx map section), which raw HTML contains but innerText never can.
+  // The map section's rendered assertion is "Global Capital Map" above.
   "Capital Flows",
   "SWFI Discovery Pathways",
   "Top Institutional Relationships",
@@ -42,8 +47,12 @@ const REQUIRED_VISUAL_SECTIONS = [
 ];
 
 const REQUIRED_SVG_LABELS = [
-  "Top SWF AUM locations by country",
-  "Disclosed capital by industry or category",
+  // 2026-07-10 gate-law amendment: the 07-06 ECharts port renamed two chart
+  // aria-labels; the port commit updated other gate markers but missed these.
+  // Anchored to the live rendered labels (role="img" enumeration receipt).
+  // Flows uses the mode-independent prefix — its suffix varies with disclosure mode.
+  "World map of SWFI top-ranked institutions by country",
+  "Capital flows from buyer regions into industries",
   "SWFI discovery pathways by record group",
   "largest sector share",
 ];
