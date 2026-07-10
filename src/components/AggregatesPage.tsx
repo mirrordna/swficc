@@ -65,7 +65,7 @@ export default function AggregatesPage() {
   return (
     <div className="min-h-screen bg-[#F4F6F8] text-[#102A43]">
       <SwfiBrandHeader searchId="aggregates-global-search" />
-      <main className="mx-auto grid max-w-[1240px] gap-5 px-4 py-6">
+      <main className="mx-auto grid max-w-[1240px] grid-cols-1 gap-5 px-4 py-6">
         <nav className="flex flex-wrap gap-2 text-sm">
           <a href={appHref("/")} className="text-[#16538C] underline">Dashboard</a>
           <span className="text-[#6B7A8A]">/</span>
@@ -80,14 +80,14 @@ export default function AggregatesPage() {
             <h1 className="m-0 mt-1 text-2xl font-semibold text-[#102A43]">Historical AUM Charts</h1>
           </div>
 
-          <div className="grid gap-4 px-5 py-4">
+          <div className="grid grid-cols-1 gap-4 px-5 py-4">
             <div className="flex flex-wrap gap-2" aria-label="Entity class tabs">
               {ENTITY_CLASSES.map(([value, label]) => (
                 <button
                   key={value}
                   type="button"
                   onClick={() => setEntityClass(value)}
-                  className={`border px-3 py-2 text-sm font-semibold ${entityClass === value ? "border-[#A61C20] bg-[#A61C20] text-white" : "border-[#C7D2DD] bg-white text-[#16538C]"}`}
+                  className={`min-h-11 border px-3 py-2 text-sm font-semibold lg:min-h-0 ${entityClass === value ? "border-[#A61C20] bg-[#A61C20] text-white" : "border-[#C7D2DD] bg-white text-[#16538C]"}`}
                 >
                   {label}
                 </button>
@@ -100,7 +100,7 @@ export default function AggregatesPage() {
                   key={value}
                   type="button"
                   onClick={() => setRegion(value)}
-                  className={`border px-3 py-1.5 text-sm font-semibold ${region === value ? "border-[#1F4E79] bg-[#1F4E79] text-white" : "border-[#C7D2DD] bg-white text-[#16538C]"}`}
+                  className={`min-h-11 border px-3 py-1.5 text-sm font-semibold lg:min-h-0 ${region === value ? "border-[#1F4E79] bg-[#1F4E79] text-white" : "border-[#C7D2DD] bg-white text-[#16538C]"}`}
                 >
                   {label}
                 </button>
@@ -113,16 +113,16 @@ export default function AggregatesPage() {
                 id="aggregate-smoothing"
                 value={smoothing}
                 onChange={(event) => setSmoothing(event.target.value)}
-                className="border border-[#C7D2DD] bg-white px-3 py-2 text-sm"
+                className="min-h-11 border border-[#C7D2DD] bg-white px-3 py-2 text-sm lg:min-h-0"
               >
                 {SMOOTHING.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
               </select>
               <div className="ml-auto flex border border-[#C7D2DD]">
-                <button type="button" onClick={() => setView("graph")} className={`px-3 py-2 text-sm font-bold ${view === "graph" ? "bg-[#102A43] text-white" : "bg-white text-[#16538C]"}`}>Graph</button>
-                <button type="button" onClick={() => setView("data")} className={`px-3 py-2 text-sm font-bold ${view === "data" ? "bg-[#102A43] text-white" : "bg-white text-[#16538C]"}`}>Records</button>
+                <button type="button" onClick={() => setView("graph")} className={`min-h-11 px-3 py-2 text-sm font-bold lg:min-h-0 ${view === "graph" ? "bg-[#102A43] text-white" : "bg-white text-[#16538C]"}`}>Graph</button>
+                <button type="button" onClick={() => setView("data")} className={`min-h-11 px-3 py-2 text-sm font-bold lg:min-h-0 ${view === "data" ? "bg-[#102A43] text-white" : "bg-white text-[#16538C]"}`}>Records</button>
               </div>
               {/* Dashboard 2.0 P05: data export requires SWFI authentication — no public downloads. */}
-              <a href="https://www.swfi.com/v1/signin/?msg=auth" className="border border-[#C7D2DD] bg-white px-3 py-2 text-sm font-bold text-[#16538C] no-underline">Sign in on SWFI to export</a>
+              <a href="https://www.swfi.com/v1/signin/?msg=auth" className="inline-flex min-h-11 items-center border border-[#C7D2DD] bg-white px-3 py-2 text-sm font-bold text-[#16538C] no-underline lg:min-h-0">Sign in on SWFI to export</a>
             </div>
           </div>
         </section>
@@ -147,7 +147,7 @@ export default function AggregatesPage() {
         </section>
 
         {ready ? (
-          <section className="grid gap-3 border border-[#D7DFE8] bg-white p-5 text-sm text-[#334E68] md:grid-cols-4">
+          <section className="grid grid-cols-1 gap-3 border border-[#D7DFE8] bg-white p-5 text-sm text-[#334E68] md:grid-cols-4">
             <Metric label="Entity Class" value={selectedLabel} />
             <Metric label="Region" value={selectedRegion} />
             <Metric label="Raw Source Years" value={text(data.raw_points_count, "0")} />
@@ -179,7 +179,7 @@ function AggregateChart({ points, title }: { points: AggregatePoint[]; title: st
     .filter(Boolean)
     .join(" ");
   return (
-    <div className="grid gap-4">
+    <div className="grid grid-cols-1 gap-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="m-0 text-xl font-semibold text-[#102A43]">{title}</h2>

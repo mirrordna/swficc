@@ -551,7 +551,7 @@ function BrdTopNavigation({ onSearchOpen, dataAsOfLabel, displayName }: { onSear
         <button
           type="button"
           onClick={onSearchOpen}
-          className="flex min-h-[38px] min-w-0 items-center justify-between gap-3 rounded-[5px] bg-white px-3 text-left text-[12px] text-[#5E6A78] shadow-[0_1px_6px_rgba(40,20,20,0.18)]"
+          className="flex min-h-11 min-w-0 items-center justify-between gap-3 rounded-[5px] bg-white px-3 text-left text-[12px] text-[#5E6A78] shadow-[0_1px_6px_rgba(40,20,20,0.18)] lg:min-h-[38px]"
           aria-label="Open Global Search"
         >
           <span className="truncate">Search for contacts, insights, reports...</span>
@@ -576,7 +576,7 @@ function BrdTopNavigation({ onSearchOpen, dataAsOfLabel, displayName }: { onSear
       </div>
       <nav className="mx-auto flex max-w-[1440px] gap-1 overflow-x-auto border-t border-white/14 px-4 text-[12px] font-bold sm:px-5" aria-label="SWFI platform navigation">
         {canonicalNav.map(([label, href]) => (
-          <DashboardLink key={label} href={href} className="shrink-0 px-3 py-2 text-white/86 no-underline hover:bg-white/10 hover:text-white">
+          <DashboardLink key={label} href={href} className="flex min-h-11 shrink-0 items-center px-3 py-2 text-white/86 no-underline hover:bg-white/10 hover:text-white lg:min-h-0">
             {label}
           </DashboardLink>
         ))}

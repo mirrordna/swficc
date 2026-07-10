@@ -61,7 +61,7 @@ export default function SwfiBrandHeader({
                 <a
                   href={gated ? loginHref() : target}
                   data-dashboard-target={gated ? target : undefined}
-                  className={`relative inline-flex items-center gap-1 text-white no-underline after:absolute after:left-0 after:top-[calc(100%+5px)] after:h-[3px] after:w-full after:scale-x-0 after:rounded after:bg-white after:transition-transform hover:after:scale-x-100 ${label === "Sign In" ? "rounded-full border border-transparent px-4 py-3 hover:border-white hover:after:scale-x-0" : ""}`}
+                  className={`relative inline-flex min-h-11 items-center gap-1 text-white no-underline lg:min-h-0 after:absolute after:left-0 after:top-[calc(100%+5px)] after:h-[3px] after:w-full after:scale-x-0 after:rounded after:bg-white after:transition-transform hover:after:scale-x-100 ${label === "Sign In" ? "rounded-full border border-transparent px-4 py-3 hover:border-white hover:after:scale-x-0" : ""}`}
                 >
                   <span>{label}</span>
                   {dropdown.length ? (
@@ -94,7 +94,7 @@ export default function SwfiBrandHeader({
         <form
           action="/swficc/search/"
           method="get"
-          className="mx-auto flex h-9 max-w-[1296px] items-center overflow-hidden border border-[#C8D1E5] bg-[#F8F9FA] px-3 text-[13px] text-[#444D5F]"
+          className="mx-auto flex h-11 max-w-[1296px] items-center overflow-hidden border border-[#C8D1E5] bg-[#F8F9FA] px-3 text-[13px] text-[#444D5F] lg:h-9"
         >
           <label htmlFor={searchId} className="shrink-0 font-semibold text-[#22272F]">Smart Search</label>
           <span className="shrink-0 text-[#70798B]">&nbsp;-&nbsp;</span>
@@ -103,7 +103,7 @@ export default function SwfiBrandHeader({
             name="q"
             type="search"
             defaultValue={searchDefaultValue}
-            className="min-w-0 flex-1 bg-transparent text-[#41566B] outline-none placeholder:text-[#7A8A9B]"
+            className="min-w-0 flex-1 self-stretch bg-transparent text-[#41566B] outline-none placeholder:text-[#7A8A9B] lg:self-auto"
             placeholder="Institution, Person, Strategy"
           />
         </form>

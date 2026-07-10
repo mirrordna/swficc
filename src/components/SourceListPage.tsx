@@ -520,7 +520,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
             <a
               key={label}
               href={appHref(href)}
-              className={`flex min-h-9 flex-1 basis-[132px] items-center border-l-[3px] px-3.5 text-[13.5px] no-underline lg:flex-none ${href === activeRoute || ((kind === "research" || kind === "intelligence") && href === "/reports") ? "border-[#5C9BD6] bg-white/10 text-white" : "border-transparent text-[#A7BCD0]"}`}
+              className={`flex min-h-11 flex-1 basis-[132px] items-center border-l-[3px] px-3.5 text-[13.5px] no-underline lg:min-h-9 lg:flex-none ${href === activeRoute || ((kind === "research" || kind === "intelligence") && href === "/reports") ? "border-[#5C9BD6] bg-white/10 text-white" : "border-transparent text-[#A7BCD0]"}`}
             >
               {label}
             </a>
@@ -528,7 +528,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
         </aside>
 
         <main className="min-w-0 flex-1 overflow-visible lg:overflow-y-auto">
-          <div className="mx-auto grid w-full max-w-[1188px] gap-4 p-4 sm:p-[20px_22px_30px]">
+          <div className="mx-auto grid w-full max-w-[1188px] grid-cols-1 gap-4 p-4 sm:p-[20px_22px_30px]">
             <section data-gsap-reveal className="rounded border border-[#DCE3EA] bg-white p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
@@ -550,7 +550,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
             action="/swficc/search/"
             method="get"
             data-gsap-reveal
-            className="grid gap-2 rounded border border-[#DCE3EA] bg-white px-4 py-3 sm:grid-cols-[180px_minmax(0,1fr)_120px] sm:items-center"
+            className="grid grid-cols-1 gap-2 rounded border border-[#DCE3EA] bg-white px-4 py-3 sm:grid-cols-[180px_minmax(0,1fr)_120px] sm:items-center"
             onSubmit={(event) => {
               event.preventDefault();
               const clean = query.trim() || DEFAULT_SEARCH_QUERY;
@@ -605,7 +605,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
                     key={value}
                     type="button"
                     onClick={() => setSectionView(value as "data" | "visualization")}
-                    className={`rounded px-3 py-1.5 font-semibold ${sectionView === value ? "bg-white text-[#11314F] shadow-sm" : "text-[#617386]"}`}
+                    className={`min-h-11 rounded px-3 py-1.5 font-semibold lg:min-h-0 ${sectionView === value ? "bg-white text-[#11314F] shadow-sm" : "text-[#617386]"}`}
                   >
                     {label}
                   </button>
@@ -625,7 +625,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
 		          <span className="mt-1 block text-[#7A8A9B]">Reached from a chart, ranking, or filter, this table shows the matching records; unfiltered, it shows the first preview pages only. Every row links to its SWFI platform page, where the full record lives.</span>
         </section>
 
-        <section data-gsap-reveal className={`grid gap-2 rounded border border-[#DCE3EA] bg-white px-4 py-3 text-sm sm:items-center ${showRecordData ? "" : "hidden"} ${kind === "allocators" ? "sm:grid-cols-[minmax(0,1fr)_180px_150px_190px]" : kind === "deals" ? "sm:grid-cols-[minmax(0,1fr)_180px_210px_150px]" : "sm:grid-cols-[minmax(0,1fr)_180px_150px]"}`}>
+        <section data-gsap-reveal className={`grid grid-cols-1 gap-2 rounded border border-[#DCE3EA] bg-white px-4 py-3 text-sm sm:items-center ${showRecordData ? "" : "hidden"} ${kind === "allocators" ? "sm:grid-cols-[minmax(0,1fr)_180px_150px_190px]" : kind === "deals" ? "sm:grid-cols-[minmax(0,1fr)_180px_210px_150px]" : "sm:grid-cols-[minmax(0,1fr)_180px_150px]"}`}>
           <div className="font-semibold text-[#11314F]">
             {waitingForSearch
               ? "Enter an institution, person, or strategy"
@@ -633,7 +633,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
                 ? LOADING
               : `Showing ${visibleRows.length.toLocaleString("en-US")} of ${totalRows.toLocaleString("en-US")}${countDetails}${tableFilter.trim() ? ` / filtered ${filteredRows.length.toLocaleString("en-US")}` : ""}`}
           </div>
-          <label className="grid gap-1">
+          <label className="grid grid-cols-1 gap-1">
             <span className="font-semibold text-[#41566B]">Filter</span>
             <input
               type="search"
@@ -642,11 +642,11 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
                 setTableFilter(event.target.value);
                 setPageIndex(0);
               }}
-              className="min-h-9 rounded border border-[#C7D2DD] px-2 outline-none"
+              className="min-h-11 rounded border border-[#C7D2DD] px-2 outline-none lg:min-h-9"
               placeholder="Filter rows"
             />
           </label>
-          <label className="grid gap-1">
+          <label className="grid grid-cols-1 gap-1">
             <span className="font-semibold text-[#41566B]">Rows</span>
             <select
               value={rowLimit}
@@ -654,13 +654,13 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
                 setRowLimit(Number(event.target.value));
                 setPageIndex(0);
               }}
-              className="min-h-9 rounded border border-[#C7D2DD] bg-white px-2"
+              className="min-h-11 rounded border border-[#C7D2DD] bg-white px-2 lg:min-h-9"
             >
               {(kind === "allocators" ? [5, 10] : [5, 10, 25, 50, 100]).map((value) => <option key={value} value={value}>{value}</option>)}
             </select>
 	          </label>
 	          {kind === "deals" ? (
-	            <label className="grid gap-1">
+	            <label className="grid grid-cols-1 gap-1">
 	              <span className="font-semibold text-[#41566B]">Entity Type</span>
 	              <select
 	                multiple
@@ -692,7 +692,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
 	            </label>
 	          ) : null}
 	          {kind === "allocators" ? (
-            <label className="grid gap-1">
+            <label className="grid grid-cols-1 gap-1">
               <span className="font-semibold text-[#41566B]">Sort</span>
               <select
                 value={allocatorSort}
@@ -703,7 +703,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
                   if (nextColumn >= 0) setSortColumn(nextColumn);
                   setPageIndex(0);
                 }}
-                className="min-h-9 rounded border border-[#C7D2DD] bg-white px-2"
+                className="min-h-11 rounded border border-[#C7D2DD] bg-white px-2 lg:min-h-9"
               >
                 {allocatorSortOptions.map(([value, label]) => <option key={`${value}-${label}`} value={value}>{label}</option>)}
               </select>
@@ -711,7 +711,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
           ) : null}
         </section>
 
-        <div data-gsap-reveal className={`grid gap-3 sm:hidden ${showRecordData ? "" : "hidden"}`}>
+        <div data-gsap-reveal className={`grid grid-cols-1 gap-3 sm:hidden ${showRecordData ? "" : "hidden"}`}>
           {visibleRows.length ? visibleRows.map((row, rowIndex) => (
             <article key={rowIndex} className="rounded border border-[#DCE3EA] bg-white px-3 py-2.5 shadow-[0_1px_0_rgba(17,49,79,0.03)]">
               <div className="min-w-0 text-[15px] font-semibold leading-snug text-[#11314F]">
@@ -816,7 +816,7 @@ function displayCell(value?: Cell) {
   const label = cellText(value);
   if (typeof value === "object" && value?.links?.length) {
     return (
-      <span className="grid gap-1">
+      <span className="grid grid-cols-1 gap-1">
         {value.links.map((link, index) => {
           if (!link.href) {
             return <span key={`${link.label}-${index}`}>{link.label}</span>;
@@ -824,7 +824,7 @@ function displayCell(value?: Cell) {
           const preferredHref = link.sourceHref && isSwfiPlatformRecordHref(link.sourceHref) ? link.sourceHref : link.href;
           const target = productHref(preferredHref, "/");
           return (
-            <span key={`${link.label}-${index}`} className="grid gap-1">
+            <span key={`${link.label}-${index}`} className="grid grid-cols-1 gap-1">
               <a href={target} onClick={(event) => hardNavigateSameRouteFilter(event, target)} title={link.sourceHref ? "View details" : undefined} data-record-link={isFirstPartyRecordHref(target) ? "true" : undefined} data-source-state={link.sourceHref ? "on-file" : undefined} className="text-[#16538C] underline">{link.label}</a>
             </span>
           );
@@ -839,7 +839,7 @@ function displayCell(value?: Cell) {
     // pop a separate page; the in-tab chain still ends at swfi.com.
     if (typeof value === "object" && value?.newTab) {
       return (
-        <span className="grid gap-1">
+        <span className="grid grid-cols-1 gap-1">
           <a href={href} target="_blank" rel="noopener noreferrer" className="text-[#16538C] underline">{label}</a>
         </span>
       );
@@ -848,7 +848,7 @@ function displayCell(value?: Cell) {
     const preferredHref = sourceHref && isSwfiPlatformRecordHref(sourceHref) ? sourceHref : href;
     const target = productHref(preferredHref, "/");
     return (
-      <span className="grid gap-1">
+      <span className="grid grid-cols-1 gap-1">
         <a href={target} onClick={(event) => hardNavigateSameRouteFilter(event, target)} title={sourceHref ? "View details" : undefined} data-record-link={isFirstPartyRecordHref(target) ? "true" : undefined} data-source-state={sourceHref ? "on-file" : undefined} className="text-[#16538C] underline">{label}</a>
       </span>
     );
@@ -1401,19 +1401,19 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
   ] as const;
 
   return (
-    <div className="grid gap-4" data-brd-section-visualization={kind}>
+    <div className="grid grid-cols-1 gap-4" data-brd-section-visualization={kind}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="grid gap-1 text-[12px] text-[#7A8A9B]">
+        <div className="grid grid-cols-1 gap-1 text-[12px] text-[#7A8A9B]">
           <span>SWFI platform data</span>
           <span>This view summarizes {sourceRows.length.toLocaleString("en-US")} visible items from {totalRows.toLocaleString("en-US")} total items.</span>
         </div>
         {/* Dashboard 2.0 P05: data export requires SWFI authentication — no public downloads. */}
-        <a href="https://www.swfi.com/v1/signin/?msg=auth" className="rounded border border-[#C7D2DD] bg-white px-3 py-1.5 text-sm font-semibold text-[#16538C] no-underline">
+        <a href="https://www.swfi.com/v1/signin/?msg=auth" className="inline-flex min-h-11 items-center rounded border border-[#C7D2DD] bg-white px-3 py-1.5 text-sm font-semibold text-[#16538C] no-underline lg:min-h-0">
           Sign in on SWFI to export
         </a>
       </div>
       <div
-        className="grid gap-3 sm:grid-cols-3"
+        className="grid grid-cols-1 gap-3 sm:grid-cols-3"
         data-display-id={`summary-tiles-${kind}`}
         data-display-type="metric"
         data-title="Summary tiles"
@@ -1434,19 +1434,19 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
       <SectionInsights kind={kind} rows={sourceRows} />
       <SectionFocusLens chips={focusChips} focusTerms={focusTerms} onToggle={toggleFocusTerm} onClear={clearFocusTerms} />
       {rankingTabs.length > 0 || quickCountFacets.length > 0 ? (
-        <div className="grid items-start gap-4 xl:grid-cols-[1.6fr_1fr]">
+        <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[1.6fr_1fr]">
           <SectionRankings kind={kind} tabs={rankingTabs} rowCount={sourceRows.length} />
           <SectionQuickCounts kind={kind} facets={quickCountFacets} universeTotal={universeTotal} />
         </div>
       ) : null}
       {universeFacets.length > 0 ? (
-        <div className="grid gap-4" data-brd-universe-facets={kind}>
+        <div className="grid grid-cols-1 gap-4" data-brd-universe-facets={kind}>
           <div className="text-[12px] text-[#7A8A9B]">
             Distributions below cover all {universeTotal.toLocaleString("en-US")} records in SWFI (computed at source), not just this page. Top 12 values shown; blanks excluded and disclosed per chart.
           </div>
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             {universeFacets.slice(0, 2).map((facet) => (
-              <div key={facet.field} className="grid gap-1">
+              <div key={facet.field} className="grid grid-cols-1 gap-1">
                 <SectionBarChart kind={kind} title={`All records by ${facet.label}`} rows={facet.rows} />
                 {facet.covered < facet.disclosed_of_total ? (
                   <div className="text-[11px] text-[#7A8A9B]">
@@ -1464,7 +1464,7 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
            3-point line across years reads as market history that never
            happened), and never render an EMPTY chart frame (a chart with no
            rows is a dead element — minutes F). */
-        <div className="grid gap-4 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           {categoryRows.length > 1 ? <SectionBarChart kind={kind} title="Records by Category (current page)" rows={categoryRows} /> : null}
           {geographyRows.length > 1 ? <SectionBarChart kind={kind} title="Records by Geography (current page)" rows={geographyRows} /> : null}
           {trendRows.length >= 4 ? (
@@ -1506,9 +1506,9 @@ function SectionBarChart({ kind, title, rows: chartRows }: { kind: Kind; title: 
       data-cta-href={chartRows[0] ? appHref(`${routeByKind[kind]}/?filter=${encodeURIComponent(chartRows[0].label)}`) : ""}
     >
       <h3 className="m-0 mb-3 text-[13px] font-bold text-[#11314F]">{title}</h3>
-      <div className="grid gap-2">
+      <div className="grid grid-cols-1 gap-2">
         {chartRows.length ? chartRows.slice(0, 8).map((row) => (
-          <a key={`${title}-${row.label}`} href={appHref(`${routeByKind[kind]}/?filter=${encodeURIComponent(row.label)}`)} className="grid gap-1 text-inherit no-underline">
+          <a key={`${title}-${row.label}`} href={appHref(`${routeByKind[kind]}/?filter=${encodeURIComponent(row.label)}`)} className="grid grid-cols-1 gap-1 text-inherit no-underline">
             <div className="flex justify-between gap-3 text-[12px]">
               <span className="truncate font-semibold text-[#41566B]">{row.label}</span>
               <span className="font-bold text-[#11314F]">{row.count.toLocaleString("en-US")}</span>
@@ -1584,7 +1584,7 @@ function SectionTopRecords({ kind, rows: topRows }: { kind: Kind; rows: Row[] })
         <h3 className="m-0 text-[13px] font-bold text-[#11314F]">Highlighted SWFI Pages</h3>
         <span className="text-sm font-semibold text-[#7A8A9B]">Use Data for the analytical table</span>
       </div>
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
         {topRows.length ? topRows.map((row, index) => {
           const source = sourceHref(row);
           const href = sectionRecordHref(kind, row, source);
@@ -1798,7 +1798,7 @@ function SectionFreshness({ kind, rows: sourceRows }: { kind: Kind; rows: Row[] 
       <div className="mb-2 text-[12px] text-[#7A8A9B]">
         {summary.newCount.toLocaleString("en-US")} new and {summary.updatedCount.toLocaleString("en-US")} updated records among the ones loaded in this view, dated within the last {summary.windowDays} days. Click a name to open its SWFI page.
       </div>
-      <div className="grid gap-1">
+      <div className="grid grid-cols-1 gap-1">
         {summary.entries.map(({ record, changeKind, stamp }, index) => {
           const source = sourceHref(record.row);
           const href = productHref(sectionRecordHref(kind, record.row, source), routeByKind[kind]);
@@ -1845,7 +1845,7 @@ function SectionRankings({ kind, tabs, rowCount }: { kind: Kind; tabs: RankingTa
         ) : <span className="text-[12px] font-semibold text-[#7A8A9B]">{tab.label}</span>}
       </div>
       <div className="mb-2 text-[12px] text-[#7A8A9B]">{tab.explain} among the {rowCount.toLocaleString("en-US")} records loaded in this view. Click a name to open its SWFI page.</div>
-      <div className="grid gap-1">
+      <div className="grid grid-cols-1 gap-1">
         {tab.entries.map(({ row, value }, index) => {
           const source = sourceHref(row);
           const href = productHref(sectionRecordHref(kind, row, source), routeByKind[kind]);
@@ -1883,11 +1883,11 @@ function SectionQuickCounts({ kind, facets, universeTotal }: { kind: Kind; facet
       <div className="mb-2 text-[12px] text-[#7A8A9B]">
         Counts cover all {universeTotal.toLocaleString("en-US")} records in SWFI, computed at source. Click a value to filter this page to it.
       </div>
-      <div className="grid gap-3">
+      <div className="grid grid-cols-1 gap-3">
         {facets.map((facet) => (
           <div key={facet.field}>
             <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.08em] text-[#7A8A9B]">{facet.label}</div>
-            <div className="grid gap-1">
+            <div className="grid grid-cols-1 gap-1">
               {facet.rows.slice(0, 5).map((row) => (
                 <a key={`${facet.field}-${row.label}`} href={appHref(`${routeByKind[kind]}/?filter=${encodeURIComponent(row.label)}`)} className="flex items-center justify-between gap-2 rounded px-1 py-0.5 text-[12px] no-underline hover:bg-[#F7F9FA]">
                   <span className="truncate font-semibold text-[#41566B]">{row.label}</span>
@@ -2025,7 +2025,7 @@ function SectionInsights({ kind, rows: sourceRows }: { kind: Kind; rows: Row[] }
     >
       <h3 className="m-0 mb-1 text-[13px] font-bold text-[#11314F]">What stands out</h3>
       <div className="mb-2 text-[12px] text-[#7A8A9B]">Computed from the records loaded in this view. Each line links to its records.</div>
-      <div className="grid gap-1.5">
+      <div className="grid grid-cols-1 gap-1.5">
         {chips.map((chip) => (
           <div key={chip.text} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 rounded border border-[#EEF2F6] px-3 py-1.5 text-[12px]">
             <span className="min-w-0 flex-1 text-[#41566B]">{chip.text}</span>
@@ -2058,7 +2058,7 @@ function CompassVisualization({ rows: sourceRows, totalRows }: { rows: Row[]; to
   ];
   return (
     <div
-      className="grid gap-4"
+      className="grid grid-cols-1 gap-4"
       data-brd-compass-visualization="true"
       data-display-id="compass-visualization"
       data-display-type="chart"
@@ -2069,19 +2069,19 @@ function CompassVisualization({ rows: sourceRows, totalRows }: { rows: Row[]; to
       data-cta-href={appHref("/mandates/?filter=")}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="grid gap-1 text-[12px] text-[#7A8A9B]">
+        <div className="grid grid-cols-1 gap-1 text-[12px] text-[#7A8A9B]">
           <span>Updated from SWFI</span>
           <span>Showing {sourceRows.length.toLocaleString("en-US")} loaded Compass rows from {totalRows.toLocaleString("en-US")} total records.</span>
         </div>
         {/* Dashboard 2.0 P05: data export requires SWFI authentication — no public downloads. */}
-        <a href="https://www.swfi.com/v1/signin/?msg=auth" className="rounded border border-[#C7D2DD] bg-white px-3 py-1.5 text-sm font-semibold text-[#16538C] no-underline">
+        <a href="https://www.swfi.com/v1/signin/?msg=auth" className="inline-flex min-h-11 items-center rounded border border-[#C7D2DD] bg-white px-3 py-1.5 text-sm font-semibold text-[#16538C] no-underline lg:min-h-0">
           Sign in on SWFI to export
         </a>
       </div>
       <SectionFreshness kind="mandates" rows={sourceRows} />
       <SectionFocusLens chips={focusChips} focusTerms={focusTerms} onToggle={toggleFocusTerm} onClear={clearFocusTerms} />
       {rankingTabs.length ? <SectionRankings kind="mandates" tabs={rankingTabs} rowCount={sourceRows.length} /> : null}
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         {summary.map(([label, value]) => (
           <a key={label} href={appHref("/mandates/?filter=")} className="rounded border border-[#DCE3EA] bg-[#F7F9FA] px-3 py-3 no-underline">
             <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#7A8A9B]">{label}</div>
@@ -2090,7 +2090,7 @@ function CompassVisualization({ rows: sourceRows, totalRows }: { rows: Row[]; to
           </a>
         ))}
       </div>
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <CompassBarChart title="RFPs by Investment Type" rows={investmentTypeRows} />
         <CompassBarChart title="RFPs by Region" rows={regionRows} />
         <CompassLineChart title="RFPs Posted Per Month" rows={monthRows} recordsHref={appHref("/mandates/?filter=")} />
@@ -2104,9 +2104,9 @@ function CompassBarChart({ title, rows: chartRows }: { title: string; rows: { la
   return (
     <div className="rounded border border-[#DCE3EA] bg-white p-3">
       <h3 className="m-0 mb-3 text-[13px] font-bold text-[#11314F]">{title}</h3>
-      <div className="grid gap-2">
+      <div className="grid grid-cols-1 gap-2">
         {chartRows.length ? chartRows.slice(0, 8).map((row) => (
-          <a key={row.label} href={appHref(`/mandates/?filter=${encodeURIComponent(row.label)}`)} className="grid gap-1 text-inherit no-underline">
+          <a key={row.label} href={appHref(`/mandates/?filter=${encodeURIComponent(row.label)}`)} className="grid grid-cols-1 gap-1 text-inherit no-underline">
             <div className="flex justify-between gap-3 text-[12px]">
               <span className="truncate font-semibold text-[#41566B]">{row.label}</span>
               <span className="font-bold text-[#11314F]">{row.count.toLocaleString("en-US")}</span>
@@ -2263,7 +2263,7 @@ function DealEnginePanel() {
   const readyCount = [packets.latestTransactions, packets.ticketSize, packets.frequency, packets.coInvestments].filter(isFact).length;
 
   return (
-    <section data-gsap-reveal className="grid gap-3 rounded border border-[#DCE3EA] bg-white px-4 py-3">
+    <section data-gsap-reveal className="grid grid-cols-1 gap-3 rounded border border-[#DCE3EA] bg-white px-4 py-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="m-0 text-[16px] font-bold text-[#11314F]">Capital Deal Engine</h2>
@@ -2275,31 +2275,31 @@ function DealEnginePanel() {
       </div>
 
       <form
-        className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_140px_120px] sm:items-end"
+        className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_140px_120px] sm:items-end"
         onSubmit={(event) => {
           event.preventDefault();
           setSubmittedQuery(query.trim() || "infrastructure");
         }}
       >
-        <label className="grid gap-1 text-sm">
+        <label className="grid grid-cols-1 gap-1 text-sm">
           <span className="font-semibold text-[#41566B]">Industry / theme</span>
           <input
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            className="min-h-9 rounded border border-[#C7D2DD] px-2 outline-none"
+            className="min-h-11 rounded border border-[#C7D2DD] px-2 outline-none lg:min-h-9"
             placeholder="Infrastructure"
           />
         </label>
-        <label className="grid gap-1 text-sm">
+        <label className="grid grid-cols-1 gap-1 text-sm">
           <span className="font-semibold text-[#41566B]">Period</span>
-          <select value={days} onChange={(event) => setDays(Number(event.target.value))} className="min-h-9 rounded border border-[#C7D2DD] bg-white px-2">
+          <select value={days} onChange={(event) => setDays(Number(event.target.value))} className="min-h-11 rounded border border-[#C7D2DD] bg-white px-2 lg:min-h-9">
             <option value={90}>90 days</option>
             <option value={365}>1 year</option>
             <option value={1095}>3 years</option>
           </select>
         </label>
-        <button type="submit" className="min-h-9 rounded border border-[#C7D2DD] bg-white px-3 text-sm font-semibold text-[#16538C]">Apply</button>
+        <button type="submit" className="min-h-11 rounded border border-[#C7D2DD] bg-white px-3 text-sm font-semibold text-[#16538C] lg:min-h-9">Apply</button>
       </form>
 
       <DealEngineTable
@@ -2308,18 +2308,18 @@ function DealEnginePanel() {
         rows={latestTransactionRows}
       />
 
-      <div className="grid gap-3 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
         {/* Audit 2026-07-06: the Deal Engine's own data was table-only —
             deal-count micro-bars (one unit, nothing converted) make the
             band and investor distributions readable at a glance. */}
-        <div className="grid content-start gap-2">
+        <div className="grid grid-cols-1 content-start gap-2">
           <DealEngineBars
             title="Deals by band"
             rows={isFact(packets.ticketSize) ? rows(packets.ticketSize).map((row) => ({ label: businessText(row.label || row.band), count: numericSortValue(text(row.deals || row.count, "")) || 0 })) : []}
           />
           <DealEngineTable title="Ticket Size" columns={["Band", "Deals", "Capital"]} rows={ticketRows} />
         </div>
-        <div className="grid content-start gap-2">
+        <div className="grid grid-cols-1 content-start gap-2">
           <DealEngineBars
             title="Deals by investor"
             rows={isFact(packets.frequency) ? rows(packets.frequency).map((row) => ({ label: businessText(row.investor || row.name), count: numericSortValue(text(row.deal_count || row.deals_in_window, "")) || 0 })) : []}
@@ -2337,7 +2337,7 @@ function DealEngineBars({ title, rows: barRows }: { title: string; rows: { label
   if (!shown.length) return null;
   const max = Math.max(1, ...shown.map((row) => row.count));
   return (
-    <div className="grid gap-1 rounded border border-[#EDF1F5] bg-[#FBFCFE] p-2" role="img" aria-label={title}>
+    <div className="grid grid-cols-1 gap-1 rounded border border-[#EDF1F5] bg-[#FBFCFE] p-2" role="img" aria-label={title}>
       <div className="text-[10px] font-extrabold uppercase tracking-[0.08em] text-[#7B8996]">{title}</div>
       {shown.map((row) => (
         <div key={row.label} className="grid grid-cols-[minmax(0,1fr)_30px] items-center gap-2">
@@ -2414,7 +2414,7 @@ function ComparisonWorkbench({ records, packets }: { records: Row[]; packets: Re
   ] as const;
 
   return (
-    <section data-gsap-reveal className="grid gap-3 rounded border border-[#DCE3EA] bg-white px-4 py-3">
+    <section data-gsap-reveal className="grid grid-cols-1 gap-3 rounded border border-[#DCE3EA] bg-white px-4 py-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="m-0 text-[16px] font-bold text-[#11314F]">Current Peer Set</h2>
