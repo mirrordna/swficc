@@ -947,6 +947,21 @@ async function directProtectedRoutesCheck(browser) {
     for (const sample of samples) {
       const row = { route: sample.route, label: sample.label, unauthenticated: { final_url: "", ok: true, failures: [] } };
       const page = await publicContext.newPage();
+      // Hardening 2026-07-10: the forwarding page hands off via a JS
+      // location.replace. When www.swfi.com is slow (>45s) waitForURL times
+      // out and the <a>-only fallback then inspects a page already navigating
+      // away — a detection blind spot, not a product failure (receipt:
+      // handoff_check 2026-07-10, 3/3 sampled entities fired the handoff).
+      // Observe the swfi.com navigation request itself; a route that truly
+      // does not forward never issues one, so strictness is preserved.
+      let observedHandoffUrl = "";
+      if (sample.expectRecordPath) {
+        const encodedPath = encodeURIComponent(sample.expectRecordPath);
+        page.on("request", (request) => {
+          const url = request.url();
+          if (!observedHandoffUrl && /^https:\/\/www\.swfi\.com\//.test(url) && (url.includes(encodedPath) || url.includes(sample.expectRecordPath))) observedHandoffUrl = url;
+        });
+      }
       try {
         const response = await page.goto(appUrl(sample.route), { waitUntil: "domcontentloaded", timeout: 30_000 });
         if (!response || response.status() >= 400) row.unauthenticated.failures.push(`http_${response?.status() || "missing"}`);
@@ -961,6 +976,14 @@ async function directProtectedRoutesCheck(browser) {
             await page.waitForURL((u) => u.hostname === "www.swfi.com" && (u.href.includes(encoded) || u.href.includes(sample.expectRecordPath)), { timeout: 45_000 });
             handedOff = true;
           } catch {}
+          if (!handedOff && observedHandoffUrl) {
+            // The record handoff navigation fired but swfi.com did not finish
+            // loading within the window — the product forwarded; the platform
+            // was slow. Count it, with the observed URL as evidence.
+            handedOff = true;
+            row.unauthenticated.handoff_via = "observed_navigation_request";
+            row.unauthenticated.observed_handoff_url = observedHandoffUrl.slice(0, 160);
+          }
           row.unauthenticated.final_url = page.url();
           let carriesLink = false;
           if (!handedOff) {
