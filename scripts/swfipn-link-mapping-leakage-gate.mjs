@@ -25,7 +25,7 @@ const routes = envList("SWFIPN_MAPPING_LEAKAGE_ROUTES", [
   "/reports/",
   "/intelligence/",
   "/research/",
-  "/search/?q=Real%20Estate",
+  "/search/?q=Real%20Estate&category=entities",
   "/about/",
   "/solutions/",
   "/demo/",
@@ -54,7 +54,7 @@ const routeExpectations = {
   "/comparisons/": { entities: 2 },
   "/intelligence/": { research: 5 },
   "/research/": { research: 5 },
-  "/search/?q=Real%20Estate": { entities: 1 },
+  "/search/?q=Real%20Estate&category=entities": { entities: 1 },
 };
 
 const forbiddenText = [

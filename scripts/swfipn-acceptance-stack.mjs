@@ -83,6 +83,8 @@ function packageJsonCheck() {
       "acceptance:gate:public",
       "acceptance:stack:public",
       "acceptance:stack:deploy",
+      "search:category:gate",
+      "search:category:gate:public",
       "brd:api-dns:gate:public",
       "acceptance-lock",
       "loop-collapse",
@@ -365,6 +367,7 @@ function writeReceipt(steps) {
       matrixRow("Public dashboard loads", "public_access", steps, ["release_marker"]),
       matrixRow("DO runtime current release and containers are healthy", "runtime_truth", steps, target === "public" ? ["remote_current_release", "remote_container_health", "runtime_staleness"] : []),
       matrixRow("Rows resolve to SWFI core record handoff pages", "route_parity", steps, ["closeout", "map_leakage"]),
+      matrixRow("Smart Search preserves category and SWFI destination", "search_categories", steps, ["search_categories"]),
       matrixRow("No internal/source/debug language leaks in rendered routes", "leakage", steps, ["map_leakage", "link_escape"]),
       matrixRow("KP acceptance criteria pass", "kp_acceptance", steps, ["kp_acceptance"]),
       matrixRow("Full acceptance criteria pass", "acceptance_criteria", steps, ["acceptance_criteria"]),
@@ -495,6 +498,7 @@ async function main() {
     steps.push({ ...runtimeStaleness, receipt: runtimeReceipt, ok: runtimeStaleness.ok && runtimeReceipt.ok });
     steps.push(npmGate("closeout", target === "public" ? "closeout:gate:public" : "closeout:gate", "swfipn-closeout-gate-latest.json", gateEnv));
     steps.push(npmGate("map_leakage", target === "public" ? "map-leakage:gate:public" : "map-leakage:gate", "swfipn-link-mapping-leakage-gate-latest.json", gateEnv));
+    steps.push(npmGate("search_categories", target === "public" ? "search:category:gate:public" : "search:category:gate", "swfipn-search-category-gate-latest.json", gateEnv));
     steps.push(npmGate("link_escape", target === "public" ? "link:escape:gate:public" : "link:escape:gate", "swfipn-visible-link-escape-gate-latest.json", gateEnv));
     steps.push(npmGate("kp_acceptance", target === "public" ? "kp:gate:public" : "kp:gate", "swfipn-kp-acceptance-gate-latest.json", gateEnv));
     steps.push(npmGate("acceptance_criteria", target === "public" ? "acceptance:gate:public" : "acceptance:gate", "swfipn-acceptance-criteria-gate-latest.json", gateEnv));
@@ -529,6 +533,7 @@ async function main() {
         "--receipt", "output/swfipn-acceptance-criteria-gate-latest.json",
         "--receipt", "output/swfipn-kp-acceptance-gate-latest.json",
         "--receipt", "output/swfipn-link-mapping-leakage-gate-latest.json",
+        "--receipt", "output/swfipn-search-category-gate-latest.json",
       "--receipt", "output/swfipn-visible-link-escape-gate-latest.json",
       "--receipt", "output/swfipn-runtime-staleness-gate-latest.json",
     ], { timeout: 120_000 });

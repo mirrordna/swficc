@@ -1,6 +1,6 @@
 # SWFI /swficc Acceptance Status
 
-Status: Ready for acceptance/demo review
+Status: Not ready
 
 Scope: current `/swficc` dashboard/terminal validation scope.
 
@@ -8,21 +8,21 @@ This does not claim that full BRD Phase 2 productization is complete.
 
 Public URL: `https://swfipn.activemirror.ai/swficc/`
 
-Deployed release: `/opt/swfipn-acceptance/releases/20260708T130409Z`
+Deployed release: `/opt/swfipn-acceptance/releases/20260710T133155Z`
 
-Public asset version: `20260708T130409Z`
+Public asset version: `2026-07-11T100802228Z`
 
 ## Verdict
 
-Acceptance lock: `go`
+Acceptance lock: `no_go`
 
-Share gate: `pass`, `sendable: true`
+Share gate: `fail`, `sendable: false`
 
 BRD contract truth: `fail`, full-universe parity `UNPROVEN`
 
 BRD Phase 2 matrix: `fail`, verdict `no_go`
 
-Runtime staleness: `pass`, failures `0`
+Runtime staleness: `fail`, failures `1`
 
 API vhost readiness: `pass`, HTTP `308` -> `https://api.swfi.com/docs`
 
@@ -32,7 +32,10 @@ Production API DNS cutover: `blocked`
 
 ## Blockers
 
-- None found within current acceptance scope.
+- swfipn-acceptance-criteria-gate: status=fail; failures=look_and_feel_consistent,dashboard_public_accessible,unauthenticated_links_redirect_to_login
+- swfipn-kp-acceptance-gate: status=fail; failures=swfi_favicon,active_allocator_methodology,dashboard_kp_contract
+- swfipn-visible-link-escape-gate: status=fail; failures={'route': '/profiles/', 'failure': 'page.goto: Timeout 30000ms exceeded.\nCall log:\n\x1b[2m  - navigating to "http://127.0.0.1:8399/swficc/profiles/", waiting until "domcontentloaded"\x1b[22m\n'},{'route': '/profiles/', 'failure': 'http_missing'},{'route': '/profiles/', 'failure': 'failed_requests:1'}
+- swfipn-runtime-staleness-gate: status=fail; failures=public_release_marker
 
 ## Deferred / Blocked Outside Current Sendable Scope
 
@@ -52,7 +55,7 @@ Production API DNS cutover: `blocked`
 
 | Gate | Result | Receipt |
 | --- | --- | --- |
-| Share/sendability gate | `pass` | `output/swfipn-share-gate-latest.json` |
+| Share/sendability gate | `fail` | `output/swfipn-share-gate-latest.json` |
 | Full-universe mapping gate | `pass` | `output/swfipn-full-universe-mapping-latest.json` |
 | Source/destination manifest gate | `pass` | `output/swfipn-source-destination-manifest-latest.json` |
 | Detail-batch parity gate | `pass` | `output/swfipn-detail-batch-parity-latest.json` |
@@ -60,11 +63,11 @@ Production API DNS cutover: `blocked`
 | Record field parity gate | `blocked` | `output/swfipn-record-field-parity-full-latest.json` |
 | Adversarial review gate | `fail` | `output/swfipn-adversarial-review-latest.json` |
 | BRD contract truth gate | `fail` | `output/swfipn-brd-contract-truth-gate-latest.json` |
-| Acceptance criteria gate | `pass` | `output/swfipn-acceptance-criteria-gate-latest.json` |
-| KP acceptance gate | `pass` | `output/swfipn-kp-acceptance-gate-latest.json` |
+| Acceptance criteria gate | `fail` | `output/swfipn-acceptance-criteria-gate-latest.json` |
+| KP acceptance gate | `fail` | `output/swfipn-kp-acceptance-gate-latest.json` |
 | Route and leakage gates | `pass` | `output/swfipn-link-mapping-leakage-gate-latest.json, output/swfipn-visible-link-escape-gate-latest.json` |
 | BRD Phase 2 gate | `fail` | `output/swfipn-brd-phase2-acceptance-latest.json` |
-| Runtime staleness gate | `pass` | `output/swfipn-runtime-staleness-gate-latest.json` |
+| Runtime staleness gate | `fail` | `output/swfipn-runtime-staleness-gate-latest.json` |
 | API product gate | `pass` | `output/swfipn-api-product-gate-latest.json` |
 | API key lifecycle gate | `pass` | `output/swfipn-api-key-lifecycle-latest.json` |
 | Admin API Product Console UI gate | `pass` | `output/swfipn-admin-api-ui-brd-gate-latest.json` |
@@ -85,10 +88,10 @@ Production API DNS cutover: `blocked`
 
 - receipts: `8`
 - screenshots: `3`
-- failures: `0`
-- source_links: `50`
+- failures: `3`
+- source_links: `60`
 - detail_links: `0`
-- mirror_record_links: `30`
+- mirror_record_links: `40`
 - external_swfi_links: `0`
 
 ## Data Quality Caveats
@@ -106,7 +109,7 @@ Production API DNS cutover: `blocked`
 
 ## Required wording
 
-Use: “The current `/swficc` dashboard/terminal scope is deployed, source-backed, and sendable for validation with receipts.”
+Use: “The current `/swficc` dashboard/terminal scope is deployed, but it is not sendable until the failing or blocked acceptance receipts pass.”
 
 Use: “corresponding SWFI record/profile page within `/swficc` where an internal record exists.”
 
@@ -116,4 +119,4 @@ Do not use: “All SWFI.com pages are fully migrated.”
 
 ## Final acceptance sentence
 
-No blockers are open inside the current `/swficc` dashboard/terminal validation scope. Full BRD Phase 2 remains active because the explicit deferred productization bucket and production `api.swfi.com` DNS cutover are not complete.
+Blockers remain within the current `/swficc` dashboard/terminal validation scope. Do not call this ready or sendable until the required receipts pass.

@@ -48,6 +48,8 @@ export default function SearchResultsPage() {
   const [entityPackets, setEntityPackets] = useState<Packet[]>([]);
   const [transactionPacket, setTransactionPacket] = useState<Packet | null>(null);
   const [peoplePacket, setPeoplePacket] = useState<Packet | null>(null);
+  const [opportunityPackets, setOpportunityPackets] = useState<Packet[]>([]);
+  const [newsPacket, setNewsPacket] = useState<Packet | null>(null);
   const [loading, setLoading] = useState(false);
   const [rowLimit, setRowLimit] = useState(25);
   const [sortKey, setSortKey] = useState<"relevance" | "type" | "result" | "source" | "detail">("relevance");
@@ -105,6 +107,36 @@ export default function SearchResultsPage() {
         }).catch(() => null)
       : Promise.resolve(null);
 
+    const opportunitySearch = currentCategory === "all" || currentCategory === "opportunities"
+      ? Promise.all([
+          fetchPacket("/api/live-opportunities/v1?limit=100&page=1", 25_000, {
+            signal: controller.signal,
+            attempts: 2,
+          }),
+          fetchPacket("/api/live-mandates/v1?limit=100&page=1", 25_000, {
+            signal: controller.signal,
+            attempts: 2,
+          }),
+        ]).then((nextPackets) => {
+          const factPackets = nextPackets.filter(isFact);
+          if (active) setOpportunityPackets(factPackets);
+          return factPackets;
+        }).catch(() => {
+          if (active) setOpportunityPackets([]);
+          return [] as Packet[];
+        })
+      : Promise.resolve([] as Packet[]);
+
+    const newsSearch = currentCategory === "all" || currentCategory === "news"
+      ? fetchPacket("/api/source-intelligence/news/v1?limit=100", 25_000, {
+          signal: controller.signal,
+          attempts: 2,
+        }).then((nextPacket) => {
+          if (active && isFact(nextPacket)) setNewsPacket(nextPacket);
+          return nextPacket;
+        }).catch(() => null)
+      : Promise.resolve(null);
+
     const transactionSearch = currentCategory === "all" || currentCategory === "transactions"
       ? Promise.all([publicSearch, entitySearch]).then(async ([publicPacket, nextEntityPackets]) => {
           if (!active) return null;
@@ -119,7 +151,7 @@ export default function SearchResultsPage() {
         })
       : Promise.resolve(null);
 
-    void Promise.allSettled([publicSearch, entitySearch, peopleSearch, transactionSearch]).then(() => {
+    void Promise.allSettled([publicSearch, entitySearch, peopleSearch, opportunitySearch, newsSearch, transactionSearch]).then(() => {
       if (active) setLoading(false);
     });
     return () => {
@@ -154,16 +186,14 @@ export default function SearchResultsPage() {
       ...packetRows(peoplePacket).map((row) => categorizedSearchRow(row, "people")),
       ...publicRows.filter((row) => row.__searchCategory === "people"),
     ]), query, "person");
-    const opportunities = rankSearchRecords(
-      publicRows.filter((row) => row.__searchCategory === "opportunities"),
-      query,
-      "rfp",
-    );
-    const news = rankSearchRecords(
-      publicRows.filter((row) => row.__searchCategory === "news"),
-      query,
-      "news",
-    );
+    const opportunities = rankSearchRecords(dedupeSearchRecords([
+      ...opportunityPackets.flatMap((opportunityPacket) => packetRows(opportunityPacket)).map((row) => categorizedSearchRow(row, "opportunities")),
+      ...publicRows.filter((row) => row.__searchCategory === "opportunities"),
+    ]), query, "rfp");
+    const news = rankSearchRecords(dedupeSearchRecords([
+      ...packetRows(newsPacket).map((row) => categorizedSearchRow(row, "news")),
+      ...publicRows.filter((row) => row.__searchCategory === "news"),
+    ]), query, "news");
 
     if (category === "entities") return entities;
     if (category === "transactions") return transactions;
@@ -171,7 +201,7 @@ export default function SearchResultsPage() {
     if (category === "opportunities") return opportunities;
     if (category === "news") return news;
     return dedupeSearchRecords([...entities, ...transactions, ...opportunities, ...news, ...people]);
-  }, [category, entityPackets, packet, peoplePacket, query, transactionPacket]);
+  }, [category, entityPackets, newsPacket, opportunityPackets, packet, peoplePacket, query, transactionPacket]);
   const sortedRows = useMemo(() => sortSearchRows(resultRows, sortKey, sortDir), [resultRows, sortDir, sortKey]);
   const visibleRows = sortedRows.slice(0, rowLimit);
   const count = resultRows.length;
@@ -374,7 +404,10 @@ function meaningfulMoney(value: unknown): string {
 }
 
 function sourceHref(row: Record<string, unknown>): string {
-  return text(row.source_url || row.swfi_url || row.url || row.href, "");
+  const direct = text(row.source_url || row.swfi_url || row.url || row.href, "");
+  if (direct) return direct;
+  const legacyPost = text(row.legacy_post, "").trim();
+  return /^\d+$/.test(legacyPost) ? `https://www.swfi.com/?p=${legacyPost}` : "";
 }
 
 function SortableHeader({
