@@ -129,13 +129,24 @@ async function inspectBareSourcePage() {
   await browser.close();
   return {
     url,
-    contains_no_source_selected: /No Source Selected/i.test(text),
+    contains_no_source_selected: /No (?:Source|Record) Selected/i.test(text),
     contains_fake_no_source_value: /No source URL supplied/i.test(text),
     claims_backend_record_without_url: /citation page for the backend record/i.test(text),
     source_nav_links: links.filter((link) => /^Source$/i.test(link.text) && /\/swficc\/source\/?/.test(link.href)),
-    action_links: links.filter((link) => /Search records|Source references/i.test(link.text)),
+    action_links: links.filter((link) => /Search records|Source references|Record links/i.test(link.text)),
     first_lines: text.split("\n").map((line) => line.trim()).filter(Boolean).slice(0, 40),
   };
+}
+
+function isCanonicalLegacyArticle(href, expectedId) {
+  try {
+    const parsed = new URL(href);
+    return ["swfi.com", "www.swfi.com"].includes(parsed.hostname)
+      && parsed.pathname === "/"
+      && parsed.searchParams.get("p") === expectedId;
+  } catch {
+    return false;
+  }
 }
 
 async function hasSourceRecordHrefLoop(page) {
@@ -176,13 +187,11 @@ async function run() {
 
   const legacySourcePage = await inspectLegacySourcePage();
   if (legacySourcePage.source_record_href_loop) failures.push({ id: "legacy_source_record_page_points_to_source_route", url: legacySourcePage.url });
-  if (!legacySourcePage.record_href.includes("/swficc/research/detail/")) failures.push({ id: "legacy_source_missing_research_detail_record_page", url: legacySourcePage.url, record_href: legacySourcePage.record_href });
-  if (!legacySourcePage.record_href.includes("legacy=109202")) failures.push({ id: "legacy_source_missing_legacy_param", url: legacySourcePage.url, record_href: legacySourcePage.record_href });
+  if (!isCanonicalLegacyArticle(legacySourcePage.record_href, "109202")) failures.push({ id: "legacy_source_missing_canonical_swfi_article", url: legacySourcePage.url, record_href: legacySourcePage.record_href });
   if (/\/swficc\/source\//.test(legacySourcePage.return_href)) failures.push({ id: "legacy_source_return_points_to_source_route", url: legacySourcePage.url, return_href: legacySourcePage.return_href });
 
   const unmappedSourcePage = await inspectUnmappedSourcePage();
-  if (!unmappedSourcePage.record_href.includes("/swficc/research/detail/")) failures.push({ id: "unresolved_legacy_source_missing_research_detail_record_page", url: unmappedSourcePage.url, record_href: unmappedSourcePage.record_href });
-  if (!unmappedSourcePage.record_href.includes("legacy=999999999")) failures.push({ id: "unresolved_legacy_source_missing_legacy_param", url: unmappedSourcePage.url, record_href: unmappedSourcePage.record_href });
+  if (!isCanonicalLegacyArticle(unmappedSourcePage.record_href, "999999999")) failures.push({ id: "unresolved_legacy_source_missing_canonical_swfi_article", url: unmappedSourcePage.url, record_href: unmappedSourcePage.record_href });
 
   const bareSourcePage = await inspectBareSourcePage();
   if (!bareSourcePage.contains_no_source_selected) failures.push({ id: "bare_source_missing_no_source_selected", url: bareSourcePage.url });

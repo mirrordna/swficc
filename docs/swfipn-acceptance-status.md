@@ -16,11 +16,11 @@ Public asset version: `20260711T111948Z`
 
 ## Verdict
 
-Current `/swficc` public acceptance lock: `go`
+Acceptance lock: `go_with_caveat`
 
 Share gate: `pass`, `sendable: true`
 
-BRD contract truth: `fail`, full-universe parity `UNPROVEN`
+BRD contract truth: `pass`, full-universe parity `PASS`
 
 BRD Phase 2 matrix: `fail`, verdict `no_go`
 
@@ -59,9 +59,9 @@ Production API DNS cutover: `blocked`
 | Source/destination manifest gate | `pass` | `output/swfipn-source-destination-manifest-latest.json` |
 | Detail-batch parity gate | `pass` | `output/swfipn-detail-batch-parity-latest.json` |
 | Full route parity gate | `pass` | `output/swfipn-route-parity-full-latest.json` |
-| Record field parity gate | `blocked` | `output/swfipn-record-field-parity-full-latest.json` |
-| Adversarial review gate | `fail` | `output/swfipn-adversarial-review-latest.json` |
-| BRD contract truth gate | `fail` | `output/swfipn-brd-contract-truth-gate-latest.json` |
+| Record field parity gate | `pass` | `output/swfipn-record-field-parity-full-latest.json` |
+| Adversarial review gate | `pass` | `output/swfipn-adversarial-review-latest.json` |
+| BRD contract truth gate | `pass` | `output/swfipn-brd-contract-truth-gate-latest.json` |
 | Acceptance criteria gate | `pass` | `output/swfipn-acceptance-criteria-gate-latest.json` |
 | KP acceptance gate | `pass` | `output/swfipn-kp-acceptance-gate-latest.json` |
 | Route and leakage gates | `pass` | `output/swfipn-link-mapping-leakage-gate-latest.json, output/swfipn-visible-link-escape-gate-latest.json` |
@@ -88,16 +88,15 @@ Production API DNS cutover: `blocked`
 - receipts: `8`
 - screenshots: `3`
 - failures: `0`
-- source_links: `55`
+- source_links: `60`
 - detail_links: `0`
-- mirror_record_links: `35`
+- mirror_record_links: `40`
 - external_swfi_links: `0`
 
 ## Data Quality Caveats
 
-- Full-universe record-field parity remains unproven: the latest field-parity receipt is blocked on Mongo lookup timeouts.
-- The adversarial review remains red because its full-universe mapping, manifest, route-parity, detail-batch, and visual receipts are older than its 24-hour freshness limit.
-- These caveats are outside the current public-dashboard acceptance lock and prevent a full BRD/full-universe parity claim.
+- field_parity_data_anomaly: required displayed fields matched, but 1 secondary source-data anomaly was detected: transactions/6a3a22bd80d352a51521a4a5 field `announcedAt` (out_of_range_bson_datetime, milliseconds=569510352000000).
+- post_snapshot_count_growth: the frozen snapshot passed, but Mongo grew during verification (people 134132 -> 134134); the added records belong to the next snapshot.
 
 ## Phase 2 / Change Requests
 
@@ -112,7 +111,7 @@ Production API DNS cutover: `blocked`
 
 Use: “The current `/swficc` dashboard/terminal scope is deployed, source-backed, and sendable for validation with receipts.”
 
-Use: “corresponding SWFI record/profile page within `/swficc` where an internal record exists.”
+Use: “corresponding SWFI core platform record/profile page through SWFI sign-in handoff.”
 
 Do not use: “Full BRD Phase 2 is complete.”
 

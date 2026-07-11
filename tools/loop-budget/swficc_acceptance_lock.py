@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import argparse, datetime as dt, json, re, subprocess
+import argparse, datetime as dt, json, os, re, subprocess
 from pathlib import Path
 from typing import Any
 DEFAULT_RECEIPTS=[
@@ -123,6 +123,31 @@ def manifest_caveat(obj):
     if unreadable<=0: return None
     impacted=[{'collection':c.get('collection'),'source_total':c.get('source_total'),'rows_scanned':c.get('rows_scanned'),'unreadable_delta':c.get('unreadable_delta')} for c in obj.get('collections',[]) if int(c.get('unreadable_delta') or 0)>0]
     return {'kind':'backend_source_record_quarantine','total_unreadable_delta':unreadable,'impacted_collections':impacted}
+def field_parity_caveats(obj):
+    if not isinstance(obj,dict) or obj.get('schema_version')!='swfipn.record_field_parity_full.v2': return []
+    caveats=[]
+    anomalies=obj.get('data_anomalies') or []
+    if anomalies:
+        caveats.append({'kind':'field_parity_data_anomaly','count':len(anomalies),'records':anomalies[:20]})
+    growth=[warning for warning in (obj.get('warnings') or []) if warning.get('id')=='post_snapshot_count_growth']
+    if growth:
+        caveats.append({'kind':'post_snapshot_count_growth','count':len(growth),'collections':growth})
+    return caveats
+def caveat_line(caveat):
+    kind=caveat.get('kind')
+    if kind=='backend_source_record_quarantine':
+        return f"{kind}: {caveat.get('total_unreadable_delta')} unreadable backend source records quarantined by full manifest scan."
+    if kind=='field_parity_data_anomaly':
+        records=[]
+        for item in caveat.get('records') or []:
+            records.append(f"{item.get('collection')}/{item.get('id')} field `{item.get('field')}` ({item.get('reason')}, milliseconds={item.get('milliseconds')})")
+        return f"{kind}: required displayed fields matched, but {caveat.get('count')} secondary source-data anomaly was detected: " + '; '.join(records) + '.'
+    if kind=='post_snapshot_count_growth':
+        details=[]
+        for item in caveat.get('collections') or []:
+            details.append(f"{item.get('collection')} {item.get('mapping_count')} -> {item.get('mongo_count')}")
+        return f"{kind}: the frozen snapshot passed, but Mongo grew during verification ({'; '.join(details)}); the added records belong to the next snapshot."
+    return f"{kind}: {json.dumps(caveat, ensure_ascii=False, sort_keys=True)}"
 def scan_internal_leakage(repo:Path):
     hits=[]; compiled=[(p,re.compile(p,re.I)) for p in LEAK_PATTERNS]
     for path in repo.rglob('*'):
@@ -177,7 +202,9 @@ def write_status_doc(repo,verdict,blockers,phase2,data_quality_caveats=None):
         '',
         'This does not claim that full BRD Phase 2 productization is complete.',
         '',
-        f'Public URL: `{share.get("share_url") or "https://swfipn.activemirror.ai/swficc/"}`',
+        f'Primary public URL: `{os.environ.get("SWFIPN_PRIMARY_PUBLIC_URL", "https://dashboard.swfi.com/swficc/")}`',
+        '',
+        f'Operational alias: `{share.get("share_url") or "https://swfipn.activemirror.ai/swficc/"}`',
         '',
         f'Deployed release: `{deploy.get("release") or "unknown"}`',
         '',
@@ -260,7 +287,7 @@ def write_status_doc(repo,verdict,blockers,phase2,data_quality_caveats=None):
     lines += ['', '## Data Quality Caveats','']
     if data_quality_caveats:
         for caveat in data_quality_caveats:
-            lines.append(f"- {caveat.get('kind')}: {caveat.get('total_unreadable_delta')} unreadable backend source records quarantined by full manifest scan.")
+            lines.append(f"- {caveat_line(caveat)}")
     else:
         lines.append('- None found.')
     lines += ['', '## Phase 2 / Change Requests','']
@@ -271,7 +298,7 @@ def write_status_doc(repo,verdict,blockers,phase2,data_quality_caveats=None):
     else:
         required_sentence = 'The current `/swficc` dashboard/terminal scope is deployed, source-backed, and sendable for validation with receipts.'
         final_sentence = 'No blockers are open inside the current `/swficc` dashboard/terminal validation scope. Full BRD Phase 2 remains active because the explicit deferred productization bucket and production `api.swfi.com` DNS cutover are not complete.'
-    lines += ['', '## Required wording','', f'Use: “{required_sentence}”','', 'Use: “corresponding SWFI record/profile page within `/swficc` where an internal record exists.”','', 'Do not use: “Full BRD Phase 2 is complete.”','', 'Do not use: “All SWFI.com pages are fully migrated.”','', '## Final acceptance sentence','', final_sentence]
+    lines += ['', '## Required wording','', f'Use: “{required_sentence}”','', 'Use: “corresponding SWFI core platform record/profile page through SWFI sign-in handoff.”','', 'Do not use: “Full BRD Phase 2 is complete.”','', 'Do not use: “All SWFI.com pages are fully migrated.”','', '## Final acceptance sentence','', final_sentence]
     (docs/'swfipn-acceptance-status.md').write_text('\n'.join(lines)+'\n',encoding='utf-8')
 def main():
     ap=argparse.ArgumentParser(); ap.add_argument('--repo',default='.'); ap.add_argument('--out',default='output/swfipn-acceptance-lock-latest.json'); ap.add_argument('--receipt',action='append',default=[]); args=ap.parse_args()
@@ -281,6 +308,7 @@ def main():
         obj=load_json(repo/rel); passed=receipt_passed(obj); all_pass=all_pass and passed
         if 'route-ledger' in rel: route_count,hidden_count,hidden_details=get_route_counts(obj)
         if caveat:=manifest_caveat(obj): data_quality_caveats.append(caveat)
+        if 'record-field-parity-full' in rel: data_quality_caveats.extend(field_parity_caveats(obj))
         if not passed:
             failed_receipts.append(receipt_blocker_summary(rel,obj))
         req.append({'path':rel,'exists':(repo/rel).exists(),'passed':passed,'parse_error':obj.get('_parse_error') if isinstance(obj,dict) and '_parse_error' in obj else None})
