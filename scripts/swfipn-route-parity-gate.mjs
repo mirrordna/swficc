@@ -19,6 +19,7 @@ const MAX_LINKS = Number(process.env.SWFIPN_ROUTE_PARITY_MAX_LINKS || 500);
 const MOBILE_SAMPLE = Number(process.env.SWFIPN_ROUTE_PARITY_MOBILE_SAMPLE || 0);
 const PAGE_TIMEOUT_MS = 30_000;
 const DETAIL_READY_TIMEOUT_MS = Number(process.env.SWFIPN_ROUTE_PARITY_DETAIL_READY_TIMEOUT_MS || 5_000);
+const DETAIL_LINK_TIMEOUT_MS = Number(process.env.SWFIPN_ROUTE_PARITY_LINK_TIMEOUT_MS || 45_000);
 const OVERALL_TIMEOUT_MS = Number(process.env.SWFIPN_ROUTE_PARITY_OVERALL_TIMEOUT_MS || 20 * 60 * 1000);
 const VIEWPORT_DESKTOP = { width: 1440, height: 960 };
 const VIEWPORT_MOBILE = { width: 375, height: 812 };
@@ -362,6 +363,46 @@ async function verifyDetailPage(page, link, viewport, screenshotCounter) {
   return finding;
 }
 
+function timeoutFinding(link, viewport, elapsedMs) {
+  return {
+    status: "BLOCKED",
+    source_page: link.sourceRoute,
+    click_label: link.text,
+    expected_type: link.kind,
+    expected_id: extractRecordId(link.href),
+    expected_source_url: "",
+    actual_url: link.href,
+    actual_record_name: "",
+    reason: `detail_link_timeout:${elapsedMs}ms`,
+    redirect_chain: [],
+    screenshot: null,
+    viewport,
+    http_status: null,
+    failures: [`detail_link_timeout:${elapsedMs}ms`],
+    api_verification: null,
+    elapsed_ms: elapsedMs,
+  };
+}
+
+async function verifyDetailPageWithWatchdog(page, link, viewport, screenshotCounter) {
+  const started = Date.now();
+  let timeout;
+  const watchdog = new Promise((resolve) => {
+    timeout = setTimeout(async () => {
+      await page?.close?.().catch(() => {});
+      resolve(timeoutFinding(link, viewport, Date.now() - started));
+    }, DETAIL_LINK_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([
+      verifyDetailPage(page, link, viewport, screenshotCounter),
+      watchdog,
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function deduplicateRootCauses(findings) {
   const roots = new Map();
   for (const f of findings) {
@@ -553,12 +594,12 @@ async function run() {
         allFindings.push({ status: "BLOCKED", source_page: linksToTest[i].sourceRoute, click_label: linksToTest[i].text, expected_type: linksToTest[i].kind, actual_url: linksToTest[i].href, reason: "browser_unrecoverable", failures: ["browser_unrecoverable"], redirect_chain: [], screenshot: null, viewport: "1440x960" });
         continue;
       }
-      let finding = await verifyDetailPage(page, linksToTest[i], "1440x960", screenshotCounter);
+      let finding = await verifyDetailPageWithWatchdog(page, linksToTest[i], "1440x960", screenshotCounter);
       if (finding.status === "BLOCKED" && /browser has been closed|Target page|ERR_ABORTED|browser_unrecoverable/i.test(finding.reason || "")) {
         await page.close().catch(() => {});
         page = await relaunchBrowser(VIEWPORT_DESKTOP);
         if (page) {
-          const retryFinding = await verifyDetailPage(page, linksToTest[i], "1440x960", screenshotCounter);
+          const retryFinding = await verifyDetailPageWithWatchdog(page, linksToTest[i], "1440x960", screenshotCounter);
           retryFinding.retry_of = finding.reason;
           finding = retryFinding;
         }
@@ -568,6 +609,7 @@ async function run() {
         await page.close().catch(() => {});
         page = await ensureLivePage(VIEWPORT_DESKTOP);
       }
+      console.error(`[route-parity]   desktop: ${i + 1}/${totalToTest} ${finding.status}`);
       if ((i + 1) % 50 === 0) console.error(`[route-parity]   desktop: ${i + 1}/${totalToTest}`);
     }
     console.error(`[route-parity]   desktop: ${Math.min(linksToTest.length, totalToTest)}/${totalToTest}`);
@@ -582,12 +624,12 @@ async function run() {
         if (Date.now() - overallStart >= OVERALL_TIMEOUT_MS) break;
         if (!page) page = await ensureLivePage(VIEWPORT_MOBILE);
         if (!page) break;
-        let finding = await verifyDetailPage(page, mobileSample[i], "375x812", screenshotCounter);
+        let finding = await verifyDetailPageWithWatchdog(page, mobileSample[i], "375x812", screenshotCounter);
         if (finding.status === "BLOCKED" && /browser has been closed|Target page|ERR_ABORTED|browser_unrecoverable/i.test(finding.reason || "")) {
           await page.close().catch(() => {});
           page = await relaunchBrowser(VIEWPORT_MOBILE);
           if (page) {
-            const retryFinding = await verifyDetailPage(page, mobileSample[i], "375x812", screenshotCounter);
+            const retryFinding = await verifyDetailPageWithWatchdog(page, mobileSample[i], "375x812", screenshotCounter);
             retryFinding.retry_of = finding.reason;
             finding = retryFinding;
           }

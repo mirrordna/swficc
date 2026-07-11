@@ -96,7 +96,7 @@ function withTimeout(promise, ms, label) {
 function isRawSwfiRecordUrl(value) {
   // Bare auth entry (law 2026-07-06) is not a record URL.
   if (isSwfiAuthEntryHref(value)) return false;
-  return /https?:\/\/(?:www\.|cms\.)?swfi\.com\/(?:v1\/|\?p=)/i.test(String(value || ""));
+  return /https?:\/\/(?:www\.|cms\.)?swfi\.com\/v1\/(?:entities|people|transactions|compass)\/[a-f0-9]{24}/i.test(String(value || ""));
 }
 
 // The bare SWFI sign-in page (no redirect param) is the platform's auth
@@ -154,6 +154,16 @@ function isSwfiPlatformPageHref(value) {
   }
 }
 
+function isDetailRoute(route) {
+  return /\/(?:profiles|transactions|mandates|people|reports|research)\/detail\/\?/i.test(route);
+}
+
+function isSwfiSignInHandoffSnapshot(route, bodyText) {
+  return isDetailRoute(route)
+    && /Sign In/i.test(bodyText || "")
+    && /You need to sign in before accessing that page/i.test(bodyText || "");
+}
+
 function allowedExternal(route, href, target) {
   try {
     const parsed = new URL(href);
@@ -203,6 +213,33 @@ async function inspectRoute(browser, route) {
 
     const response = await page.goto(result.url, { waitUntil: "domcontentloaded", timeout: 30_000 });
     result.status = response?.status() || 0;
+    result.final_url = page.url();
+    if (isCanonicalSwfiHandoffUrl(result.final_url) && /\/(?:profiles|transactions|mandates|people)\/detail\/\?/i.test(route)) {
+      result.auth_handoff = true;
+      result.body_chars = 0;
+      result.blank = false;
+      result.external_links = [];
+      result.canonical_swfi_handoff_anchors = [{ text: "SWFI sign-in handoff", href: result.final_url, raw: result.final_url }];
+      result.raw_record_anchors = [];
+      result.raw_source_attrs = [];
+      result.blank_target_legacy_anchors = [];
+      result.forbidden_text = [];
+      result.ok = true;
+      return result;
+    }
+    if (isAllowedSwfiLegacyArticleUrl(result.final_url) && /\/research\/detail\/\?/i.test(route)) {
+      result.legacy_article_handoff = true;
+      result.body_chars = 0;
+      result.blank = false;
+      result.external_links = [];
+      result.canonical_swfi_handoff_anchors = [];
+      result.raw_record_anchors = [];
+      result.raw_source_attrs = [];
+      result.blank_target_legacy_anchors = [];
+      result.forbidden_text = [];
+      result.ok = true;
+      return result;
+    }
     if (/\/(?:profiles|transactions|mandates|people|reports|research)\/detail\/\?/i.test(route)) {
       await page.waitForFunction(() => {
         const text = document.body?.innerText || "";
@@ -211,7 +248,6 @@ async function inspectRoute(browser, route) {
     }
     await page.waitForFunction(() => (document.body?.innerText || "").trim().length > 120, null, { timeout: bodyReadyTimeoutMs }).catch(() => null);
     await page.waitForTimeout(settleTimeoutMs);
-    result.final_url = page.url();
     if (isCanonicalSwfiHandoffUrl(result.final_url) && /\/(?:profiles|transactions|mandates|people)\/detail\/\?/i.test(route)) {
       result.auth_handoff = true;
       result.body_chars = 0;
@@ -257,6 +293,19 @@ async function inspectRoute(browser, route) {
     });
     result.body_chars = snapshot.bodyChars;
     result.blank = snapshot.blank;
+    if (isSwfiSignInHandoffSnapshot(route, snapshot.bodyText)) {
+      result.auth_handoff = true;
+      result.swfi_signin_handoff_snapshot = true;
+      result.blank = false;
+      result.external_links = [];
+      result.canonical_swfi_handoff_anchors = [{ text: "SWFI sign-in handoff", href: result.final_url, raw: result.final_url }];
+      result.raw_record_anchors = [];
+      result.raw_source_attrs = [];
+      result.blank_target_legacy_anchors = [];
+      result.forbidden_text = [];
+      result.ok = true;
+      return result;
+    }
     const internalRedirectAnchor = snapshot.anchors.find((anchor) => {
       try {
         const parsed = new URL(anchor.href);

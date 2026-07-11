@@ -96,7 +96,6 @@ Production API DNS cutover: `blocked`
 ## Data Quality Caveats
 
 - field_parity_data_anomaly: required displayed fields matched, but 1 secondary source-data anomaly was detected: transactions/6a3a22bd80d352a51521a4a5 field `announcedAt` (out_of_range_bson_datetime, milliseconds=569510352000000).
-- post_snapshot_count_growth: the frozen snapshot passed, but Mongo grew during verification (people 134132 -> 134134); the added records belong to the next snapshot.
 
 ## Phase 2 / Change Requests
 
