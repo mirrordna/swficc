@@ -1465,7 +1465,7 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
            happened), and never render an EMPTY chart frame (a chart with no
            rows is a dead element — minutes F). */
         <div className="grid gap-4 lg:grid-cols-3">
-          {categoryRows.length > 1 ? <SectionBarChart kind={kind} title="Records by Category (current page)" rows={categoryRows} /> : null}
+          {kind !== "allocators" && categoryRows.length > 1 ? <SectionBarChart kind={kind} title="Records by Category (current page)" rows={categoryRows} /> : null}
           {geographyRows.length > 1 ? <SectionBarChart kind={kind} title="Records by Geography (current page)" rows={geographyRows} /> : null}
           {trendRows.length >= 4 ? (
             <SectionLineChart title="Records by Month (current page)" rows={trendRows} recordsHref={dataViewHref} />
@@ -2187,21 +2187,22 @@ function monthBucket(value: unknown) {
 function DealEnginePanel() {
   const [query, setQuery] = useState("infrastructure");
   const [submittedQuery, setSubmittedQuery] = useState("infrastructure");
+  const [drilldownField, setDrilldownField] = useState<"industry" | "sector">("industry");
   const [days, setDays] = useState(365);
   const [packets, setPackets] = useState<Record<string, Packet>>({});
 
   const sources = useMemo(() => {
     const encoded = encodeURIComponent(submittedQuery.trim() || "infrastructure");
     return {
-      // Latest transactions for the searched industry (sector), newest first.
-      // transaction-drilldown returns clean, single-sector rows already sorted
-      // by transaction date desc (verified against SWFI production).
-      latestTransactions: `/api/transaction-drilldown/v1?field=sector&value=${encoded}&days=${days}&limit=8`,
+      // Industry and sector are distinct backend fields. Keep the user's mode
+      // explicit so values such as "Technology" query industry rather than the
+      // differently named sector field (for example, "Information Technology").
+      latestTransactions: `/api/transaction-drilldown/v1?field=${drilldownField}&value=${encoded}&days=${days}&limit=8`,
       ticketSize: `/api/deal-intelligence/ticket-size/v1?q=${encoded}&days=${days}&limit=5`,
       frequency: `/api/deal-intelligence/investment-frequency/v1?q=${encoded}&days=${days}&limit=5`,
       coInvestments: `/api/co-investments/v1?days=${days}&limit=5`,
     };
-  }, [days, submittedQuery]);
+  }, [days, drilldownField, submittedQuery]);
 
   useEffect(() => {
     let active = true;
@@ -2261,13 +2262,14 @@ function DealEnginePanel() {
       ])
     : [];
   const readyCount = [packets.latestTransactions, packets.ticketSize, packets.frequency, packets.coInvestments].filter(isFact).length;
+  const drilldownFieldLabel = drilldownField === "industry" ? "Industry" : "Sector";
 
   return (
     <section data-gsap-reveal className="grid gap-3 rounded border border-[#DCE3EA] bg-white px-4 py-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="m-0 text-[16px] font-bold text-[#11314F]">Capital Deal Engine</h2>
-          <div className="mt-1 text-[12px] text-[#7A8A9B]">Latest transactions for the industry (newest first), plus analytical deal records: ticket size, investment frequency, and co-investment intelligence from transaction activity.</div>
+          <div className="mt-1 text-[12px] text-[#7A8A9B]">Latest transactions matching the selected industry or sector (newest first), plus analytical deal records: ticket size, investment frequency, and co-investment intelligence from transaction activity.</div>
         </div>
         <div className="rounded border border-[#DCE3EA] px-3 py-2 text-[12px] text-[#41566B]">
           {readyCount === 4 ? "4 of 4 SWFI record sets ready" : `Loading ${readyCount} of 4 SWFI record sets`}
@@ -2275,14 +2277,14 @@ function DealEnginePanel() {
       </div>
 
       <form
-        className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_140px_120px] sm:items-end"
+        className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_170px_140px_120px] sm:items-end"
         onSubmit={(event) => {
           event.preventDefault();
           setSubmittedQuery(query.trim() || "infrastructure");
         }}
       >
         <label className="grid gap-1 text-sm">
-          <span className="font-semibold text-[#41566B]">Industry / theme</span>
+          <span className="font-semibold text-[#41566B]">{drilldownFieldLabel}</span>
           <input
             type="search"
             value={query}
@@ -2291,6 +2293,22 @@ function DealEnginePanel() {
             placeholder="Infrastructure"
           />
         </label>
+        <fieldset className="grid gap-1 border-0 p-0 text-sm">
+          <legend className="font-semibold text-[#41566B]">Match by</legend>
+          <div className="grid min-h-9 grid-cols-2 overflow-hidden rounded border border-[#C7D2DD] bg-white">
+            {(["industry", "sector"] as const).map((field) => (
+              <button
+                key={field}
+                type="button"
+                aria-pressed={drilldownField === field}
+                onClick={() => setDrilldownField(field)}
+                className={`px-2 text-sm font-semibold ${drilldownField === field ? "bg-[#0A3A7A] text-white" : "bg-white text-[#41566B]"}`}
+              >
+                {field === "industry" ? "Industry" : "Sector"}
+              </button>
+            ))}
+          </div>
+        </fieldset>
         <label className="grid gap-1 text-sm">
           <span className="font-semibold text-[#41566B]">Period</span>
           <select value={days} onChange={(event) => setDays(Number(event.target.value))} className="min-h-9 rounded border border-[#C7D2DD] bg-white px-2">
@@ -2303,7 +2321,7 @@ function DealEnginePanel() {
       </form>
 
       <DealEngineTable
-        title={`Latest transactions — ${submittedQuery.trim() || "Infrastructure"} (newest first)`}
+        title={`Latest transactions by ${drilldownFieldLabel.toLowerCase()} — ${submittedQuery.trim() || "Infrastructure"} (newest first)`}
         columns={["Transaction", "Investors", "Industry", "Amount", "Date"]}
         rows={latestTransactionRows}
       />

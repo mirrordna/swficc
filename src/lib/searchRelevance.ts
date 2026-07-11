@@ -1,10 +1,30 @@
 export type SearchKind = "entity" | "person" | "transaction" | "rfp" | "news";
 
-// Canonical-name aliases: common acronyms/short forms clients type, mapped to the exact
-// entity name that carries the record (verified present with transactions in the source).
-// A query hitting one of these pins that canonical entity to the top of the results (see
-// searchRelevanceScore) so an exact match on a short/side name cannot outrank the real fund.
-const QUERY_SYNONYMS: Record<string, string[]> = {
+const SHORT_QUERY_MAX = 3;
+const ACRONYM_MIN = 2;
+const ACRONYM_MAX = 12;
+const CONNECTOR_WORDS = new Set(["and", "of", "the", "for", "in", "de", "del", "du", "et", "la", "le"]);
+const LEGAL_SUFFIX_WORDS = new Set(["company", "corporation", "corp", "limited", "ltd", "llc", "plc"]);
+const SOURCE_ALIAS_FIELDS = [
+  "alias",
+  "aliases",
+  "acronym",
+  "acronyms",
+  "abbreviation",
+  "abbreviations",
+  "short_name",
+  "shortName",
+  "legal_name",
+  "legalName",
+  "dba",
+  "former_names",
+  "formerNames",
+] as const;
+
+// Verified query-routing aliases for names the SWFI search APIs do not derive from the
+// stored display name. These values choose which canonical name to query; they never
+// populate or replace a displayed business fact.
+const VERIFIED_QUERY_ALIASES: Readonly<Record<string, readonly string[]>> = {
   adia: ["Abu Dhabi Investment Authority"],
   adq: ["Abu Dhabi Developmental Holding Company"],
   cic: ["China Investment Corporation"],
@@ -16,9 +36,6 @@ const QUERY_SYNONYMS: Record<string, string[]> = {
   "jp morgan": ["JPMorgan Chase & Co"],
   jpmorgan: ["JPMorgan Chase & Co"],
   calpers: ["California Public Employees Retirement System"],
-  // Added 2026-07-09 after the browser-driven search harness found these acronyms don't
-  // auto-resolve: acronymForName strips corporate suffixes (AIMCo/ICD -> wrong entity) or the
-  // acronym isn't in the fund's registered name (NBIM). Full names verified to resolve via sweep.
   nbim: ["Norway Government Pension Fund Global"],
   norges: ["Norway Government Pension Fund Global"],
   aimco: ["Alberta Investment Management Corporation"],
@@ -26,13 +43,15 @@ const QUERY_SYNONYMS: Record<string, string[]> = {
   kic: ["Korea Investment Corporation"],
 };
 
-const SHORT_QUERY_MAX = 3;
-
-export function businessSearchQueryVariants(query: string): string[] {
+export function businessSearchQueryVariants(query: string, sourceRows: Record<string, unknown>[] = []): string[] {
   const clean = query.trim();
   if (!clean) return [];
-  const normalized = normalizeSearchText(clean);
-  const variants = [clean, ...(QUERY_SYNONYMS[normalized] || [])];
+  const variants = [clean, ...canonicalAliasTargets(clean)];
+  for (const row of sourceRows) {
+    if (!isSourceBackedAliasMatch(row, clean)) continue;
+    const canonicalName = primarySearchName(row);
+    if (canonicalName) variants.push(canonicalName);
+  }
   return uniqueStrings(variants).slice(0, 3);
 }
 
@@ -82,14 +101,14 @@ export function businessHierarchyTier(row: Record<string, unknown>): number {
 export function isStrongNameMatch(row: Record<string, unknown>, query: string, kind: SearchKind = "entity"): boolean {
   const clean = normalizeSearchText(query);
   if (!clean) return false;
-  const name = normalizeSearchText(text(row.name || row.title || row.institution || row.buyer_entity, ""));
+  const name = normalizeSearchText(primarySearchName(row));
   const slug = normalizeSearchText(text(row.slug || "", "").replaceAll("-", " "));
   const shortQuery = clean.length <= SHORT_QUERY_MAX;
-  const acronym = acronymForName(name);
-  const aliasTargets = (QUERY_SYNONYMS[clean] || []).map(normalizeSearchText);
+  const canonicalTargets = canonicalAliasTargets(query).map(normalizeSearchText);
   if (name === clean || slug === clean) return true;
-  if (aliasTargets.some((target) => target && name === target)) return true;
-  if (shortQuery && acronym === clean.toUpperCase()) return true;
+  if (canonicalTargets.includes(name)) return true;
+  if (explicitSourceAliases(row).some((alias) => normalizeSearchText(alias) === clean)) return true;
+  if (isAcronymQuery(query) && sourceBackedSearchNames(row).some((value) => acronymMatches(value, query))) return true;
   if (shortQuery && tokenStartsWith(name, clean)) return true;
   if (!shortQuery && name.startsWith(clean)) return true;
   const terms = clean.split(/\s+/).filter(Boolean);
@@ -157,40 +176,39 @@ export function mergeSearchRecordsPreferPrimary<T extends Record<string, unknown
 export function searchRelevanceScore(row: Record<string, unknown>, query: string, kind: SearchKind = "entity"): number {
   const clean = normalizeSearchText(query);
   if (!clean) return 0;
-  const name = normalizeSearchText(text(row.name || row.title || row.institution || row.buyer_entity, ""));
+  const name = normalizeSearchText(primarySearchName(row));
   const slug = normalizeSearchText(text(row.slug || "", "").replaceAll("-", " "));
   const type = normalizeSearchText(text(row.type || row.entity_type || row.asset_class_or_strategy || row.strategy, ""));
   const country = normalizeSearchText(text(row.country || "", ""));
   const region = normalizeSearchText(text(row.region || "", ""));
-  const all = normalizeSearchText(Object.values(row).filter((value) => typeof value === "string").join(" "));
+  const channels = searchChannels(row, kind).map(normalizeSearchText).filter(Boolean);
+  const all = normalizeSearchText(channels.join(" "));
   const terms = clean.split(/\s+/).filter(Boolean);
   const shortQuery = clean.length <= SHORT_QUERY_MAX;
-  const acronym = acronymForName(name);
-  const aliasTargets = (QUERY_SYNONYMS[clean] || []).map(normalizeSearchText);
+  const canonicalTargetMatch = canonicalAliasTargets(query).map(normalizeSearchText).includes(name);
+  const explicitAliasMatch = explicitSourceAliases(row).some((alias) => normalizeSearchText(alias) === clean);
+  const acronymMatch = isAcronymQuery(query) && sourceBackedSearchNames(row).some((value) => acronymMatches(value, query));
 
-  // Canonical alias pin: when the query is a known acronym/short form (ADIA, CIC,
-  // "JP Morgan", CalPERS...), the mapped canonical entity must win outright - an exact
-  // match on a short/side name (e.g. an entity literally named "Adia") must NOT outrank
-  // Abu Dhabi Investment Authority. Return a score no name-match combination can reach,
-  // ordered among multiple aliases by prominence.
-  if (aliasTargets.some((target) => target && name === target)) {
+  // Source-provided aliases outrank incidental exact-name collisions. Product aliases are
+  // never embedded here: the row must carry the alias/legal/short-name field itself.
+  if (canonicalTargetMatch || explicitAliasMatch) {
     return 100000 + businessHierarchyScore(type) + capitalScaleScore(row);
   }
 
   let baseScore = 0;
   if (name === clean) baseScore += 3000;
   if (slug === clean) baseScore += 2600;
-  if (shortQuery && acronym === clean.toUpperCase()) baseScore += 2400;
+  if (acronymMatch) baseScore += 2400;
   if (shortQuery && tokenStartsWith(name, clean)) baseScore += 700;
   if (!shortQuery && name.startsWith(clean)) baseScore += 1000;
   if (!shortQuery && name.includes(clean)) baseScore += 620;
   if (terms.length && terms.every((term) => name.includes(term))) baseScore += 700;
   if (!shortQuery && terms.length && terms.every((term) => all.includes(term))) baseScore += 240;
   if (country.includes(clean) || region.includes(clean)) baseScore += 120;
-  if (kind === "transaction" && text(row.buyer_entity || row.seller_entity || "", "").toLowerCase().includes(clean)) baseScore += 360;
-  if (kind === "person" && text(row.title || row.institution || "", "").toLowerCase().includes(clean)) baseScore += 260;
-  if (kind === "rfp" && text(row.strategy || row.asset_class_or_strategy || "", "").toLowerCase().includes(clean)) baseScore += 220;
-  if (kind === "news" && text(row.source || "", "").toLowerCase().includes(clean)) baseScore += 160;
+  if (kind === "transaction" && channels.some((value) => value.includes(clean))) baseScore += 360;
+  if (kind === "person" && channels.some((value) => value.includes(clean))) baseScore += 260;
+  if (kind === "rfp" && channels.some((value) => value.includes(clean))) baseScore += 220;
+  if (kind === "news" && channels.some((value) => value.includes(clean))) baseScore += 160;
 
   if (baseScore <= 0) return 0;
 
@@ -233,12 +251,114 @@ function capitalScaleScore(row: Record<string, unknown>): number {
   return Math.min(240, Math.round(Math.log10(value + 1) * 18));
 }
 
-function acronymForName(value: string): string {
-  return value
-    .split(/\s+/)
-    .filter((part) => part && !/^(and|of|the|for|in|group|company|corporation|corp|limited|ltd|llc|plc)$/.test(part))
-    .map((part) => part[0]?.toUpperCase() || "")
-    .join("");
+function isSourceBackedAliasMatch(row: Record<string, unknown>, query: string): boolean {
+  const clean = normalizeSearchText(query);
+  if (!clean) return false;
+  if (explicitSourceAliases(row).some((alias) => normalizeSearchText(alias) === clean)) return true;
+  return isAcronymQuery(query) && sourceBackedSearchNames(row).some((value) => acronymMatches(value, query));
+}
+
+function canonicalAliasTargets(query: string): string[] {
+  return [...(VERIFIED_QUERY_ALIASES[normalizeSearchText(query)] || [])];
+}
+
+function primarySearchName(row: Record<string, unknown>): string {
+  return text(row.name || row.title || row.institution || row.buyer_entity, "");
+}
+
+function sourceBackedSearchNames(row: Record<string, unknown>): string[] {
+  return uniqueStrings([
+    primarySearchName(row),
+    text(row.slug, "").replaceAll("-", " "),
+    ...explicitSourceAliases(row),
+  ]);
+}
+
+function explicitSourceAliases(row: Record<string, unknown>): string[] {
+  const aliases: string[] = [];
+  for (const key of SOURCE_ALIAS_FIELDS) {
+    const value = row[key];
+    if (Array.isArray(value)) {
+      aliases.push(...value.filter((item): item is string => typeof item === "string"));
+    } else if (typeof value === "string") {
+      aliases.push(value);
+      for (const match of value.matchAll(/\(([^)]+)\)/g)) aliases.push(match[1]);
+    }
+  }
+  return uniqueStrings(aliases);
+}
+
+function searchChannels(row: Record<string, unknown>, kind: SearchKind): string[] {
+  const channels = sourceBackedSearchNames(row);
+  const fields = kind === "transaction"
+    ? ["buyer_entity", "seller_entity", "institution", "industry", "sector", "investment_type", "country", "region", "announced_at", "closed_at"]
+    : kind === "person"
+      ? ["title", "institution", "city", "country", "region"]
+      : kind === "rfp"
+        ? ["institution", "strategy", "asset_class_or_strategy", "country", "region"]
+        : kind === "news"
+          ? ["source", "excerpt", "summary", "country", "region"]
+          : ["type", "entity_type", "country", "region"];
+  for (const key of fields) {
+    const value = row[key];
+    if (typeof value === "string") channels.push(value);
+  }
+  if (kind === "transaction") {
+    for (const key of ["buyer_entities", "seller_entities"]) {
+      const values = row[key];
+      if (!Array.isArray(values)) continue;
+      for (const value of values) {
+        if (value && typeof value === "object") channels.push(text((value as Record<string, unknown>).name, ""));
+      }
+    }
+  }
+  return uniqueStrings(channels);
+}
+
+function isAcronymQuery(value: string): boolean {
+  const compact = value.trim().replace(/[^a-z0-9]/gi, "");
+  return compact.length >= ACRONYM_MIN
+    && compact.length <= ACRONYM_MAX
+    && /^[a-z][a-z0-9]*$/i.test(compact)
+    && !/\s/.test(value.trim());
+}
+
+function acronymMatches(value: string, query: string): boolean {
+  const target = query.replace(/[^a-z0-9]/gi, "").toUpperCase();
+  if (!target) return false;
+  return acronymCandidates(value).some((candidate) => (
+    candidate === target
+    || (target.length >= 3 && candidate.length > target.length && candidate.startsWith(target))
+  ));
+}
+
+function acronymCandidates(value: string): string[] {
+  const normalizedWords = normalizeSearchText(value).split(/\s+/).filter(Boolean);
+  if (!normalizedWords.length) return [];
+  const significantWords = normalizedWords.filter((word) => !CONNECTOR_WORDS.has(word));
+  const withoutLegalSuffix = significantWords.filter((word) => !LEGAL_SUFFIX_WORDS.has(word));
+  const candidates = [
+    significantWords.map((word) => word[0]).join(""),
+    withoutLegalSuffix.map((word) => word[0]).join(""),
+  ];
+  const lastWord = significantWords.at(-1) || "";
+  if (LEGAL_SUFFIX_WORDS.has(lastWord)) {
+    const stem = withoutLegalSuffix.map((word) => word[0]).join("");
+    candidates.push(`${stem}co`, `${stem}${lastWord[0]}`);
+  }
+  if (withoutLegalSuffix.length > 1) {
+    const rest = withoutLegalSuffix.slice(1).map((word) => word[0]).join("");
+    for (const prefixLength of [2, 3, 4]) {
+      if (withoutLegalSuffix[0].length >= prefixLength) candidates.push(`${withoutLegalSuffix[0].slice(0, prefixLength)}${rest}`);
+    }
+    const initials = withoutLegalSuffix.map((word) => word[0]).join("");
+    const finalWord = withoutLegalSuffix.at(-1) || "";
+    if (finalWord.length > 1) candidates.push(`${initials}${finalWord.at(-1)}`);
+  }
+  for (const token of value.match(/[A-Za-z0-9]+/g) || []) {
+    if (/^[A-Z][A-Z0-9]{1,11}$/.test(token)) candidates.push(token);
+  }
+  return uniqueStrings(candidates).map((candidate) => candidate.replace(/[^a-z0-9]/gi, "").toUpperCase()).filter(Boolean);
 }
 
 function tokenStartsWith(value: string, query: string): boolean {

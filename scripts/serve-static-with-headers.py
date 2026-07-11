@@ -1412,7 +1412,14 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
     def is_search_results_path(self, parsed):
         normalized = parsed.path
         if normalized == "/swficc/search" or normalized == "/swficc/search/":
-            query = (urllib.parse.parse_qs(parsed.query).get("q") or [""])[0].strip()
+            params = urllib.parse.parse_qs(parsed.query)
+            query = (params.get("q") or [""])[0].strip()
+            category = (params.get("category") or [""])[0].strip().casefold()
+            # Category-specific "View all" pages are rendered by the Next search app,
+            # which owns the category-aware data contracts. Keep this server-rendered
+            # fallback only for the uncategorized search route.
+            if category in {"entities", "opportunities", "transactions", "news", "people"}:
+                return False
             return bool(query)
         return False
 

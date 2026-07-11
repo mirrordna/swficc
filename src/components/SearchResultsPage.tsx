@@ -5,9 +5,12 @@ import SwfiBrandHeader from "@/components/SwfiBrandHeader";
 import type { Packet } from "@/lib/sourcePackets";
 import { fetchPacket, isFact, money, rows, text } from "@/lib/sourcePackets";
 import { appHref, isSwfiPlatformRecordHref, selfContainedHref, swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
-import { businessSearchQueryVariants, mergeSearchRecordsPreferPrimary } from "@/lib/searchRelevance";
+import { businessSearchQueryVariants, dedupeSearchRecords, mergeSearchRecordsPreferPrimary, rankSearchRecords } from "@/lib/searchRelevance";
 
 const SEARCH_PREFETCH_CACHE_PREFIX = "swfipn.search.prefetch.v1:";
+const SEARCH_CATEGORIES = ["all", "entities", "opportunities", "transactions", "news", "people"] as const;
+type SearchCategory = (typeof SEARCH_CATEGORIES)[number];
+type CategorizedSearchRow = Record<string, unknown> & { __searchCategory: Exclude<SearchCategory, "all"> };
 
 function searchPrefetchCacheKey(query: string): string {
   return `${SEARCH_PREFETCH_CACHE_PREFIX}${query.trim().toLowerCase()}`;
@@ -16,6 +19,12 @@ function searchPrefetchCacheKey(query: string): string {
 function queryFromUrl(): string {
   if (typeof window === "undefined") return "";
   return new URLSearchParams(window.location.search).get("q")?.trim() || "";
+}
+
+function categoryFromUrl(): SearchCategory {
+  if (typeof window === "undefined") return "all";
+  const value = new URLSearchParams(window.location.search).get("category")?.trim().toLowerCase() || "all";
+  return SEARCH_CATEGORIES.includes(value as SearchCategory) ? value as SearchCategory : "all";
 }
 
 function cachedPacket(query: string): Packet | null {
@@ -34,8 +43,11 @@ function cachedPacket(query: string): Packet | null {
 
 export default function SearchResultsPage() {
   const [query, setQuery] = useState("");
+  const [category, setCategory] = useState<SearchCategory>("all");
   const [packet, setPacket] = useState<Packet | null>(null);
   const [entityPackets, setEntityPackets] = useState<Packet[]>([]);
+  const [transactionPacket, setTransactionPacket] = useState<Packet | null>(null);
+  const [peoplePacket, setPeoplePacket] = useState<Packet | null>(null);
   const [loading, setLoading] = useState(false);
   const [rowLimit, setRowLimit] = useState(25);
   const [sortKey, setSortKey] = useState<"relevance" | "type" | "result" | "source" | "detail">("relevance");
@@ -43,12 +55,14 @@ export default function SearchResultsPage() {
 
   useEffect(() => {
     const currentQuery = queryFromUrl();
+    const currentCategory = categoryFromUrl();
     const cached = cachedPacket(currentQuery);
     let active = true;
     const controller = new AbortController();
     const resetTimer = window.setTimeout(() => {
       if (!active) return;
       setQuery(currentQuery);
+      setCategory(currentCategory);
       if (cached) setPacket(cached);
       setLoading(Boolean(currentQuery) && !cached);
     }, 0);
@@ -59,26 +73,53 @@ export default function SearchResultsPage() {
         controller.abort();
       };
     }
-    const publicSearch = fetchPacket(`/api/v1/public/search?q=${encodeURIComponent(currentQuery)}&limit=25`, 20_000, {
+    const publicSearch = fetchPacket(`/api/v1/public/search?q=${encodeURIComponent(currentQuery)}&limit=100`, 20_000, {
       signal: controller.signal,
       attempts: 2,
     }).then((nextPacket) => {
-      if (!active) return;
+      if (!active) return nextPacket;
       if (isFact(nextPacket)) setPacket(nextPacket);
+      return nextPacket;
     });
     const entitySearch = Promise.all(businessSearchQueryVariants(currentQuery).map((variant) => (
-      fetchPacket(`/api/source-data/search/v1?collection=entities&q=${encodeURIComponent(variant)}&limit=25`, 25_000, {
+      fetchPacket(`/api/source-data/search/v1?collection=entities&q=${encodeURIComponent(variant)}&limit=100`, 25_000, {
         signal: controller.signal,
         attempts: 2,
       })
     ))).then((nextPackets) => {
-      if (!active) return;
-      setEntityPackets(nextPackets.filter(isFact));
+      const factPackets = nextPackets.filter(isFact);
+      if (active) setEntityPackets(factPackets);
+      return factPackets;
     }).catch(() => {
-      if (!active) return;
-      setEntityPackets([]);
+      if (active) setEntityPackets([]);
+      return [] as Packet[];
     });
-    void Promise.allSettled([publicSearch, entitySearch]).then(() => {
+
+    const peopleSearch = currentCategory === "all" || currentCategory === "people"
+      ? fetchPacket(`/api/people/search/v1?q=${encodeURIComponent(currentQuery)}&limit=100`, 25_000, {
+          signal: controller.signal,
+          attempts: 2,
+        }).then((nextPacket) => {
+          if (active && isFact(nextPacket)) setPeoplePacket(nextPacket);
+          return nextPacket;
+        }).catch(() => null)
+      : Promise.resolve(null);
+
+    const transactionSearch = currentCategory === "all" || currentCategory === "transactions"
+      ? Promise.all([publicSearch, entitySearch]).then(async ([publicPacket, nextEntityPackets]) => {
+          if (!active) return null;
+          const entityName = resolvedEntityName(currentQuery, publicPacket, nextEntityPackets);
+          if (!entityName) return null;
+          const nextPacket = await fetchPacket(`/api/entity-transactions/v1?name=${encodeURIComponent(entityName)}&limit=100`, 25_000, {
+            signal: controller.signal,
+            attempts: 2,
+          }).catch(() => null);
+          if (active && nextPacket && isFact(nextPacket)) setTransactionPacket(nextPacket);
+          return nextPacket;
+        })
+      : Promise.resolve(null);
+
+    void Promise.allSettled([publicSearch, entitySearch, peopleSearch, transactionSearch]).then(() => {
       if (active) setLoading(false);
     });
     return () => {
@@ -89,16 +130,48 @@ export default function SearchResultsPage() {
   }, []);
 
   const resultRows = useMemo(() => {
-    // The /api/v1/public/search order is the PRIMARY ranking (it already returns the
-    // right top hit, e.g. PIF -> Public Investment Fund, Abu Dhabi -> ADIA). The
-    // /api/source-data entities collection is APPENDED only for entities not already
-    // present — it must not reorder above the good public-search order. Interim
-    // business hierarchy (SWF > pension > ...) is a stable tiebreak, pending the
-    // official ordering list from the data team.
-    const packetRows = packet && isFact(packet) ? rows(packet, "results") : [];
-    const entityRows = entityPackets.flatMap((entityPacket) => rows(entityPacket, "results"));
-    return mergeSearchRecordsPreferPrimary(packetRows, entityRows, query, "entity");
-  }, [entityPackets, packet, query]);
+    const publicRows = packetRows(packet).map((row) => categorizedSearchRow(row));
+    const publicEntities = publicRows.filter((row) => row.__searchCategory === "entities");
+    const entityRows = entityPackets
+      .flatMap((entityPacket) => packetRows(entityPacket))
+      .map((row) => categorizedSearchRow(row, "entities"));
+    const entities = mergeSearchRecordsPreferPrimary(publicEntities, entityRows, query, "entity");
+    const matchedEntityName = transactionPacketEntityName(transactionPacket);
+    const joinedTransactions = packetRows(transactionPacket).map((row) => ({
+      ...categorizedSearchRow(row, "transactions"),
+      __searchEntityName: matchedEntityName,
+    }));
+    const publicTransactions = rankSearchRecords(
+      publicRows.filter((row) => row.__searchCategory === "transactions"),
+      query,
+      "transaction",
+    );
+    // The entity-transactions endpoint is already an exact entity-reference join and
+    // returns newest-first rows. Do not text-filter those records by the acronym again:
+    // many rows carry the entity only as a backend reference plus `role=Buyer`.
+    const transactions = dedupeSearchRecords([...joinedTransactions, ...publicTransactions]);
+    const people = rankSearchRecords(dedupeSearchRecords([
+      ...packetRows(peoplePacket).map((row) => categorizedSearchRow(row, "people")),
+      ...publicRows.filter((row) => row.__searchCategory === "people"),
+    ]), query, "person");
+    const opportunities = rankSearchRecords(
+      publicRows.filter((row) => row.__searchCategory === "opportunities"),
+      query,
+      "rfp",
+    );
+    const news = rankSearchRecords(
+      publicRows.filter((row) => row.__searchCategory === "news"),
+      query,
+      "news",
+    );
+
+    if (category === "entities") return entities;
+    if (category === "transactions") return transactions;
+    if (category === "people") return people;
+    if (category === "opportunities") return opportunities;
+    if (category === "news") return news;
+    return dedupeSearchRecords([...entities, ...transactions, ...opportunities, ...news, ...people]);
+  }, [category, entityPackets, packet, peoplePacket, query, transactionPacket]);
   const sortedRows = useMemo(() => sortSearchRows(resultRows, sortKey, sortDir), [resultRows, sortDir, sortKey]);
   const visibleRows = sortedRows.slice(0, rowLimit);
   const count = resultRows.length;
@@ -118,14 +191,14 @@ export default function SearchResultsPage() {
     <div className="min-h-screen bg-[#F2F4F6] font-sans text-[#1B2733]">
       <SwfiBrandHeader searchId="global-swfi-search" searchDefaultValue={query} />
       <main className="mx-auto grid w-full max-w-[1188px] gap-4 p-4 sm:p-[20px_22px_30px]">
-        <section className="rounded border border-[#DCE3EA] bg-white p-4">
+        <section className="rounded border border-[#DCE3EA] bg-white p-4" data-search-category={category}>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h1 className="m-0 text-[19px] font-bold text-[#11314F]">Smart Search</h1>
-              <p className="m-0 mt-1 text-[12px] text-[#7A8A9B]">Results are ranked for institutional relevance. Select any row to continue.</p>
+              <p className="m-0 mt-1 text-[12px] text-[#7A8A9B]">{searchCategoryLabel(category)} results for {query ? `“${query}”` : "your search"}. Select any row to continue.</p>
             </div>
             <div className="rounded border border-[#DCE3EA] px-3 py-2 text-[12px] text-[#41566B]">
-              {loading && !packet ? "Loading" : showingText}
+              <span className="font-semibold">{searchCategoryLabel(category)}</span> · {loading && !packet ? "Loading" : showingText}
             </div>
           </div>
         </section>
@@ -146,7 +219,8 @@ export default function SearchResultsPage() {
               </select>
             </label>
           </div>
-          <table className="w-full border-collapse text-left text-[13px]">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] border-collapse text-left text-[13px]">
             <thead className="bg-[#F7F9FB] text-[11px] uppercase tracking-[0.04em] text-[#5B6A78]">
               <tr>
                 <SortableHeader label="Type" active={sortKey === "type"} direction={sortDir} onClick={() => changeSort("type")} />
@@ -159,30 +233,144 @@ export default function SearchResultsPage() {
             <tbody>
               {visibleRows.length ? visibleRows.map((row, index) => {
                 const source = sourceHref(row);
+                const categorizedRow = row as CategorizedSearchRow;
+                const rowCategory = categorizedRow.__searchCategory;
+                const href = productHref(source, searchCategoryFallback(rowCategory));
                 return (
-                  <tr key={`${text(row.name, "Result")}-${index}`} className="align-top">
-                    <td className="border-b border-[#EDF1F5] px-3 py-2 font-semibold text-[#11314F]">Institution</td>
+                  <tr key={`${searchResultName(row)}-${index}`} className="align-top">
+                    <td className="border-b border-[#EDF1F5] px-3 py-2 font-semibold text-[#11314F]">{searchCategoryLabel(rowCategory)}</td>
                     <td className="border-b border-[#EDF1F5] px-3 py-2">
-                      <a href={productHref(source, "/profiles/")} className="font-semibold text-[#16538C] underline">{text(row.name, "Not disclosed")}</a>
+                      <a href={href} className="font-semibold text-[#16538C] underline">{searchResultName(row)}</a>
                     </td>
                     <td className="border-b border-[#EDF1F5] px-3 py-2">SWFI</td>
-                    <td className="border-b border-[#EDF1F5] px-3 py-2">{[text(row.type, ""), text(row.country || row.region, ""), money(row.aum || row.assets)].filter(Boolean).join(" / ")}</td>
+                    <td className="border-b border-[#EDF1F5] px-3 py-2">{searchResultDetail(categorizedRow)}</td>
                     <td className="border-b border-[#EDF1F5] px-3 py-2">
-                      {source ? <a href={productHref(source, "/profiles/")} className="text-[#16538C] underline">View details</a> : "Not disclosed"}
+                      {source ? <a href={href} className="text-[#16538C] underline">View details</a> : "Not disclosed"}
                     </td>
                   </tr>
                 );
               }) : (
                 <tr>
-                  <td colSpan={5} className="px-3 py-8 text-center text-[#6B7A89]">{loading ? "Loading" : "Not disclosed"}</td>
+                  <td colSpan={5} className="px-3 py-8 text-center text-[#6B7A89]">{loading ? "Loading…" : "No matching SWFI records."}</td>
                 </tr>
               )}
             </tbody>
           </table>
+          </div>
         </section>
       </main>
     </div>
   );
+}
+
+function packetRows(packet: Packet | null | undefined): Record<string, unknown>[] {
+  if (!packet || !isFact(packet)) return [];
+  const results = rows(packet, "results");
+  if (results.length) return results;
+  const dataRows = rows(packet, "rows");
+  return dataRows.length ? dataRows : rows(packet);
+}
+
+function resolvedEntityName(query: string, publicPacket: Packet, entityPackets: Packet[]): string {
+  const publicEntities = packetRows(publicPacket).filter((row) => inferSearchCategory(row) === "entities");
+  const sourceEntities = entityPackets.flatMap((entityPacket) => packetRows(entityPacket));
+  const ranked = mergeSearchRecordsPreferPrimary(publicEntities, sourceEntities, query, "entity");
+  return text(ranked[0]?.name || ranked[0]?.title || ranked[0]?.institution, "").trim();
+}
+
+function transactionPacketEntityName(packet: Packet | null | undefined): string {
+  if (!packet || !isFact(packet) || !packet.data || typeof packet.data !== "object" || Array.isArray(packet.data)) return "";
+  const entity = (packet.data as Record<string, unknown>).entity;
+  return entity && typeof entity === "object" && !Array.isArray(entity)
+    ? meaningfulText((entity as Record<string, unknown>).name)
+    : "";
+}
+
+function categorizedSearchRow(
+  row: Record<string, unknown>,
+  forcedCategory?: Exclude<SearchCategory, "all">,
+): CategorizedSearchRow {
+  return { ...row, __searchCategory: forcedCategory || inferSearchCategory(row) };
+}
+
+function inferSearchCategory(row: Record<string, unknown>): Exclude<SearchCategory, "all"> {
+  const source = sourceHref(row).toLowerCase();
+  if (/\/v1\/people\//.test(source)) return "people";
+  if (/\/v1\/transactions\//.test(source)) return "transactions";
+  if (/\/v1\/compass\//.test(source)) return "opportunities";
+  if (/\/v1\/news\//.test(source) || /[?&]p=\d+/.test(source)) return "news";
+  return "entities";
+}
+
+function searchCategoryLabel(category: SearchCategory): string {
+  if (category === "entities") return "Entities";
+  if (category === "opportunities") return "RFPs & Opportunities";
+  if (category === "transactions") return "Transactions";
+  if (category === "news") return "News & Articles";
+  if (category === "people") return "People";
+  return "All categories";
+}
+
+function searchCategoryFallback(category: Exclude<SearchCategory, "all">): string {
+  if (category === "entities") return "/profiles/";
+  if (category === "opportunities") return "/mandates/";
+  if (category === "transactions") return "/transactions/";
+  if (category === "news") return "/intelligence/";
+  return "/people/";
+}
+
+function searchResultName(row: Record<string, unknown>): string {
+  return meaningfulText(row.name || row.title || row.institution) || "SWFI record";
+}
+
+function searchResultDetail(row: CategorizedSearchRow): string {
+  const category = row.__searchCategory;
+  const values = category === "transactions"
+    ? [
+        transactionBuyer(row),
+        meaningfulMoney(row.amount_display || row.capital_display || row.native_amount_display || row.amount || row.capital),
+        meaningfulText(row.closed_at || row.activity_date || row.relevant_date || row.announced_at),
+        meaningfulText(row.industry || row.sector || row.investment_type),
+      ]
+    : category === "people"
+      ? [meaningfulText(row.title), meaningfulText(row.institution), meaningfulText(row.country || row.region)]
+      : category === "opportunities"
+        ? [
+            meaningfulText(row.institution),
+            meaningfulText(row.strategy || row.asset_class_or_strategy || row.type),
+            meaningfulText(row.deadline || row.close_date || row.published_at),
+          ]
+        : category === "news"
+          ? [meaningfulText(row.source), meaningfulText(row.published_at || row.updated_at)]
+          : [
+              meaningfulText(row.type || row.entity_type),
+              meaningfulText(row.country || row.region),
+              meaningfulMoney(row.aum || row.assets || row.managed_assets),
+            ];
+  return values.filter(Boolean).join(" / ") || "Details available on SWFI";
+}
+
+function transactionBuyer(row: Record<string, unknown>): string {
+  const direct = meaningfulText(row.buyer_entity || row.institution);
+  if (direct) return direct;
+  const buyers = Array.isArray(row.buyer_entities) ? row.buyer_entities : [];
+  const buyerNames = buyers
+    .map((buyer) => buyer && typeof buyer === "object" ? meaningfulText((buyer as Record<string, unknown>).name) : "")
+    .filter(Boolean)
+    .slice(0, 3)
+    .join(", ");
+  if (buyerNames) return buyerNames;
+  return /buyer/i.test(meaningfulText(row.role)) ? meaningfulText(row.__searchEntityName) : "";
+}
+
+function meaningfulText(value: unknown): string {
+  const clean = text(value, "").trim();
+  return /^(not disclosed|unavailable|loading)$/i.test(clean) ? "" : clean;
+}
+
+function meaningfulMoney(value: unknown): string {
+  const clean = money(value);
+  return /^(not disclosed|unavailable)$/i.test(clean) ? "" : clean;
 }
 
 function sourceHref(row: Record<string, unknown>): string {
@@ -220,10 +408,11 @@ function compareSearchRows(a: Record<string, unknown>, b: Record<string, unknown
 }
 
 function searchSortValue(row: Record<string, unknown>, sortKey: "type" | "result" | "source" | "detail") {
-  if (sortKey === "type") return "Institution";
-  if (sortKey === "result") return text(row.name, "");
+  const categorized = row as CategorizedSearchRow;
+  if (sortKey === "type") return searchCategoryLabel(categorized.__searchCategory);
+  if (sortKey === "result") return searchResultName(row);
   if (sortKey === "source") return "SWFI";
-  return [text(row.type, ""), text(row.country || row.region, ""), money(row.aum || row.assets)].filter(Boolean).join(" / ");
+  return searchResultDetail(categorized);
 }
 
 function productHref(href: string | undefined, fallback = "/"): string {

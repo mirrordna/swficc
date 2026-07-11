@@ -132,7 +132,7 @@ const navIntel = [
 
 export default function DashboardPage() {
   const rootRef = useGsapReveal<HTMLDivElement>();
-  const [packets, setPackets] = useState<Packets>(() => freshHomeSnapshot());
+  const [packets, setPackets] = useState<Packets>({} as Packets);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchPacket, setSearchPacket] = useState<Packet | undefined>();
@@ -157,6 +157,12 @@ export default function DashboardPage() {
 
   useEffect(() => {
     let active = true;
+    const snapshot = freshHomeSnapshot();
+    const snapshotTimer = window.setTimeout(() => {
+      if (active && Object.keys(snapshot).length) {
+        setPackets((current) => ({ ...snapshot, ...current }));
+      }
+    }, 0);
     void loadDashboardPackets((key, packet) => {
       if (!active) return;
       setPackets((current) => ({
@@ -166,6 +172,7 @@ export default function DashboardPage() {
     });
     return () => {
       active = false;
+      window.clearTimeout(snapshotTimer);
     };
   }, []);
 
@@ -234,6 +241,10 @@ export default function DashboardPage() {
     rfpRows: dedupeSearchRecords([...rfpRows, ...mandateRows]),
     newsRows,
   }), [searchQuery, dashboardEntitySearchRows, peopleRows, transactionRows, rfpRows, mandateRows, newsRows]);
+  const sourceBackedSearchEntityRows = useMemo(() => dedupeSearchRecords([
+    ...dashboardEntitySearchRows,
+    ...searchEntityPackets.flatMap((packet) => [...rows(packet, "results"), ...rows(packet)]),
+  ]), [dashboardEntitySearchRows, searchEntityPackets]);
   const liveSearchGroups = useMemo(() => brdPublicSearchGroups(searchQuery, searchPacket, searchEntityPackets), [searchQuery, searchPacket, searchEntityPackets]);
   const baseSearchGroups = useMemo(() => mergeSearchGroups(liveSearchGroups, dashboardSearchGroups), [liveSearchGroups, dashboardSearchGroups]);
   // Resolve the top-ranked entity candidates for the query; their names drive the
@@ -251,9 +262,9 @@ export default function DashboardPage() {
   const transactionCandidateKey = useMemo(() => {
     const clean = searchQuery.trim();
     if (clean.length < 2) return "";
-    const aliasTargets = businessSearchQueryVariants(clean).slice(1);
+    const aliasTargets = businessSearchQueryVariants(clean, sourceBackedSearchEntityRows).slice(1);
     return [...new Set([...aliasTargets, ...topSearchEntityNames])].join("|");
-  }, [searchQuery, topSearchEntityNames]);
+  }, [searchQuery, sourceBackedSearchEntityRows, topSearchEntityNames]);
   const searchGroups = useMemo(() => {
     const clean = searchQuery.trim();
     if (clean.length >= 2) {
@@ -305,7 +316,7 @@ export default function DashboardPage() {
         setSearchPacket(undefined);
       });
       const entitySearchRequests = [
-        fetchPacket(`/v1/swfi/top20?limit=25`, 10_000, {
+        fetchPacket(`/v1/swfi/top20?limit=50`, 10_000, {
           signal: controller.signal,
           attempts: 1,
         }),
@@ -518,6 +529,7 @@ function BrdCommandCenterSidebar({ topRows, pending = false }: { topRows: Record
 
 function BrdTopNavigation({ onSearchOpen, dataAsOfLabel, displayName }: { onSearchOpen: () => void; dataAsOfLabel: string; displayName: string }) {
   const greeting = useLocalGreeting();
+  const currentDateLabel = useCurrentDateLabel();
   const actionNav = [
     ["Profiles", "/profiles"],
     ["Reports", "/reports"],
@@ -566,7 +578,7 @@ function BrdTopNavigation({ onSearchOpen, dataAsOfLabel, displayName }: { onSear
             ))}
           </nav>
           <div className="hidden text-right text-[11px] leading-tight text-white/82 2xl:block">
-            <div className="font-extrabold text-white">{new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit", year: "numeric" }).format(new Date())}</div>
+            <div className="font-extrabold text-white">{currentDateLabel}</div>
             <div>{dataAsOfLabel}</div>
           </div>
           <DashboardLink href="/intelligence" className="hidden rounded-[8px] border border-white/16 bg-white/10 px-3 py-2 text-[11px] font-bold text-white no-underline 2xl:block">
@@ -594,6 +606,17 @@ function useLocalGreeting() {
     return () => window.clearInterval(timer);
   }, []);
   return greeting;
+}
+
+function useCurrentDateLabel() {
+  const [label, setLabel] = useState("");
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setLabel(new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit", year: "numeric" }).format(new Date()));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+  return label;
 }
 
 function greetingForHour(hour: number) {
@@ -984,7 +1007,7 @@ function BrdSearchModal({
     }
     if (event.key === "Enter" && query.trim()) {
       event.preventDefault();
-      window.location.assign(dashboardResolvedHref(`/search/?q=${encodeURIComponent(query.trim())}`));
+      window.location.assign(dashboardResolvedHref(brdSearchResultsHref(query, selectedFilter)));
     }
   }
 
@@ -1054,13 +1077,30 @@ function BrdSearchModal({
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#E2E6ED] px-5 py-3 text-[12px] text-[#687385]">
           <span>Use ↑↓ to move, Enter to open, Escape to close.</span>
-          <DashboardLink href={`/search/?q=${encodeURIComponent(query.trim())}`} className="font-bold text-[#0B4A83] underline">
+          <DashboardLink href={brdSearchResultsHref(query, selectedFilter)} className="font-bold text-[#0B4A83] underline">
             View all results
           </DashboardLink>
         </div>
       </div>
     </div>
   );
+}
+
+function brdSearchResultsHref(query: string, category: SearchCategoryLabel): string {
+  const params = new URLSearchParams({ q: query.trim() });
+  const categoryParam = category === "Entities"
+    ? "entities"
+    : category === "RFPs & Opportunities"
+      ? "opportunities"
+      : category === "Transactions"
+        ? "transactions"
+        : category === "News & Articles"
+          ? "news"
+          : category === "People"
+            ? "people"
+            : "";
+  if (categoryParam) params.set("category", categoryParam);
+  return `/search/?${params.toString()}`;
 }
 
 function BrdTabs({ tabs, active, onChange, className = "" }: {
@@ -1226,10 +1266,12 @@ function brdPublicSearchGroupLabel(row: Record<string, unknown>): string {
 function brdPublicSearchItem(row: Record<string, unknown>, group: string): BrdSearchItem {
   const label = brdText(row.name || row.title || row.institution, "Result");
   const source = sourceHref(row);
-  const detail = [
-    brdText(row.type || row.entity_type || row.title, ""),
-    brdText(row.country || row.region || row.institution, ""),
-  ].filter(Boolean).join(" · ");
+  const detail = group === "Transactions"
+    ? transactionSearchDetail(row)
+    : [
+        brdText(row.type || row.entity_type || row.title, ""),
+        brdText(row.country || row.region || row.institution, ""),
+      ].filter(Boolean).join(" · ");
   const href = group === "People"
     ? dashboardPersonHref(row)
     : group === "Transactions"
@@ -1330,6 +1372,47 @@ async function fetchPeopleSearch(query: string, signal: AbortSignal): Promise<Pa
   return packet;
 }
 
+function transactionSearchDetail(row: Record<string, unknown>, buyerFallback = ""): string {
+  const buyer = transactionBuyerName(row, buyerFallback);
+  const amount = sourcedSearchDetail(cleanMoney(row.amount_display || row.capital_display || row.native_amount_display || row.amount || row.capital));
+  const date = sourcedSearchDetail(recordDate(row));
+  const country = sourcedSearchDetail(brdText(row.country || row.region, ""));
+  const industry = sourcedSearchDetail(brdText(row.industry || row.sector, ""));
+  const investmentType = industry ? "" : sourcedSearchDetail(brdText(row.investment_type || row.type, ""));
+  return [
+    buyer ? `Buyer: ${buyer}` : "",
+    amount ? `Amount: ${amount}` : "",
+    date ? `Date: ${date}` : "",
+    country ? `Country: ${country}` : "",
+    industry ? `Industry: ${industry}` : "",
+    investmentType ? `Type: ${investmentType}` : "",
+  ].filter(Boolean).join(" · ");
+}
+
+function transactionBuyerName(row: Record<string, unknown>, buyerFallback = ""): string {
+  const direct = sourcedSearchDetail(brdText(row.buyer_entity || row.institution, ""));
+  if (direct) return direct;
+  const buyers = Array.isArray(row.buyer_entities) ? row.buyer_entities : [];
+  for (const buyer of buyers) {
+    if (!buyer || typeof buyer !== "object") continue;
+    const name = sourcedSearchDetail(brdText((buyer as Record<string, unknown>).name, ""));
+    if (name) return name;
+  }
+  return /buyer/i.test(brdText(row.role, "")) ? sourcedSearchDetail(buyerFallback) : "";
+}
+
+function sourcedSearchDetail(value: string): string {
+  const clean = value.trim();
+  return !clean || /^(not disclosed|unavailable|loading)$/i.test(clean) ? "" : clean;
+}
+
+function packetEntityName(packet: Packet): string {
+  const entity = packetData(packet).entity;
+  return entity && typeof entity === "object"
+    ? sourcedSearchDetail(brdText((entity as Record<string, unknown>).name, ""))
+    : "";
+}
+
 // Build the Transactions search group from an entity's real transactions
 // (/api/entity-transactions/v1, the buyer/seller entity reference join). Rows arrive
 // pre-built with swfi.com transaction URLs (source_url/swfi_url), so links resolve to
@@ -1337,14 +1420,10 @@ async function fetchPeopleSearch(query: string, signal: AbortSignal): Promise<Pa
 function entityTransactionSearchGroups(packet: Packet | undefined, query: string): BrdSearchGroup[] {
   if (!packet || !isFact(packet) || query.trim().length < 2) return [];
   const txnRows = rows(packet, "results").length ? rows(packet, "results") : rows(packet);
+  const resolvedEntityName = packetEntityName(packet);
   const items = txnRows.slice(0, 5).map((row) => ({
     label: brdText(row.name || row.title, "Transaction"),
-    detail: [
-      brdText(row.role, ""),
-      cleanMoney(row.amount_display || row.amount),
-      brdText(row.announced_at || row.closed_at, ""),
-      brdText(row.country, ""),
-    ].filter(Boolean).join(" · "),
+    detail: transactionSearchDetail(row, resolvedEntityName),
     href: dashboardTransactionHref(row),
     sourceHref: sourceHref(row),
   }));
@@ -1397,7 +1476,7 @@ function brdSearchGroups({ query, entityRows, peopleRows, transactionRows, rfpRo
     }))),
     group("Transactions", rankRecordsForQuery(transactionRows.filter((row) => filter(row, "transaction")), query, "transaction").map((row) => ({
       label: brdText(row.title || row.name),
-      detail: [brdText(row.buyer_entity || row.institution, ""), cleanMoney(row.amount_display || row.capital_display || row.amount)].filter(Boolean).join(" · "),
+      detail: transactionSearchDetail(row),
       href: dashboardTransactionHref(row),
       sourceHref: sourceHref(row),
     }))),
@@ -1658,6 +1737,7 @@ function ConceptSidebar({ topRows }: { topRows: Record<string, unknown>[] }) {
 }
 
 function ConceptTopBar({ dataAsOfLabel, packets }: { dataAsOfLabel: string; packets: Packets }) {
+  const currentDateLabel = useCurrentDateLabel();
   const exactCounts = [
     ["Institutions", metricNumber(packets.metrics, "institutions")],
     ["Active Allocators", numericSortValue(packetCount(packets.allocators90, "count")) || metricNumber(packets.metrics, "allocators")],
@@ -1689,7 +1769,7 @@ function ConceptTopBar({ dataAsOfLabel, packets }: { dataAsOfLabel: string; pack
         </form>
         <div className="flex items-center gap-2">
           <div className="hidden border-l border-white/25 pl-3 text-right text-[10px] text-white/80 md:block">
-            <div className="font-bold text-white">{new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit", year: "numeric" }).format(new Date())}</div>
+            <div className="font-bold text-white">{currentDateLabel}</div>
             <div>{dataAsOfLabel}</div>
           </div>
           <DashboardLink href="/intelligence" className="bg-[#071F48] px-3 py-2 text-[11px] font-bold text-white no-underline">
