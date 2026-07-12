@@ -7,6 +7,8 @@ const repoRoot = process.cwd();
 const outputDir = path.join(repoRoot, "output");
 const receiptPath = path.join(outputDir, "swfipn-live-link-route-gate-latest.json");
 const origin = normalizeOrigin(process.env.SWFIPN_ORIGIN || "https://swfipn.activemirror.ai/swficc/");
+const routeTimeoutMs = Number(process.env.SWFIPN_LIVE_LINK_ROUTE_TIMEOUT_MS || 60_000);
+const hydrationTimeoutMs = Number(process.env.SWFIPN_LIVE_LINK_HYDRATION_TIMEOUT_MS || 30_000);
 const routes = [
   "/",
   "/profiles/",
@@ -38,9 +40,27 @@ function loadPlaywright() {
   return createRequire(import.meta.url)("playwright");
 }
 
+function logProgress(message) {
+  if (process.env.SWFIPN_LIVE_LINK_QUIET === "1") return;
+  console.error(`[live-link] ${message}`);
+}
+
+async function withTimeout(label, task, timeoutMs) {
+  let timeout;
+  const timer = new Promise((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(`${label}_timeout_${timeoutMs}ms`)), timeoutMs);
+    timeout.unref?.();
+  });
+  try {
+    return await Promise.race([task(), timer]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function waitForHydration(page) {
   const startedAt = Date.now();
-  while (Date.now() - startedAt < 90_000) {
+  while (Date.now() - startedAt < hydrationTimeoutMs) {
     const body = await page.locator("body").innerText({ timeout: 5_000 }).catch(() => "");
     if (body && !/\bLoading\b/i.test(body)) return;
     await page.waitForTimeout(750);
@@ -68,34 +88,38 @@ function isRawSwfiRecordHref(href) {
 }
 
 async function crawlRoute(browser, route) {
+  logProgress(`${route}: start`);
   const context = await browser.newContext({ storageState: { cookies: [], origins: [] }, viewport: { width: 1440, height: 1000 } });
   const page = await context.newPage();
   const row = { route, url: appUrl(route), ok: true, raw_swfi_record_links: [], link_count: 0 };
   try {
-    await page.goto(row.url, { waitUntil: "domcontentloaded", timeout: 90_000 });
-    await waitForHydration(page);
-    await setRowsTo100(page);
-    await waitForHydration(page);
-    const links = await page.evaluate(() => Array.from(document.querySelectorAll("a[href]")).map((anchor) => {
-      const rect = anchor.getBoundingClientRect();
-      return {
-        text: anchor.textContent?.trim().replace(/\s+/g, " ") || "",
-        href: anchor.href,
-        raw: anchor.getAttribute("href") || "",
-        visible: rect.width > 0 && rect.height > 0,
-      };
-    }));
-    row.link_count = links.length;
-    row.raw_swfi_record_links = links
-      .filter((link) => link.visible && isRawSwfiRecordHref(link.href))
-      .map((link) => ({ text: link.text, href: link.href, raw: link.raw }))
-      .slice(0, 200);
+    await withTimeout(`route:${route}`, async () => {
+      await page.goto(row.url, { waitUntil: "domcontentloaded", timeout: routeTimeoutMs });
+      await waitForHydration(page);
+      await setRowsTo100(page);
+      await waitForHydration(page);
+      const links = await page.evaluate(() => Array.from(document.querySelectorAll("a[href]")).map((anchor) => {
+        const rect = anchor.getBoundingClientRect();
+        return {
+          text: anchor.textContent?.trim().replace(/\s+/g, " ") || "",
+          href: anchor.href,
+          raw: anchor.getAttribute("href") || "",
+          visible: rect.width > 0 && rect.height > 0,
+        };
+      }));
+      row.link_count = links.length;
+      row.raw_swfi_record_links = links
+        .filter((link) => link.visible && isRawSwfiRecordHref(link.href))
+        .map((link) => ({ text: link.text, href: link.href, raw: link.raw }))
+        .slice(0, 200);
+    }, routeTimeoutMs + hydrationTimeoutMs * 2 + 10_000);
   } catch (error) {
     row.raw_swfi_record_links.push({ text: "crawl_error", href: String(error?.message || error), raw: "" });
   } finally {
     await context.close().catch(() => {});
   }
   row.ok = row.raw_swfi_record_links.length === 0;
+  logProgress(`${route}: ${row.ok ? "pass" : "fail"} links=${row.link_count}`);
   return row;
 }
 

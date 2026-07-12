@@ -247,7 +247,11 @@ async function inspectRoute(browser, route) {
       }, null, { timeout: detailReadyTimeoutMs }).catch(() => null);
     }
     await page.waitForFunction(() => (document.body?.innerText || "").trim().length > 120, null, { timeout: bodyReadyTimeoutMs }).catch(() => null);
+    if (/\/research\/detail\/\?/i.test(route)) {
+      await page.waitForFunction(() => /https:\/\/www\.swfi\.com\/\?p=\d+/i.test(window.location.href), null, { timeout: 5_000 }).catch(() => null);
+    }
     await page.waitForTimeout(settleTimeoutMs);
+    result.final_url = page.url();
     if (isCanonicalSwfiHandoffUrl(result.final_url) && /\/(?:profiles|transactions|mandates|people)\/detail\/\?/i.test(route)) {
       result.auth_handoff = true;
       result.body_chars = 0;

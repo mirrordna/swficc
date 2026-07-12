@@ -88,9 +88,9 @@ Production API DNS cutover: `blocked`
 - receipts: `8`
 - screenshots: `3`
 - failures: `0`
-- source_links: `60`
+- source_links: `55`
 - detail_links: `0`
-- mirror_record_links: `40`
+- mirror_record_links: `35`
 - external_swfi_links: `0`
 
 ## Data Quality Caveats

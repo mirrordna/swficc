@@ -17,6 +17,7 @@ const shouldProxyBackend = process.env.SWFIPN_PROXY_BACKEND === "1"
   || (process.env.SWFIPN_PROXY_BACKEND !== "0" && ["localhost", "127.0.0.1", "::1"].includes(originHost));
 const apiPattern = /api\/(source-data|source-intelligence|recent-transactions|live-opportunities|sector-flows|allocator-activity|active-allocators|swfi|transactions)|\/v1\/swfi\//;
 const authMode = String(process.env.SWFIPN_KP_AUTH_MODE || "swfi-auth-handoff");
+const checkTimeoutMs = Number(process.env.SWFIPN_KP_CHECK_TIMEOUT_MS || 180_000);
 const validateLegacyAuth = authMode === "legacy-auth";
 const username = loadSecret("SWFIPN_AUTH_TEST_USERNAME", "SWFIPN_AUTH_USERNAME_KEYCHAIN_SERVICE", ["SWFIPN_AUTH_USERNAME", "SWFI_PREVIEW_AUTH_USERNAME"]).trim();
 const password = loadSecret("SWFIPN_AUTH_TEST_PASSWORD", "SWFIPN_AUTH_PASSWORD_KEYCHAIN_SERVICE", ["SWFIPN_AUTH_PASSWORD", "SWFI_PREVIEW_AUTH_PASSWORD"], false);
@@ -505,6 +506,24 @@ function bodyFailures(body) {
   return forbiddenVisible.filter((text) => body.includes(text)).map((text) => `forbidden_visible:${text}`);
 }
 
+function logProgress(message) {
+  if (process.env.SWFIPN_KP_GATE_QUIET === "1") return;
+  console.error(`[kp-gate] ${message}`);
+}
+
+async function withCheckTimeout(id, task) {
+  let timeout;
+  const timer = new Promise((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(`${id}_timeout_${checkTimeoutMs}ms`)), checkTimeoutMs);
+    timeout.unref?.();
+  });
+  try {
+    return await Promise.race([task(), timer]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -961,19 +980,34 @@ async function run() {
     args: resolveIp ? [`--host-resolver-rules=MAP ${originHost} ${resolveIp}`] : [],
   };
   async function runWithBrowser(id, callback) {
+    logProgress(`${id}: start`);
     const browser = await chromium.launch({ channel: "chrome", ...launchOptions });
     try {
-      return await callback(browser);
+      const result = await withCheckTimeout(id, () => callback(browser));
+      logProgress(`${id}: ${result.ok ? "pass" : "fail"}`);
+      return result;
     } catch (error) {
+      logProgress(`${id}: error ${error.message}`);
       return { id, ok: false, failures: [error.message] };
     } finally {
       await browser.close().catch(() => {});
     }
   }
+  async function runCheck(id, callback) {
+    logProgress(`${id}: start`);
+    try {
+      const result = await withCheckTimeout(id, callback);
+      logProgress(`${id}: ${result.ok ? "pass" : "fail"}`);
+      return result;
+    } catch (error) {
+      logProgress(`${id}: error ${error.message}`);
+      return { id, ok: false, failures: [error.message] };
+    }
+  }
   const checks = [];
 
-  checks.push(await faviconCheck());
-  checks.push(await allocatorMethodologyCheck());
+  checks.push(await runCheck("favicon", faviconCheck));
+  checks.push(await runCheck("allocator_methodology", allocatorMethodologyCheck));
   checks.push(await runWithBrowser("dashboard_kp_contract", dashboardCheck));
   checks.push(await runWithBrowser("brand_header_clicks_open_public_pages", brandClickNavigationCheck));
   for (const route of brandPageRoutes) {
@@ -1006,7 +1040,7 @@ async function run() {
     }
   }
   checks.push(await runWithBrowser("source_reference_buyer_safe", sourceReferenceCheck));
-  checks.push(await rideReachability());
+  checks.push(await runCheck("ride_reachability_advisory", rideReachability));
 
   const hardFailures = checks.filter((check) => !check.ok && check.id !== "ride_reachability_advisory");
   const receipt = {
