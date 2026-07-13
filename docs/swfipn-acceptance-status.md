@@ -10,9 +10,9 @@ Primary public URL: `https://dashboard.swfi.com/swficc/`
 
 Operational alias: `https://swfipn.activemirror.ai/swficc/`
 
-Deployed release: `/opt/swfipn-acceptance/releases/20260713T064834Z`
+Deployed release: `/opt/swfipn-acceptance/releases/20260713T095143Z`
 
-Public asset version: `20260713T064834Z`
+Public asset version: `20260713T095143Z`
 
 ## Verdict
 
@@ -88,9 +88,9 @@ Production API DNS cutover: `blocked`
 - receipts: `8`
 - screenshots: `3`
 - failures: `0`
-- source_links: `55`
+- source_links: `60`
 - detail_links: `0`
-- mirror_record_links: `35`
+- mirror_record_links: `40`
 - external_swfi_links: `0`
 
 ## Data Quality Caveats
