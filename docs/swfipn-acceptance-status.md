@@ -10,9 +10,9 @@ Primary public URL: `https://dashboard.swfi.com/swficc/`
 
 Operational alias: `https://swfipn.activemirror.ai/swficc/`
 
-Deployed release: `/opt/swfipn-acceptance/releases/20260713T095143Z`
+Deployed release: `/opt/swfipn-acceptance/releases/20260713T101930Z`
 
-Public asset version: `20260713T095143Z`
+Public asset version: `20260713T101930Z`
 
 ## Verdict
 
