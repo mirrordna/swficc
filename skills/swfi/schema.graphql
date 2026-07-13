@@ -1,0 +1,66 @@
+scalar JSON
+scalar DateTime
+
+enum RiskTier {
+  PUBLIC_READ
+  AUTHENTICATED_READ
+  DRAFT_WRITE
+  CORRECTION_PROPOSAL
+  HUMAN_ONLY
+}
+
+enum Confidence {
+  SOURCE_RECORD
+  SOURCE_AGGREGATE
+  REVIEW_REQUIRED
+  MISSING_OR_STALE
+}
+
+type Provenance {
+  source: String!
+  sourceUrl: String
+  sourceRecordId: String
+  sourceUpdatedAt: DateTime
+  syncOrQueryTime: DateTime!
+  effectiveDate: String
+  confidence: Confidence!
+}
+
+type QueryReceipt {
+  id: String!
+  generatedAt: DateTime!
+  tool: String!
+  riskTier: RiskTier!
+  callerRole: String!
+  sourceLineage: [Provenance!]!
+  missingDataWarning: String!
+}
+
+type InstitutionPreview {
+  name: String!
+  type: String
+  country: String
+  region: String
+  aumUsd: Float
+  swfiHandoffUrl: String
+  provenance: [Provenance!]!
+}
+
+type TransactionPreview {
+  name: String!
+  buyerEntity: String
+  sellerEntity: String
+  amountUsd: Float
+  closedAt: String
+  swfiHandoffUrl: String
+  provenance: [Provenance!]!
+}
+
+type GovernedResult {
+  data: JSON!
+  dataTimestamp: DateTime!
+  sourceLineage: [Provenance!]!
+  confidence: Confidence!
+  missingDataWarning: String!
+  queryReceipt: QueryReceipt!
+}

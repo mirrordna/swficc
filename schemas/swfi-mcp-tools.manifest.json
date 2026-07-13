@@ -1,0 +1,477 @@
+{
+  "schema_version": "swfi.mcp_tools.v1",
+  "owner": "SWFI",
+  "separation_rule": "SWFI data, credentials, audit receipts, and stakeholder rules remain isolated from ActiveMirrorOS and global ActiveMirror memory.",
+  "blocked_actions": [
+    "publish_content",
+    "send_outbound_email",
+    "modify_production_records",
+    "delete_records",
+    "bulk_mutation",
+    "release_private_data",
+    "alter_access_controls",
+    "unrestricted_browser_automation_on_production"
+  ],
+  "common_forbidden_fields": [
+    "_id",
+    "object_id",
+    "mongo_id",
+    "source_gap",
+    "backend_http_status",
+    "backend_name",
+    "api_endpoint",
+    "model_name",
+    "service_token",
+    "stack_trace"
+  ],
+  "tools": [
+    {
+      "name": "search_institutions",
+      "description": "Search whitelisted SWFI institution records and return preview-safe rows.",
+      "mode": "read_only",
+      "risk_tier": "0_public_read",
+      "approval": { "required": false, "approver": "none", "approval_artifact_required": false },
+      "allowed_sources": ["swfi.entities", "swfi.entitiesAUM"],
+      "allowed_endpoints": ["/api/source-data/search/v1?collection=entities"],
+      "forbidden_fields": ["_id", "mongo_id", "source_gap", "backend_name", "api_endpoint"],
+      "input_schema": {
+        "type": "object",
+        "required": ["query"],
+        "properties": {
+          "query": { "type": "string", "minLength": 1 },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 25 },
+          "page": { "type": "integer", "minimum": 1 },
+          "filters": { "type": "object" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["items", "total", "data_timestamp", "source_lineage", "confidence", "missing_data_warning", "query_receipt"],
+        "properties": {
+          "items": { "type": "array" },
+          "total": { "type": "integer" },
+          "data_timestamp": { "type": "string" },
+          "source_lineage": { "type": "array" },
+          "confidence": { "type": "string" },
+          "missing_data_warning": { "type": "string" },
+          "query_receipt": { "type": "string" }
+        }
+      },
+      "provenance_required": true,
+      "receipt_required": true,
+      "failure_behavior": "Fail closed if source packet is stale, missing, or contains forbidden fields."
+    },
+    {
+      "name": "get_institution_profile",
+      "description": "Return one institution profile packet from whitelisted SWFI fields.",
+      "mode": "read_only",
+      "risk_tier": "1_authenticated_read",
+      "approval": { "required": false, "approver": "none", "approval_artifact_required": false },
+      "allowed_sources": ["swfi.entities", "swfi.entitiesAUM"],
+      "allowed_endpoints": ["/api/profiles/{id}/v1"],
+      "forbidden_fields": ["_id", "mongo_id", "source_gap", "backend_name", "service_token"],
+      "input_schema": {
+        "type": "object",
+        "required": ["institution_id"],
+        "properties": {
+          "institution_id": { "type": "string", "pattern": "^[a-f0-9]{24}$" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["record", "data_timestamp", "source_lineage", "confidence", "missing_data_warning", "query_receipt"],
+        "properties": {
+          "record": { "type": "object" },
+          "data_timestamp": { "type": "string" },
+          "source_lineage": { "type": "array" },
+          "confidence": { "type": "string" },
+          "missing_data_warning": { "type": "string" },
+          "query_receipt": { "type": "string" }
+        }
+      },
+      "provenance_required": true,
+      "receipt_required": true,
+      "failure_behavior": "Fail closed if requested id does not resolve to a SWFI source record."
+    },
+    {
+      "name": "compare_entities",
+      "description": "Compare selected institution records using source-backed whitelisted fields.",
+      "mode": "read_only",
+      "risk_tier": "1_authenticated_read",
+      "approval": { "required": false, "approver": "none", "approval_artifact_required": false },
+      "allowed_sources": ["swfi.entities", "swfi.entitiesAUM", "swfi.transactions"],
+      "allowed_endpoints": ["/api/source-data/search/v1?collection=entities", "/api/recent-transactions/v1"],
+      "forbidden_fields": ["_id", "mongo_id", "source_gap", "backend_name"],
+      "input_schema": {
+        "type": "object",
+        "required": ["institution_ids"],
+        "properties": {
+          "institution_ids": { "type": "array", "minItems": 2, "maxItems": 10, "items": { "type": "string" } },
+          "metrics": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["items", "comparison_basis", "data_timestamp", "source_lineage", "confidence", "missing_data_warning", "query_receipt"],
+        "properties": {
+          "items": { "type": "array" },
+          "comparison_basis": { "type": "string" },
+          "data_timestamp": { "type": "string" },
+          "source_lineage": { "type": "array" },
+          "confidence": { "type": "string" },
+          "missing_data_warning": { "type": "string" },
+          "query_receipt": { "type": "string" }
+        }
+      },
+      "provenance_required": true,
+      "receipt_required": true,
+      "failure_behavior": "Return only comparable source-backed fields; label missing values."
+    },
+    {
+      "name": "get_recent_transactions",
+      "description": "Return recent source-backed transaction rows with pagination and SWFI record handoff metadata.",
+      "mode": "read_only",
+      "risk_tier": "0_public_read",
+      "approval": { "required": false, "approver": "none", "approval_artifact_required": false },
+      "allowed_sources": ["swfi.transactions"],
+      "allowed_endpoints": ["/api/recent-transactions/v1"],
+      "forbidden_fields": ["_id", "mongo_id", "source_gap", "backend_name"],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "days": { "type": "integer", "minimum": 1, "maximum": 365 },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 25 },
+          "page": { "type": "integer", "minimum": 1 },
+          "filters": { "type": "object" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["items", "total", "data_timestamp", "source_lineage", "confidence", "missing_data_warning", "query_receipt"],
+        "properties": {
+          "items": { "type": "array" },
+          "total": { "type": "integer" },
+          "data_timestamp": { "type": "string" },
+          "source_lineage": { "type": "array" },
+          "confidence": { "type": "string" },
+          "missing_data_warning": { "type": "string" },
+          "query_receipt": { "type": "string" }
+        }
+      },
+      "provenance_required": true,
+      "receipt_required": true,
+      "failure_behavior": "Fail closed on stale packet, invalid date, or unsourced amount."
+    },
+    {
+      "name": "get_live_rfps",
+      "description": "Return live Compass/RFP opportunities from whitelisted SWFI fields.",
+      "mode": "read_only",
+      "risk_tier": "0_public_read",
+      "approval": { "required": false, "approver": "none", "approval_artifact_required": false },
+      "allowed_sources": ["swfi.compass"],
+      "allowed_endpoints": ["/api/live-opportunities/v1"],
+      "forbidden_fields": ["_id", "mongo_id", "source_gap", "backend_name"],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "limit": { "type": "integer", "minimum": 1, "maximum": 25 },
+          "page": { "type": "integer", "minimum": 1 },
+          "filters": { "type": "object" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["items", "total", "data_timestamp", "source_lineage", "confidence", "missing_data_warning", "query_receipt"],
+        "properties": {
+          "items": { "type": "array" },
+          "total": { "type": "integer" },
+          "data_timestamp": { "type": "string" },
+          "source_lineage": { "type": "array" },
+          "confidence": { "type": "string" },
+          "missing_data_warning": { "type": "string" },
+          "query_receipt": { "type": "string" }
+        }
+      },
+      "provenance_required": true,
+      "receipt_required": true,
+      "failure_behavior": "Hide stale or closed opportunities unless explicitly requested by an authenticated workflow."
+    },
+    {
+      "name": "get_recent_fundraising",
+      "description": "Return recently fundraising institutions and RFP/fundraising signals from approved sources.",
+      "mode": "read_only",
+      "risk_tier": "0_public_read",
+      "approval": { "required": false, "approver": "none", "approval_artifact_required": false },
+      "allowed_sources": ["swfi.compass", "swfi.news", "swfi.transactions"],
+      "allowed_endpoints": ["/api/live-opportunities/v1", "/api/source-intelligence/news/v1"],
+      "forbidden_fields": ["_id", "mongo_id", "source_gap", "backend_name"],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "days": { "type": "integer", "minimum": 1, "maximum": 365 },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 25 }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["items", "data_timestamp", "source_lineage", "confidence", "missing_data_warning", "query_receipt"],
+        "properties": {
+          "items": { "type": "array" },
+          "data_timestamp": { "type": "string" },
+          "source_lineage": { "type": "array" },
+          "confidence": { "type": "string" },
+          "missing_data_warning": { "type": "string" },
+          "query_receipt": { "type": "string" }
+        }
+      },
+      "provenance_required": true,
+      "receipt_required": true,
+      "failure_behavior": "Return an empty sourced result rather than inferred fundraising status."
+    },
+    {
+      "name": "get_top_entities_by_aum",
+      "description": "Return top ranked institutions by SWFI-approved AUM fields.",
+      "mode": "read_only",
+      "risk_tier": "0_public_read",
+      "approval": { "required": false, "approver": "none", "approval_artifact_required": false },
+      "allowed_sources": ["swfi.entities", "swfi.entitiesAUM"],
+      "allowed_endpoints": ["/api/source-data/search/v1?collection=entities&sort=aum&direction=desc"],
+      "forbidden_fields": ["_id", "mongo_id", "source_gap", "backend_name"],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "limit": { "type": "integer", "minimum": 1, "maximum": 25 },
+          "entity_type": { "type": "string" },
+          "country": { "type": "string" },
+          "region": { "type": "string" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["items", "ranking_basis", "data_timestamp", "source_lineage", "confidence", "missing_data_warning", "query_receipt"],
+        "properties": {
+          "items": { "type": "array" },
+          "ranking_basis": { "type": "string" },
+          "data_timestamp": { "type": "string" },
+          "source_lineage": { "type": "array" },
+          "confidence": { "type": "string" },
+          "missing_data_warning": { "type": "string" },
+          "query_receipt": { "type": "string" }
+        }
+      },
+      "provenance_required": true,
+      "receipt_required": true,
+      "failure_behavior": "Do not rank records with missing or incomparable AUM unless labeled outside the ranked set."
+    },
+    {
+      "name": "get_source_provenance",
+      "description": "Return source lineage and receipt metadata for a SWFI-backed record.",
+      "mode": "read_only",
+      "risk_tier": "1_authenticated_read",
+      "approval": { "required": false, "approver": "none", "approval_artifact_required": false },
+      "allowed_sources": ["swfi.entities", "swfi.people", "swfi.transactions", "swfi.compass", "swfi.news", "swfi.reports"],
+      "allowed_endpoints": ["/api/source-provenance/v1"],
+      "forbidden_fields": ["service_token", "stack_trace", "backend_secret"],
+      "input_schema": {
+        "type": "object",
+        "required": ["record_family", "record_id"],
+        "properties": {
+          "record_family": { "enum": ["entity", "person", "transaction", "compass", "news", "report"] },
+          "record_id": { "type": "string" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["provenance", "data_timestamp", "source_lineage", "confidence", "missing_data_warning", "query_receipt"],
+        "properties": {
+          "provenance": { "type": "object" },
+          "data_timestamp": { "type": "string" },
+          "source_lineage": { "type": "array" },
+          "confidence": { "type": "string" },
+          "missing_data_warning": { "type": "string" },
+          "query_receipt": { "type": "string" }
+        }
+      },
+      "provenance_required": true,
+      "receipt_required": true,
+      "failure_behavior": "Return only provenance safe for the caller role; never expose secrets or raw backend errors."
+    },
+    {
+      "name": "create_content_draft",
+      "description": "Create an unpublished SWFI content draft from source-backed inputs.",
+      "mode": "controlled_mutation",
+      "risk_tier": "2_draft_write",
+      "approval": { "required": true, "approver": "KP or delegated SWFI content approver", "approval_artifact_required": true },
+      "allowed_sources": ["draft_store"],
+      "allowed_endpoints": ["/api/content-drafts/v1"],
+      "forbidden_fields": ["publish_now", "send_now", "production_record_write"],
+      "input_schema": {
+        "type": "object",
+        "required": ["title", "body", "evidence"],
+        "properties": {
+          "title": { "type": "string" },
+          "body": { "type": "string" },
+          "evidence": { "type": "array" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["draft_id", "status", "data_timestamp", "source_lineage", "confidence", "missing_data_warning", "query_receipt"],
+        "properties": {
+          "draft_id": { "type": "string" },
+          "status": { "const": "unpublished" },
+          "data_timestamp": { "type": "string" },
+          "source_lineage": { "type": "array" },
+          "confidence": { "type": "string" },
+          "missing_data_warning": { "type": "string" },
+          "query_receipt": { "type": "string" }
+        }
+      },
+      "provenance_required": true,
+      "receipt_required": true,
+      "failure_behavior": "Create draft only; publishing remains blocked."
+    },
+    {
+      "name": "update_unpublished_draft",
+      "description": "Update an existing unpublished draft without publishing it.",
+      "mode": "controlled_mutation",
+      "risk_tier": "2_draft_write",
+      "approval": { "required": true, "approver": "KP or delegated SWFI content approver", "approval_artifact_required": true },
+      "allowed_sources": ["draft_store"],
+      "allowed_endpoints": ["/api/content-drafts/{draft_id}/v1"],
+      "forbidden_fields": ["publish_now", "send_now", "production_record_write"],
+      "input_schema": {
+        "type": "object",
+        "required": ["draft_id", "changes"],
+        "properties": {
+          "draft_id": { "type": "string" },
+          "changes": { "type": "object" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["draft_id", "status", "diff_receipt", "data_timestamp", "source_lineage", "confidence", "missing_data_warning", "query_receipt"],
+        "properties": {
+          "draft_id": { "type": "string" },
+          "status": { "const": "unpublished" },
+          "diff_receipt": { "type": "string" },
+          "data_timestamp": { "type": "string" },
+          "source_lineage": { "type": "array" },
+          "confidence": { "type": "string" },
+          "missing_data_warning": { "type": "string" },
+          "query_receipt": { "type": "string" }
+        }
+      },
+      "provenance_required": true,
+      "receipt_required": true,
+      "failure_behavior": "Reject changes to published content or missing diff evidence."
+    },
+    {
+      "name": "request_content_approval",
+      "description": "Request stakeholder approval for an unpublished content draft.",
+      "mode": "controlled_mutation",
+      "risk_tier": "2_draft_write",
+      "approval": { "required": true, "approver": "KP or delegated SWFI content approver", "approval_artifact_required": true },
+      "allowed_sources": ["draft_store", "approval_ledger"],
+      "allowed_endpoints": ["/api/content-approvals/v1"],
+      "forbidden_fields": ["publish_now", "send_now"],
+      "input_schema": {
+        "type": "object",
+        "required": ["draft_id", "approver", "approval_scope"],
+        "properties": {
+          "draft_id": { "type": "string" },
+          "approver": { "type": "string" },
+          "approval_scope": { "type": "string" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["approval_request_id", "status", "data_timestamp", "source_lineage", "confidence", "missing_data_warning", "query_receipt"],
+        "properties": {
+          "approval_request_id": { "type": "string" },
+          "status": { "const": "pending_approval" },
+          "data_timestamp": { "type": "string" },
+          "source_lineage": { "type": "array" },
+          "confidence": { "type": "string" },
+          "missing_data_warning": { "type": "string" },
+          "query_receipt": { "type": "string" }
+        }
+      },
+      "provenance_required": true,
+      "receipt_required": true,
+      "failure_behavior": "Request approval only; do not publish or notify externally without explicit approval."
+    },
+    {
+      "name": "propose_record_correction",
+      "description": "Propose a canonical record correction for human review without mutating production data.",
+      "mode": "controlled_mutation",
+      "risk_tier": "3_correction_proposal",
+      "approval": { "required": true, "approver": "SWFI data owner", "approval_artifact_required": true },
+      "allowed_sources": ["review_queue", "swfi.entities", "swfi.people", "swfi.transactions", "swfi.compass"],
+      "allowed_endpoints": ["/api/record-corrections/v1"],
+      "forbidden_fields": ["apply_now", "production_record_write", "bulk_update"],
+      "input_schema": {
+        "type": "object",
+        "required": ["record_family", "record_id", "field", "proposed_value", "evidence"],
+        "properties": {
+          "record_family": { "type": "string" },
+          "record_id": { "type": "string" },
+          "field": { "type": "string" },
+          "proposed_value": {},
+          "evidence": { "type": "array" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["correction_id", "status", "data_timestamp", "source_lineage", "confidence", "missing_data_warning", "query_receipt"],
+        "properties": {
+          "correction_id": { "type": "string" },
+          "status": { "const": "needs_review" },
+          "data_timestamp": { "type": "string" },
+          "source_lineage": { "type": "array" },
+          "confidence": { "type": "string" },
+          "missing_data_warning": { "type": "string" },
+          "query_receipt": { "type": "string" }
+        }
+      },
+      "provenance_required": true,
+      "receipt_required": true,
+      "failure_behavior": "Queue correction for review; never write directly to canonical collections."
+    },
+    {
+      "name": "create_research_note",
+      "description": "Create an internal research note tied to source-backed SWFI evidence.",
+      "mode": "controlled_mutation",
+      "risk_tier": "2_draft_write",
+      "approval": { "required": true, "approver": "SWFI research owner", "approval_artifact_required": true },
+      "allowed_sources": ["research_note_store"],
+      "allowed_endpoints": ["/api/research-notes/v1"],
+      "forbidden_fields": ["publish_now", "send_now", "production_record_write"],
+      "input_schema": {
+        "type": "object",
+        "required": ["title", "note", "evidence"],
+        "properties": {
+          "title": { "type": "string" },
+          "note": { "type": "string" },
+          "evidence": { "type": "array" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["note_id", "status", "data_timestamp", "source_lineage", "confidence", "missing_data_warning", "query_receipt"],
+        "properties": {
+          "note_id": { "type": "string" },
+          "status": { "const": "internal_draft" },
+          "data_timestamp": { "type": "string" },
+          "source_lineage": { "type": "array" },
+          "confidence": { "type": "string" },
+          "missing_data_warning": { "type": "string" },
+          "query_receipt": { "type": "string" }
+        }
+      },
+      "provenance_required": true,
+      "receipt_required": true,
+      "failure_behavior": "Create internal note only; do not expose externally without approval."
+    }
+  ]
+}

@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SWFIMCPToolManifest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "owner",
+    "separation_rule",
+    "blocked_actions",
+    "tools"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "owner": {
+      "const": "SWFI"
+    },
+    "separation_rule": {
+      "type": "string",
+      "minLength": 20
+    },
+    "blocked_actions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "tools": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "mode",
+          "risk_tier",
+          "approval",
+          "allowed_sources",
+          "allowed_endpoints",
+          "forbidden_fields",
+          "input_schema",
+          "output_schema",
+          "provenance_required",
+          "receipt_required",
+          "failure_behavior"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 10
+          },
+          "mode": {
+            "enum": [
+              "read_only",
+              "controlled_mutation",
+              "human_only"
+            ]
+          },
+          "risk_tier": {
+            "enum": [
+              "0_public_read",
+              "1_authenticated_read",
+              "2_draft_write",
+              "3_correction_proposal",
+              "4_human_only"
+            ]
+          },
+          "approval": {
+            "type": "object",
+            "required": [
+              "required",
+              "approver",
+              "approval_artifact_required"
+            ],
+            "properties": {
+              "required": {
+                "type": "boolean"
+              },
+              "approver": {
+                "type": "string"
+              },
+              "approval_artifact_required": {
+                "type": "boolean"
+              }
+            }
+          },
+          "allowed_sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "allowed_endpoints": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "forbidden_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object"
+          },
+          "provenance_required": {
+            "type": "boolean"
+          },
+          "receipt_required": {
+            "type": "boolean"
+          },
+          "failure_behavior": {
+            "type": "string",
+            "minLength": 8
+          }
+        }
+      }
+    }
+  }
+}

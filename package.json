@@ -141,6 +141,7 @@
     "mirrorgraph:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ SWFIPN_BACKEND_ORIGIN=https://swfipn.activemirror.ai node scripts/swfipn-mirrorgraph-gate.mjs",
     "self-contained:gate": "node scripts/swfipn-self-contained-stack-gate.mjs",
     "security:hygiene": "node scripts/swfipn-security-hygiene-gate.mjs",
+    "swfi:agent-governance:gate": "node scripts/swfi-agent-governance-gate.mjs",
     "pdf:verbatim": "node scripts/swfipn-pdf-verbatim-gate.mjs",
     "pdf:verbatim:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ node scripts/swfipn-pdf-verbatim-gate.mjs",
     "do:inventory": "python3 infra/digitalocean/scripts/inventory.py",
