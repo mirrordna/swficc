@@ -130,8 +130,11 @@ SWFI_MONGO_URI=
 SWFI_MONGO_DB=swfi
 SWFI2_API_TOKEN=
 SWFI2_PRODUCT_API_KEYS=
+SWFI2_MSCI_COMPAT_KEY_IDS=
 SWFI2_SYNC_MAX_STALENESS_SECONDS=1800
 ```
+
+`SWFI2_MSCI_COMPAT_KEY_IDS` contains comma-separated API key identifiers, not raw API keys. It is the explicit allowlist for the legacy `/v1/api` compatibility facade.
 
 Product API keys may also be created through the service-token protected
 lifecycle endpoint after deploy. The compose stack persists managed key hashes

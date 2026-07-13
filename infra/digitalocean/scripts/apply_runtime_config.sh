@@ -20,6 +20,7 @@ chmod 600 "$TMP_PAYLOAD"
 python3 - "$TMP_PAYLOAD" <<'PY'
 import json
 import os
+import re
 import sys
 
 payload_path = sys.argv[1]
@@ -39,6 +40,7 @@ backend_vars = [
     "SENDGRID_FROM_NAME",
     "SWFI2_SENDGRID_SANDBOX_MODE",
     "SWFI2_SENDGRID_TIMEOUT_MS",
+    "SWFI2_MSCI_COMPAT_KEY_IDS",
 ]
 
 payload = {
@@ -56,6 +58,10 @@ sendgrid_key = payload["backend"].get("SWFI2_SENDGRID_API_KEY") or payload["back
 sendgrid_from = payload["backend"].get("SWFI2_SENDGRID_FROM_EMAIL") or payload["backend"].get("SENDGRID_FROM_EMAIL")
 if sendgrid_key and ("@" not in (sendgrid_from or "")):
     errors.append("SendGrid API key requires SWFI2_SENDGRID_FROM_EMAIL or SENDGRID_FROM_EMAIL")
+
+msci_key_ids = payload["backend"].get("SWFI2_MSCI_COMPAT_KEY_IDS", "")
+if msci_key_ids and not re.fullmatch(r"[0-9a-f]{12}(,[0-9a-f]{12})*", msci_key_ids):
+    errors.append("SWFI2_MSCI_COMPAT_KEY_IDS must be a comma-separated list of 12-character lowercase hex key IDs")
 
 if not payload["web"] and not payload["backend"]:
     errors.append("no runtime config environment variables were provided")
