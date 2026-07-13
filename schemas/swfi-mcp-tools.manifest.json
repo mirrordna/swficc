@@ -270,7 +270,7 @@
       "risk_tier": "1_authenticated_read",
       "approval": { "required": false, "approver": "none", "approval_artifact_required": false },
       "allowed_sources": ["swfi.entities", "swfi.people", "swfi.transactions", "swfi.compass", "swfi.news", "swfi.reports"],
-      "allowed_endpoints": ["/api/source-provenance/v1"],
+      "allowed_endpoints": ["/api/profiles/{id}/v1", "/api/people/{id}/v1", "/api/transactions/{id}/v1", "/api/compass/{id}/v1", "/api/source-intelligence/news/detail/v1", "/api/reports/{id}/v1"],
       "forbidden_fields": ["service_token", "stack_trace", "backend_secret"],
       "input_schema": {
         "type": "object",

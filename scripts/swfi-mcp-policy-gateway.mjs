@@ -135,9 +135,15 @@ function endpointFor(toolName, input, tool) {
     return `/api/source-data/search/v1?${params.toString()}`;
   }
   if (toolName === "get_source_provenance") {
-    params.set("record_family", String(input.record_family || ""));
-    params.set("record_id", String(input.record_id || ""));
-    return `/api/source-provenance/v1?${params.toString()}`;
+    const id = encodeURIComponent(input.record_id);
+    const family = String(input.record_family || "");
+    if (family === "entity") return `/api/profiles/${id}/v1`;
+    if (family === "person") return `/api/people/${id}/v1`;
+    if (family === "transaction") return `/api/transactions/${id}/v1`;
+    if (family === "compass") return `/api/compass/${id}/v1`;
+    if (family === "news") return `/api/source-intelligence/news/detail/v1?legacy_id=${id}`;
+    if (family === "report") return `/api/reports/${id}/v1`;
+    return "";
   }
 
   return firstEndpoint || "";
@@ -199,7 +205,12 @@ function normalizedData(tool, packet) {
     return { record: objectValue(data.record || data.profile || data.item || data) };
   }
   if (tool.output_schema?.required?.includes("provenance")) {
-    return { provenance: data.provenance || data.source_lineage || sourceLineage(tool, packet, "") };
+    return {
+      provenance: data.provenance || {
+        source_lineage: data.source_lineage || sourceLineage(tool, packet, ""),
+        source_url: sourceUrlFromPacket(packet),
+      },
+    };
   }
   const items = arrayValue(data.rows || data.items || data.results || (Array.isArray(data) ? data : []));
   const result = { items };
@@ -335,6 +346,12 @@ function sourceLineage(tool, packet, endpoint) {
     endpoint,
     generated_at: generatedAt,
   }));
+}
+
+function sourceUrlFromPacket(packet) {
+  const data = objectValue(packet.data);
+  const record = objectValue(data.record || data.profile || data.item);
+  return String(record.source_url || record.swfi_url || data.source_url || data.swfi_url || "");
 }
 
 function timestampFromPacket(packet) {
