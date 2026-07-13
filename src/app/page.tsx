@@ -2162,6 +2162,9 @@ function CapitalFlowSankey({ rows: transactionRows }: { rows: Record<string, unk
   const rightX = width - labelGutter - nodeWidth;
   const valueLabel = (value: number, deals: number) =>
     useUsd ? compactMoney(value) : `${deals} ${deals === 1 ? "deal" : "deals"}`;
+  const flowFilters = [...new Set([...sources, ...targets.map((name) => (name.startsWith("Other (") ? "Other" : name))])]
+    .filter(Boolean)
+    .slice(0, 6);
 
   return (
     <div className="grid gap-2">
@@ -2179,17 +2182,12 @@ function CapitalFlowSankey({ rows: transactionRows }: { rows: Record<string, unk
           const x1 = rightX;
           const cx = (x0 + x1) / 2;
           const d = `M${x0},${y0} C${cx},${y0} ${cx},${y1} ${x1},${y1} L${x1},${y1 + targetH} C${cx},${y1 + targetH} ${cx},${y0 + sourceH} ${x0},${y0 + sourceH} Z`;
-          const filter = link.target.startsWith("Other (") ? link.source : link.target;
           return (
-            <SvgChartLink
-              key={`${link.source}-${link.target}`}
-              href={`/deals/?filter=${encodeURIComponent(filter)}`}
-              label={`Open deals for ${filter}`}
-            >
+            <g key={`${link.source}-${link.target}`}>
               <path d={d} fill="#0A66C2" opacity="0.22" className="hover:opacity-40">
                 <title>{`${link.source} → ${link.target}: ${valueLabel(link.value, link.deals)} across ${link.deals} ${link.deals === 1 ? "deal" : "deals"}`}</title>
               </path>
-            </SvgChartLink>
+            </g>
           );
         })}
         {sources.map((name) => {
@@ -2197,11 +2195,11 @@ function CapitalFlowSankey({ rows: transactionRows }: { rows: Record<string, unk
           const total = sourceSums[sources.indexOf(name)];
           const deals = links.filter((link) => link.source === name).reduce((acc, link) => acc + link.deals, 0);
           return (
-            <SvgChartLink key={`src-${name}`} href={`/deals/?filter=${encodeURIComponent(name)}`} label={`Open deals for ${name}`}>
+            <g key={`src-${name}`}>
               <rect x={leftX} y={pos.y} width={nodeWidth} height={pos.h} rx="2" fill="#0A3A7A" />
               <text x={leftX - 6} y={pos.y + pos.h / 2 + 3} textAnchor="end" fontSize="10" fontWeight="800" fill="#2E4157">{name}</text>
               <text x={leftX - 6} y={pos.y + pos.h / 2 + 13} textAnchor="end" fontSize="8.5" fontWeight="700" fill="#7B8996">{valueLabel(total, deals)}</text>
-            </SvgChartLink>
+            </g>
           );
         })}
         {targets.map((name) => {
@@ -2225,6 +2223,15 @@ function CapitalFlowSankey({ rows: transactionRows }: { rows: Record<string, unk
         </span>
         <span>Buyer region → industry. Seller regions are not disclosed in the loaded rows.</span>
       </div>
+      {flowFilters.length ? (
+        <div className="flex flex-wrap gap-1.5" aria-label="Open capital flow records">
+          {flowFilters.map((filter) => (
+            <DashboardLink key={filter} href={`/deals/?filter=${encodeURIComponent(filter)}`} className="rounded-[4px] border border-[#DCE5EE] bg-[#F8FAFC] px-2 py-1 text-[10px] font-bold text-[#0A3A7A] no-underline hover:bg-[#EEF4FA]">
+              {filter}
+            </DashboardLink>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -2322,39 +2329,6 @@ function PipelineFunnelPanel({ packets, topRows, marketRows, fundraisingRows }: 
         <div className="text-[10px] font-semibold text-[#7B8996]">Funnel widths normalize against {compactNumber(max)} records.</div>
       </div>
     </div>
-  );
-}
-
-function SvgChartLink({
-  href,
-  label,
-  children,
-}: {
-  href: string;
-  label: string;
-  children: ReactNode;
-}) {
-  const target = appHref(href);
-  function open() {
-    window.location.assign(target);
-  }
-  function onKeyDown(event: ReactKeyboardEvent<SVGGElement>) {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      open();
-    }
-  }
-  return (
-    <g
-      role="link"
-      tabIndex={0}
-      aria-label={label}
-      className="cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[#D51E29]"
-      onClick={open}
-      onKeyDown={onKeyDown}
-    >
-      {children}
-    </g>
   );
 }
 
