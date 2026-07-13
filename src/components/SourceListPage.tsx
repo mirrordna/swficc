@@ -244,6 +244,40 @@ function allocatorColumnIndexForSort(sortKey: string, columns: string[]): number
   return columns.indexOf(columnBySort[sortKey] || "Activity Count");
 }
 
+type DealFieldFilter = { key: string; field: "industry" | "sector"; value: string };
+
+function dealFieldOptionRows(packet: Packet | undefined, packets: Record<string, Packet>): Row[] {
+  const source = packets.dealTaxonomy || packets.dealEntityTypes || packet;
+  return isFact(source) ? rows(source) : [];
+}
+
+function transactionRowIdentity(row: Row): string {
+  const direct = text(row.swfi_url || row.source_url || row.transaction_id || row.transactionID || row.source_record_id || row.id, "");
+  if (direct && direct !== SOURCE_GAP) return direct;
+  return compactParts([row.title || row.name, row.buyer_entity || row.institution, row.closed_at || row.announced_at || row.activity_date]);
+}
+
+function uniqueTransactionRows(items: Row[]): Row[] {
+  const seen = new Set<string>();
+  const result: Row[] = [];
+  items.forEach((row) => {
+    const key = transactionRowIdentity(row);
+    if (seen.has(key)) return;
+    seen.add(key);
+    result.push(row);
+  });
+  return result;
+}
+
+function fieldOptionsForRows(items: Row[], field: "industry" | "sector", selected: string[]): string[] {
+  const values = new Set<string>(selected);
+  items.forEach((row) => {
+    const value = businessText(row[field]);
+    if (value && value !== NOT_DISCLOSED) values.add(value);
+  });
+  return [...values].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+}
+
 export default function SourceListPage({ kind }: { kind: Kind }) {
   const rootRef = useGsapReveal<HTMLDivElement>();
   const config = CONFIG[kind];
@@ -255,6 +289,8 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
   const [sortDir, setSortDir] = useState<"asc" | "desc">(() => defaultSortDir(kind));
   const [allocatorSort, setAllocatorSort] = useState("most_recent_activity_date");
   const [selectedDealEntityTypes, setSelectedDealEntityTypes] = useState<string[]>([]);
+  const [selectedDealIndustries, setSelectedDealIndustries] = useState<string[]>([]);
+  const [selectedDealSectors, setSelectedDealSectors] = useState<string[]>([]);
   const [sectionView, setSectionView] = useState<"data" | "visualization">(() => supportsSectionVisualization(kind) ? "visualization" : "data");
   // Client fix (7-Jul): Active Allocators is restricted to the 10 most recent.
   // Other list kinds keep the 25-row default preview.
@@ -282,6 +318,13 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
   const serverRowLimit = isServerPagedKind(kind) ? rowLimit : 0;
   const serverFilterTerm = supportsServerFilter(kind) ? tableFilter.trim() : "";
   const serverSortDir = kind === "allocators" ? sortDir : "desc";
+  const dealFieldFilters = useMemo<DealFieldFilter[]>(() => {
+    if (kind !== "deals") return [];
+    return [
+      ...selectedDealIndustries.map((value, index) => ({ key: `industry-${index}`, field: "industry" as const, value })),
+      ...selectedDealSectors.map((value, index) => ({ key: `sector-${index}`, field: "sector" as const, value })),
+    ].filter((filter) => filter.value.trim());
+  }, [kind, selectedDealIndustries, selectedDealSectors]);
 
   const sources = useMemo(() => {
     if (kind !== "search") {
@@ -294,6 +337,14 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
         return { main: `/api/source-data/search/v1?collection=people${peopleQuery}&limit=${serverRowLimit}&page=${serverPageIndex + 1}` };
       }
       if (kind === "transactions" || kind === "deals") {
+        const taxonomySource = { dealTaxonomy: "/api/transactions/v1?limit=100&page=1" };
+        if (kind === "deals" && dealFieldFilters.length) {
+          const fieldSources = Object.fromEntries(dealFieldFilters.map((filter, index) => [
+            `dealField:${index}:${filter.field}`,
+            `/api/transaction-drilldown/v1?field=${filter.field}&value=${encodeURIComponent(filter.value)}&days=3650&limit=${serverRowLimit}&page=${serverPageIndex + 1}`,
+          ]));
+          return { ...fieldSources, ...taxonomySource };
+        }
         const transactionFilter = [
           serverFilterTerm,
           ...(kind === "deals" ? selectedDealEntityTypes : []),
@@ -301,7 +352,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
         const transactionQuery = transactionFilter ? `&q=${encodeURIComponent(transactionFilter)}` : "";
         const main = `/api/transactions/v1?limit=${serverRowLimit}&page=${serverPageIndex + 1}${transactionQuery}`;
         return kind === "deals"
-          ? { main, dealEntityTypes: "/api/transactions/v1?limit=100&page=1" }
+          ? { main, ...taxonomySource }
           : { main };
       }
       if (kind === "allocators") {
@@ -328,7 +379,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
     return {
       institutions: `/api/v1/public/search?q=${encoded}&limit=${rowLimit}`,
     };
-  }, [allocatorSort, config.endpoint, config.sources, kind, rowLimit, selectedDealEntityTypes, serverFilterTerm, serverPageIndex, serverRowLimit, serverSortDir, submittedQuery]);
+  }, [allocatorSort, config.endpoint, config.sources, dealFieldFilters, kind, rowLimit, selectedDealEntityTypes, serverFilterTerm, serverPageIndex, serverRowLimit, serverSortDir, submittedQuery]);
 
   useEffect(() => {
     let active = true;
@@ -423,8 +474,12 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
     if (isLoading) return [];
     if (kind === "search") return searchRowsFromPackets(packets);
     if (kind === "alerts") return alertsRowsFromPackets(packets);
-    if (!isFact(packet)) return [];
-    const packetRows = rows(packet);
+    if (!isFact(packet) && !(kind === "deals" && dealFieldFilters.length)) return [];
+    const packetRows = kind === "deals" && dealFieldFilters.length
+      ? uniqueTransactionRows(Object.entries(packets)
+        .filter(([key, value]) => key.startsWith("dealField:") && isFact(value))
+        .flatMap(([, value]) => rows(value)))
+      : rows(packet);
     const scopedRows = kind === "deals" && selectedDealEntityTypes.length
       ? packetRows.filter((row) => {
         const rowTypes = entityTypesForTransactionRow(row);
@@ -432,8 +487,16 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
       })
       : packetRows;
     return scopedRows.map((row) => rowCells(kind, row));
-  }, [allSourcesReady, isLoading, kind, packet, packets, selectedDealEntityTypes]);
-  const totalRows = totalCount(kind, packet, packets, sourceRows.length);
+  }, [dealFieldFilters.length, allSourcesReady, isLoading, kind, packet, packets, selectedDealEntityTypes]);
+  const dealFieldFilterTotal = useMemo(() => {
+    if (kind !== "deals" || !dealFieldFilters.length) return null;
+    if (dealFieldFilters.length > 1) return sourceRows.length;
+    const total = Object.entries(packets)
+      .filter(([key, value]) => key.startsWith("dealField:") && isFact(value))
+      .reduce((sum, [, value]) => sum + (packetNumber(value, ["count", "row_count"]) ?? rows(value).length), 0);
+    return total || sourceRows.length;
+  }, [dealFieldFilters.length, kind, packets, sourceRows.length]);
+  const totalRows = dealFieldFilterTotal ?? totalCount(kind, packet, packets, sourceRows.length);
   const filteredRows = useMemo(() => {
     const clean = tableFilter.trim().toLowerCase();
     const filtered = clean
@@ -477,15 +540,18 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
   const visualizationRows = useMemo(() => isFact(packet) ? rows(packet) : [], [packet]);
   const dealEntityTypeOptions = useMemo(() => {
     if (kind !== "deals") return [];
-    const optionPacket = packets.dealEntityTypes || packet;
     const values = new Set<string>(selectedDealEntityTypes);
-    if (isFact(optionPacket)) {
-      rows(optionPacket).forEach((row) => {
-        entityTypesForTransactionRow(row).forEach((entityType) => values.add(entityType));
-      });
-    }
+    dealFieldOptionRows(packet, packets).forEach((row) => {
+      entityTypesForTransactionRow(row).forEach((entityType) => values.add(entityType));
+    });
     return [...values].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-  }, [kind, packet, packets.dealEntityTypes, selectedDealEntityTypes]);
+  }, [kind, packet, packets, selectedDealEntityTypes]);
+  const dealIndustryOptions = useMemo(() => (
+    kind === "deals" ? fieldOptionsForRows(dealFieldOptionRows(packet, packets), "industry", selectedDealIndustries) : []
+  ), [kind, packet, packets, selectedDealIndustries]);
+  const dealSectorOptions = useMemo(() => (
+    kind === "deals" ? fieldOptionsForRows(dealFieldOptionRows(packet, packets), "sector", selectedDealSectors) : []
+  ), [kind, packet, packets, selectedDealSectors]);
   const activeRoute = routeByKind[kind];
 
   useEffect(() => {
@@ -625,7 +691,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
 		          <span className="mt-1 block text-[#7A8A9B]">Reached from a chart, ranking, or filter, this table shows the matching records; unfiltered, it shows the first preview pages only. Every row links to its SWFI platform page, where the full record lives.</span>
         </section>
 
-        <section data-gsap-reveal className={`grid gap-2 rounded border border-[#DCE3EA] bg-white px-4 py-3 text-sm sm:items-center ${showRecordData ? "" : "hidden"} ${kind === "allocators" ? "sm:grid-cols-[minmax(0,1fr)_180px_150px_190px]" : kind === "deals" ? "sm:grid-cols-[minmax(0,1fr)_180px_210px_150px]" : "sm:grid-cols-[minmax(0,1fr)_180px_150px]"}`}>
+        <section data-gsap-reveal className={`grid gap-2 rounded border border-[#DCE3EA] bg-white px-4 py-3 text-sm sm:items-center ${showRecordData ? "" : "hidden"} ${kind === "allocators" ? "sm:grid-cols-[minmax(0,1fr)_180px_150px_190px]" : kind === "deals" ? "sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_160px_120px_180px_180px_180px]" : "sm:grid-cols-[minmax(0,1fr)_180px_150px]"}`}>
           <div className="font-semibold text-[#11314F]">
             {waitingForSearch
               ? "Enter an institution, person, or strategy"
@@ -687,6 +753,70 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
 	                  }}
 	                >
 	                  Clear Entity Type
+	                </button>
+	              ) : null}
+	            </label>
+	          ) : null}
+	          {kind === "deals" ? (
+	            <label className="grid gap-1">
+	              <span className="font-semibold text-[#41566B]">Industry</span>
+	              <select
+	                multiple
+	                value={selectedDealIndustries}
+	                disabled={!dealIndustryOptions.length}
+	                onChange={(event) => {
+	                  const nextValues = Array.from(event.currentTarget.selectedOptions, (option) => option.value);
+	                  setSelectedDealIndustries(nextValues);
+	                  setPageIndex(0);
+	                }}
+	                className="min-h-[78px] rounded border border-[#C7D2DD] bg-white px-2 py-1"
+	              >
+	                {dealIndustryOptions.map((industry) => (
+	                  <option key={industry} value={industry}>{industry}</option>
+	                ))}
+	              </select>
+	              {selectedDealIndustries.length ? (
+	                <button
+	                  type="button"
+	                  className="w-fit bg-transparent p-0 text-left text-[12px] font-semibold text-[#16538C] underline"
+	                  onClick={() => {
+	                    setSelectedDealIndustries([]);
+	                    setPageIndex(0);
+	                  }}
+	                >
+	                  Clear Industry
+	                </button>
+	              ) : null}
+	            </label>
+	          ) : null}
+	          {kind === "deals" ? (
+	            <label className="grid gap-1">
+	              <span className="font-semibold text-[#41566B]">Sector</span>
+	              <select
+	                multiple
+	                value={selectedDealSectors}
+	                disabled={!dealSectorOptions.length}
+	                onChange={(event) => {
+	                  const nextValues = Array.from(event.currentTarget.selectedOptions, (option) => option.value);
+	                  setSelectedDealSectors(nextValues);
+	                  setPageIndex(0);
+	                }}
+	                className="min-h-[78px] rounded border border-[#C7D2DD] bg-white px-2 py-1"
+	              >
+	                {dealSectorOptions.map((sector) => (
+	                  <option key={sector} value={sector}>{sector}</option>
+	                ))}
+	              </select>
+	              {selectedDealSectors.length ? (
+	                <button
+	                  type="button"
+	                  className="w-fit bg-transparent p-0 text-left text-[12px] font-semibold text-[#16538C] underline"
+	                  onClick={() => {
+	                    setSelectedDealSectors([]);
+	                    setPageIndex(0);
+	                  }}
+	                >
+	                  Clear Sector
 	                </button>
 	              ) : null}
 	            </label>

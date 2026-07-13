@@ -60,7 +60,7 @@ import { businessSearchQueryVariants, dedupeSearchRecords, rankSearchRecords, se
 const ENDPOINTS = {
   metrics: "/api/swfi/dashboard-metrics/v1",
   institutionTypes: "/api/institution-types/v1?limit=8",
-  allocators30: "/api/allocator-activity/v1?days=30&limit=25&page=1&sort=deal_count&direction=desc",
+  allocators30: "/api/allocator-activity/v1?days=30&limit=25&page=1&sort=latest_transaction_date&direction=desc",
   allocators90: "/api/active-allocators/v1?days=90&limit=1",
   rfps: "/api/live-opportunities/v1?limit=25&page=1",
   mandates: "/api/live-mandates/v1?limit=25&page=1",
@@ -710,14 +710,14 @@ function VisualExecutiveOverview({
             </ExpandablePanel>
             <ExpandablePanel
               id="ai-insights"
-              title="AI Insights"
+              title="Capital Curiosity"
               href="/intelligence"
               expanded={expandedPanel === "ai-insights"}
               onToggle={onTogglePanel}
               detail={<ExpandedUnifiedInsightRows rows={unifiedRows} controls={controls} />}
-              explain="Auto-drafted highlights from the data already on this page (top investors, deals, fundraising, news) — nothing generated beyond it. Each line links to its source list."
+              explain="Source-backed prompts from the data already on this page: allocator activity, disclosed deals, fundraising, intelligence, and Premjit's Competition Analysis path. No generated values."
             >
-              <AiInsightsPanel topInvestors={allocatorRows} marketRows={transactionRows} fundraisingRows={rfpRows} newsRows={newsRows} />
+              <AiInsightsPanel topInvestors={allocatorRows} marketRows={transactionRows} fundraisingRows={rfpRows} newsRows={newsRows} sectorRows={sectorRows} />
             </ExpandablePanel>
           </div>
           <div className="grid gap-3 xl:grid-cols-2 xl:items-start 2xl:grid-cols-[minmax(320px,1fr)_minmax(250px,0.72fr)_minmax(250px,0.72fr)_330px]">
@@ -734,12 +734,12 @@ function VisualExecutiveOverview({
             </ExpandablePanel>
             <ExpandablePanel
               id="relationships"
-              title="Top Institutional Relationships"
+              title="Latest Institutional Activity"
               href="/allocators"
               expanded={expandedPanel === "relationships"}
               onToggle={onTogglePanel}
               detail={<ExpandedInvestorRows rows={allocatorRows} controls={controls} />}
-              explain="Most-active institutions from the last 90 days of recorded allocator activity. Click a name → its SWFI profile."
+              explain="Latest buyer-side investment activity from recorded allocator transactions. Click a name → its SWFI profile."
             >
               <RelationshipPanel rows={allocatorRows} />
             </ExpandablePanel>
@@ -2015,7 +2015,7 @@ function InstitutionIntelligenceOverview({
             })}
           </div>
         </VisualPanel>
-        <VisualPanel title="Top Active Investors (Last 30 Days)" source={ENDPOINTS.allocators30} empty={DASHBOARD_EMPTY} hasRows={investorRows.length > 0}>
+        <VisualPanel title="Latest Active Investors (Last 30 Days)" source={ENDPOINTS.allocators30} empty={DASHBOARD_EMPTY} hasRows={investorRows.length > 0}>
           <div className="grid gap-2">
             {investorRows.map((row, index) => {
               const value = activityCountValue(row);
@@ -2240,14 +2240,16 @@ function CapitalFlowSankey({ rows: transactionRows }: { rows: Record<string, unk
 // shapes were decorative curves, not data (Paul: "dont like the capital
 // flows chart") — replaced by CapitalFlowSankey above.
 
-function AiInsightsPanel({ topInvestors, marketRows, fundraisingRows, newsRows }: {
+function AiInsightsPanel({ topInvestors, marketRows, fundraisingRows, newsRows, sectorRows }: {
   topInvestors: Record<string, unknown>[];
   marketRows: Record<string, unknown>[];
   fundraisingRows: Record<string, unknown>[];
   newsRows: Record<string, unknown>[];
+  sectorRows: Record<string, unknown>[];
 }) {
+  const curiosityRows = capitalCuriosityRows({ sectorRows, marketRows, fundraisingRows, newsRows }).slice(0, 3);
   const insights = [
-    { label: "Institutional allocator activity", row: topInvestors[0], href: "/allocators", detail: topInvestors[0] ? `${brdText(topInvestors[0].name)} · ${dealCountLabel(activityCountValue(topInvestors[0]))}` : DASHBOARD_EMPTY },
+    { label: "Latest allocator activity", row: topInvestors[0], href: "/allocators", detail: topInvestors[0] ? `${brdText(topInvestors[0].name)} · ${recordDate(topInvestors[0])}` : DASHBOARD_EMPTY },
     { label: "Largest recent deal", row: marketRows[0], href: "/deals", detail: marketRows[0] ? `${brdText(marketRows[0].title || marketRows[0].name)} · ${cleanMoney(marketRows[0].amount_display || marketRows[0].capital_display || marketRows[0].amount)}` : DASHBOARD_EMPTY },
     { label: "Open mandate deadline", row: fundraisingRows[0], href: "/mandates", detail: fundraisingRows[0] ? `${brdText(fundraisingRows[0].title || fundraisingRows[0].name)} · ${timelineDate(fundraisingRows[0])}` : DASHBOARD_EMPTY },
     { label: "Latest intelligence", row: newsRows[0], href: newsRows[0] ? researchRecordHref(newsRows[0]) : "/intelligence", detail: newsRows[0] ? brdText(newsRows[0].title || newsRows[0].name) : DASHBOARD_EMPTY },
@@ -2255,12 +2257,36 @@ function AiInsightsPanel({ topInvestors, marketRows, fundraisingRows, newsRows }
   return (
     <div className="grid gap-2">
       <div className="grid grid-cols-2 gap-1 sm:grid-cols-4">
+        <DashboardLink key="Competition Analysis" href="/comparisons/?filter=Sovereign%20Wealth%20Fund" className="rounded-[5px] border border-[#E2E8EF] bg-[#F8FAFC] px-2 py-1.5 text-center text-[10.5px] font-extrabold text-[#0A3A7A] no-underline hover:bg-[#EEF4FA]">
+          Competition Analysis
+        </DashboardLink>
         {insightNav.map(([label, href]) => (
           <DashboardLink key={label} href={href} className="rounded-[5px] border border-[#E2E8EF] bg-[#F8FAFC] px-2 py-1.5 text-center text-[10.5px] font-extrabold text-[#0A3A7A] no-underline hover:bg-[#EEF4FA]">
             {label}
           </DashboardLink>
         ))}
       </div>
+      <DashboardLink href="/comparisons/?filter=Sovereign%20Wealth%20Fund" className="rounded-[6px] border border-[#DCE5EE] bg-[#F8FAFC] px-2.5 py-2 text-inherit no-underline hover:bg-white">
+        <span className="block text-[10px] font-extrabold uppercase tracking-[0.1em] text-[#B90D12]">What piqued your curiosity?</span>
+        <span className="mt-1 block text-[12px] font-bold text-[#203448]">Compare institutions by AUM, region, transaction activity, and allocation signals.</span>
+      </DashboardLink>
+      {curiosityRows.length ? (
+        <div className="grid gap-1.5 rounded-[6px] border border-[#DCE5EE] bg-white px-2.5 py-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[10px] font-extrabold uppercase tracking-[0.1em] text-[#B90D12]">Capital Curiosity Radar</span>
+            <DashboardLink href="/deals" className="text-[10.5px] font-extrabold text-[#0A3A7A] underline">Open deals</DashboardLink>
+          </div>
+          {curiosityRows.map((row) => (
+            <DashboardLink key={row.sector} href={row.href} className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 rounded-[5px] bg-[#F8FAFC] px-2 py-1.5 text-inherit no-underline hover:bg-[#EEF4FA]">
+              <span className="min-w-0">
+                <span className="block truncate text-[12px] font-bold text-[#0A3A7A]">{row.sector}</span>
+                <span className="mt-0.5 block truncate text-[10.5px] text-[#7B8996]">{row.detail}</span>
+              </span>
+              <span className="text-right text-[10.5px] font-extrabold text-[#13283D]">{row.metric}</span>
+            </DashboardLink>
+          ))}
+        </div>
+      ) : null}
       {insights.map((insight, index) => (
         <DashboardLink key={insight.label} href={insight.href} className="grid grid-cols-[34px_minmax(0,1fr)] gap-2 rounded-[6px] border border-[#E5EBF1] px-2.5 py-2 text-inherit no-underline">
           <span className="grid h-8 w-8 place-items-center rounded-full bg-[#F1F5F8] text-[11px] font-extrabold text-[#B90D12]">{index + 1}</span>
@@ -2338,7 +2364,7 @@ function RelationshipPanel({ rows: sourceRows }: { rows: Record<string, unknown>
   if (!visible.length) {
     return (
       <div className="grid min-h-[118px] content-center gap-2 rounded-[6px] border border-[#E5EBF1] bg-[#F8FAFC] px-3 py-4 text-center">
-        <div className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#7B8996]">Investor activity</div>
+        <div className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#7B8996]">Latest investor activity</div>
         <div className="text-[13px] font-bold text-[#203448]">No current investor activity available</div>
       </div>
     );
@@ -2515,6 +2541,71 @@ type UnifiedInsight = {
   metric: string;
   value: number;
 };
+
+type CapitalCuriosity = {
+  sector: string;
+  href: string;
+  detail: string;
+  metric: string;
+  signalCount: number;
+  latestMs: number;
+  flowCount: number;
+};
+
+function rowMatchesTerm(row: Record<string, unknown>, fields: string[], term: string): boolean {
+  const cleanTerm = term.trim().toLowerCase();
+  if (!cleanTerm) return false;
+  return fields.map((field) => brdText(row[field], "")).join(" ").toLowerCase().includes(cleanTerm);
+}
+
+function capitalCuriosityRows({
+  sectorRows,
+  marketRows,
+  fundraisingRows,
+  newsRows,
+}: {
+  sectorRows: Record<string, unknown>[];
+  marketRows: Record<string, unknown>[];
+  fundraisingRows: Record<string, unknown>[];
+  newsRows: Record<string, unknown>[];
+}): CapitalCuriosity[] {
+  return sectorRows
+    .map((sectorRow) => {
+      const sector = brdText(sectorRow.name || sectorRow.value, "");
+      if (!sector) return null;
+      const dealMatches = marketRows.filter((row) => rowMatchesTerm(row, ["sector", "industry"], sector));
+      const mandateMatches = fundraisingRows.filter((row) => rowMatchesTerm(row, ["strategy", "asset_class_or_strategy", "title", "name"], sector));
+      const newsMatches = newsRows.filter((row) => rowMatchesTerm(row, ["title", "name", "excerpt", "summary"], sector));
+      const flowCount = numericSortValue(brdText(sectorRow.count, "")) || 0;
+      const latest = dealMatches.slice().sort((a, b) => recordDateValue(b) - recordDateValue(a))[0];
+      const latestMs = latest ? recordDateValue(latest) : 0;
+      const signalCount = [
+        flowCount > 0,
+        dealMatches.length > 0,
+        mandateMatches.length > 0,
+        newsMatches.length > 0,
+      ].filter(Boolean).length;
+      if (!signalCount) return null;
+      const parts = [
+        `${signalCount}/4 source lanes`,
+        `${compactNumber(flowCount)} sector-flow records`,
+        `${dealMatches.length} loaded deals`,
+        mandateMatches.length ? `${mandateMatches.length} open mandates` : "",
+        newsMatches.length ? `${newsMatches.length} intelligence mentions` : "",
+      ].filter(Boolean);
+      return {
+        sector,
+        href: `/deals/?filter=${encodeURIComponent(sector)}`,
+        detail: latest ? `${parts.join(" · ")} · latest: ${brdText(latest.title || latest.name)} (${recordDate(latest)})` : parts.join(" · "),
+        metric: `${signalCount}/4`,
+        signalCount,
+        latestMs,
+        flowCount,
+      };
+    })
+    .filter((row): row is CapitalCuriosity => Boolean(row))
+    .sort((a, b) => b.signalCount - a.signalCount || b.latestMs - a.latestMs || b.flowCount - a.flowCount || a.sector.localeCompare(b.sector));
+}
 
 function unifiedIntelligenceRows({
   topInvestors,
@@ -3400,11 +3491,11 @@ function MetricRail({ value }: { value: string }) {
 
 function AllocatorActivityVisual({ rows: sourceRows, ready }: { rows: Record<string, unknown>[]; ready: boolean }) {
   const chartRows = [...sourceRows]
-    .sort((a, b) => activityCountValue(b) - activityCountValue(a))
+    .sort((a, b) => recordDateValue(b) - recordDateValue(a) || activityCountValue(b) - activityCountValue(a))
     .slice(0, 5);
   const max = Math.max(1, ...chartRows.map(activityCountValue));
   return (
-    <VisualPanel title="Top Active Investor Activity" source={ENDPOINTS.allocators30} empty={DASHBOARD_EMPTY} hasRows={chartRows.length > 0}>
+    <VisualPanel title="Latest Active Investor Activity" source={ENDPOINTS.allocators30} empty={DASHBOARD_EMPTY} hasRows={chartRows.length > 0}>
       {chartRows.map((row, index) => {
         const value = activityCountValue(row);
         return (
@@ -3554,13 +3645,13 @@ function timelineDate(row: Record<string, unknown>) {
 function recordDateValue(row: Record<string, unknown>) {
   // Sortable transaction timestamp, same field precedence as recordDate() below.
   // Undated rows return 0 so they sink to the bottom of a most-recent-first sort.
-  const value = text(row.closed_at || row.announced_at || row.deadline || row.due_at || row.published_at || row.updated_at || row.last_updated || row.created_at || row.date, "");
+  const value = text(row.latest_transaction_date || row.activity_date || row.relevant_date || row.closed_at || row.announced_at || row.deadline || row.due_at || row.published_at || row.updated_at || row.last_updated || row.created_at || row.date, "");
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function recordDate(row: Record<string, unknown>) {
-  const value = text(row.closed_at || row.announced_at || row.deadline || row.due_at || row.published_at || row.updated_at || row.last_updated || row.created_at || row.date, "");
+  const value = text(row.latest_transaction_date || row.activity_date || row.relevant_date || row.closed_at || row.announced_at || row.deadline || row.due_at || row.published_at || row.updated_at || row.last_updated || row.created_at || row.date, "");
   const parsed = Date.parse(value);
   if (!Number.isFinite(parsed)) return brdText(value, "Not disclosed");
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit", year: "numeric" }).format(new Date(parsed));
