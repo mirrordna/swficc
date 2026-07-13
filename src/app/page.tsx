@@ -715,7 +715,7 @@ function VisualExecutiveOverview({
               expanded={expandedPanel === "ai-insights"}
               onToggle={onTogglePanel}
               detail={<ExpandedUnifiedInsightRows rows={unifiedRows} controls={controls} />}
-              explain="Source-backed prompts from the data already on this page: allocator activity, disclosed deals, fundraising, intelligence, and Premjit's Competition Analysis path. No generated values."
+              explain="Signals from the data already on this page: allocator activity, disclosed deals, fundraising, intelligence, and Premjit's Competition Analysis path. No generated values."
             >
               <AiInsightsPanel topInvestors={allocatorRows} marketRows={transactionRows} fundraisingRows={rfpRows} newsRows={newsRows} sectorRows={sectorRows} />
             </ExpandablePanel>
