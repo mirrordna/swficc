@@ -68,14 +68,14 @@ const requiredDashboardText = [
   "SWFI",
   "Here's your intelligence and pipeline overview.",
   "Global Capital Map",
-  "AI Insights",
+  "Capital Curiosity",
   "Recent Activity",
   "Transactions",
   "Market Focus",
   "Compass Investment Types",
   "SWF Buys by Sector",
 ];
-const requiredDashboardHydrationText = ["Here's your intelligence and pipeline overview.", "Global Capital Map", "AI Insights"];
+const requiredDashboardHydrationText = ["Here's your intelligence and pipeline overview.", "Global Capital Map", "Capital Curiosity"];
 const leakPattern = /(?:[?&]source=|%3Fsource%3D|%26source%3D|source_gap|source_filter|schema_version|result_qualifier|backend|active mirror)/i;
 const dashboardPlaceholderPattern = /\b(Source gap|source_gap|Loading|No source selected|No internal record mapping|citation-only)\b/i;
 
