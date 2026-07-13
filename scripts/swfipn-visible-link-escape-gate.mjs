@@ -12,6 +12,7 @@ const routeTimeoutMs = Number(process.env.SWFIPN_LINK_ESCAPE_ROUTE_TIMEOUT_MS ||
 const detailReadyTimeoutMs = Number(process.env.SWFIPN_LINK_ESCAPE_DETAIL_TIMEOUT_MS || 20_000);
 const bodyReadyTimeoutMs = Number(process.env.SWFIPN_LINK_ESCAPE_BODY_TIMEOUT_MS || 5_000);
 const settleTimeoutMs = Number(process.env.SWFIPN_LINK_ESCAPE_SETTLE_MS || 250);
+const routeAttempts = Math.max(1, Number(process.env.SWFIPN_LINK_ESCAPE_ROUTE_ATTEMPTS || 2));
 const routes = envList("SWFIPN_LINK_ESCAPE_ROUTES", [
   "/",
   "/profiles/",
@@ -375,30 +376,37 @@ async function run() {
   const results = [];
   for (const route of routes) {
     console.error(`[link-escape] inspecting ${route}`);
-    const browser = await chromium.launch({ channel: "chrome", headless: true, timeout: 30_000 });
-    try {
-      results.push(await withTimeout(inspectRoute(browser, route), routeTimeoutMs, `route:${route}`));
-    } catch (error) {
-      results.push({
-        route,
-        url: appUrl(route),
-        status: 0,
-        body_chars: 0,
-        blank: true,
-        external_links: [],
-        canonical_swfi_handoff_anchors: [],
-        raw_record_anchors: [],
-        raw_source_attrs: [],
-        blank_target_legacy_anchors: [],
-        forbidden_text: [],
-        errors: [],
-        failed_requests: [],
-        failures: [error.message],
-        ok: false,
-      });
-    } finally {
-      await browser.close().catch(() => {});
+    let lastResult;
+    for (let attempt = 1; attempt <= routeAttempts; attempt += 1) {
+      const browser = await chromium.launch({ channel: "chrome", headless: true, timeout: 30_000 });
+      try {
+        lastResult = await withTimeout(inspectRoute(browser, route), routeTimeoutMs, `route:${route}:attempt:${attempt}`);
+      } catch (error) {
+        lastResult = {
+          route,
+          url: appUrl(route),
+          status: 0,
+          body_chars: 0,
+          blank: true,
+          external_links: [],
+          canonical_swfi_handoff_anchors: [],
+          raw_record_anchors: [],
+          raw_source_attrs: [],
+          blank_target_legacy_anchors: [],
+          forbidden_text: [],
+          errors: [],
+          failed_requests: [],
+          failures: [error.message],
+          ok: false,
+        };
+      } finally {
+        await browser.close().catch(() => {});
+      }
+      lastResult.attempt = attempt;
+      if (lastResult.ok || attempt === routeAttempts) break;
+      console.error(`[link-escape] retrying ${route} after ${lastResult.failures.join("; ")}`);
     }
+    results.push(lastResult);
   }
   const failures = results.flatMap((result) => result.ok ? [] : result.failures.map((failure) => ({ route: result.route, failure })));
   const receipt = {
