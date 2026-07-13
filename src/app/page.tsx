@@ -2179,12 +2179,17 @@ function CapitalFlowSankey({ rows: transactionRows }: { rows: Record<string, unk
           const x1 = rightX;
           const cx = (x0 + x1) / 2;
           const d = `M${x0},${y0} C${cx},${y0} ${cx},${y1} ${x1},${y1} L${x1},${y1 + targetH} C${cx},${y1 + targetH} ${cx},${y0 + sourceH} ${x0},${y0 + sourceH} Z`;
+          const filter = link.target.startsWith("Other (") ? link.source : link.target;
           return (
-            <a key={`${link.source}-${link.target}`} href={appHref(`/deals/?filter=${encodeURIComponent(link.target.startsWith("Other (") ? link.source : link.target)}`)}>
+            <SvgChartLink
+              key={`${link.source}-${link.target}`}
+              href={`/deals/?filter=${encodeURIComponent(filter)}`}
+              label={`Open deals for ${filter}`}
+            >
               <path d={d} fill="#0A66C2" opacity="0.22" className="hover:opacity-40">
                 <title>{`${link.source} → ${link.target}: ${valueLabel(link.value, link.deals)} across ${link.deals} ${link.deals === 1 ? "deal" : "deals"}`}</title>
               </path>
-            </a>
+            </SvgChartLink>
           );
         })}
         {sources.map((name) => {
@@ -2192,13 +2197,11 @@ function CapitalFlowSankey({ rows: transactionRows }: { rows: Record<string, unk
           const total = sourceSums[sources.indexOf(name)];
           const deals = links.filter((link) => link.source === name).reduce((acc, link) => acc + link.deals, 0);
           return (
-            <a key={`src-${name}`} href={appHref(`/deals/?filter=${encodeURIComponent(name)}`)}>
-              <g>
-                <rect x={leftX} y={pos.y} width={nodeWidth} height={pos.h} rx="2" fill="#0A3A7A" />
-                <text x={leftX - 6} y={pos.y + pos.h / 2 + 3} textAnchor="end" fontSize="10" fontWeight="800" fill="#2E4157">{name}</text>
-                <text x={leftX - 6} y={pos.y + pos.h / 2 + 13} textAnchor="end" fontSize="8.5" fontWeight="700" fill="#7B8996">{valueLabel(total, deals)}</text>
-              </g>
-            </a>
+            <SvgChartLink key={`src-${name}`} href={`/deals/?filter=${encodeURIComponent(name)}`} label={`Open deals for ${name}`}>
+              <rect x={leftX} y={pos.y} width={nodeWidth} height={pos.h} rx="2" fill="#0A3A7A" />
+              <text x={leftX - 6} y={pos.y + pos.h / 2 + 3} textAnchor="end" fontSize="10" fontWeight="800" fill="#2E4157">{name}</text>
+              <text x={leftX - 6} y={pos.y + pos.h / 2 + 13} textAnchor="end" fontSize="8.5" fontWeight="700" fill="#7B8996">{valueLabel(total, deals)}</text>
+            </SvgChartLink>
           );
         })}
         {targets.map((name) => {
@@ -2302,10 +2305,10 @@ function PipelineFunnelPanel({ packets, topRows, marketRows, fundraisingRows }: 
           const cx = 190;
           const d = `M${cx - topWidth / 2} ${y} L${cx + topWidth / 2} ${y} L${cx + bottomWidth / 2} ${y + 29} L${cx - bottomWidth / 2} ${y + 29} Z`;
           return (
-            <DashboardLink key={stage.label} href={stage.href}>
+            <g key={stage.label}>
               <path d={d} fill={stage.color} opacity={0.92} />
               <text x={cx} y={y + 19} textAnchor="middle" fill="white" fontSize="12" fontWeight="800">{stage.label}</text>
-            </DashboardLink>
+            </g>
           );
         })}
       </svg>
@@ -2319,6 +2322,39 @@ function PipelineFunnelPanel({ packets, topRows, marketRows, fundraisingRows }: 
         <div className="text-[10px] font-semibold text-[#7B8996]">Funnel widths normalize against {compactNumber(max)} records.</div>
       </div>
     </div>
+  );
+}
+
+function SvgChartLink({
+  href,
+  label,
+  children,
+}: {
+  href: string;
+  label: string;
+  children: ReactNode;
+}) {
+  const target = appHref(href);
+  function open() {
+    window.location.assign(target);
+  }
+  function onKeyDown(event: ReactKeyboardEvent<SVGGElement>) {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      open();
+    }
+  }
+  return (
+    <g
+      role="link"
+      tabIndex={0}
+      aria-label={label}
+      className="cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[#D51E29]"
+      onClick={open}
+      onKeyDown={onKeyDown}
+    >
+      {children}
+    </g>
   );
 }
 

@@ -146,8 +146,13 @@
     "swfi:mcp:tool": "node scripts/swfi-mcp-policy-gateway.mjs",
     "swfi:mcp:gate": "node scripts/swfi-mcp-policy-gateway-gate.mjs",
     "swfi:mcp:gate:live": "node scripts/swfi-mcp-policy-gateway-live-gate.mjs",
+    "swfi:mcp:audit:gate": "node scripts/swfi-mcp-audit-gate.mjs",
     "swfi:mcp:server": "node scripts/swfi-mcp-stdio-server.mjs",
     "swfi:mcp:stdio:smoke": "node scripts/swfi-mcp-stdio-smoke.mjs",
+    "swfi:lineage:gate": "node scripts/swfi-lineage-manifest-gate.mjs",
+    "swfi:data-quality:contract:gate": "node scripts/swfi-data-quality-contract-gate.mjs",
+    "accessibility:gate": "node scripts/swfipn-accessibility-gate.mjs",
+    "accessibility:gate:public": "SWFIPN_ORIGIN=https://dashboard.swfi.com/swficc/ node scripts/swfipn-accessibility-gate.mjs",
     "pdf:verbatim": "node scripts/swfipn-pdf-verbatim-gate.mjs",
     "pdf:verbatim:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ node scripts/swfipn-pdf-verbatim-gate.mjs",
     "do:inventory": "python3 infra/digitalocean/scripts/inventory.py",
@@ -193,6 +198,7 @@
     "topojson-client": "^3.1.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
     "@tailwindcss/postcss": "^4",
     "@types/d3-geo": "^3.1.0",
     "@types/node": "^20",

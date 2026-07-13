@@ -39,17 +39,19 @@ async function main() {
 
 export async function executeTool(toolName, input, options = {}) {
   const tool = manifest.tools.find((candidate) => candidate.name === toolName);
-  if (!tool) return failure(toolName, "unknown_tool", input, options);
+  if (!tool) return finalizeResult(failure(toolName, "unknown_tool", input, options), toolName, input, options);
 
   const validation = validateInput(tool.input_schema || {}, input);
-  if (validation.length) return failure(toolName, `invalid_input:${validation.join("|")}`, input, options, tool);
+  if (validation.length) {
+    return finalizeResult(failure(toolName, `invalid_input:${validation.join("|")}`, input, options, tool), toolName, input, options);
+  }
 
   if (tool.mode !== "read_only") {
-    return approvalRequired(tool, input, options);
+    return finalizeResult(approvalRequired(tool, input, options), toolName, input, options);
   }
 
   const endpoint = endpointFor(tool.name, input, tool);
-  if (!endpoint) return failure(tool.name, "endpoint_not_mapped", input, options, tool);
+  if (!endpoint) return finalizeResult(failure(tool.name, "endpoint_not_mapped", input, options, tool), toolName, input, options);
 
   let rawData;
   if (options.dryRun) {
@@ -62,7 +64,7 @@ export async function executeTool(toolName, input, options = {}) {
   const missingWarning = missingDataWarning(sanitized);
   const receipt = queryReceipt(tool, input, endpoint, options, sanitized, missingWarning);
 
-  return {
+  return finalizeResult({
     status: "ok",
     tool: tool.name,
     risk_tier: tool.risk_tier,
@@ -74,7 +76,63 @@ export async function executeTool(toolName, input, options = {}) {
     missing_data_warning: missingWarning,
     query_receipt: receipt.id,
     receipt,
+  }, toolName, input, { ...options, endpoint });
+}
+
+function finalizeResult(result, toolName, input, options) {
+  writeAuditEvent(result, toolName, input, options);
+  return result;
+}
+
+function writeAuditEvent(result, toolName, input, options) {
+  if (process.env.SWFI_MCP_AUDIT_LOG === "0" || options.audit === false) return;
+  const auditPath = String(options.auditLogPath || process.env.SWFI_MCP_AUDIT_LOG || path.join(outputDir, "audit-log.jsonl"));
+  const data = objectValue(result.data);
+  const items = arrayValue(data.items || data.rows || data.results);
+  const sourceLineage = arrayValue(result.source_lineage);
+  const event = {
+    schema_version: "swfi.mcp_audit_event.v1",
+    generated_at: new Date().toISOString(),
+    tool: result.tool || toolName,
+    status: result.status || "unknown",
+    risk_tier: result.risk_tier || "unknown",
+    mode: result.mode || "unknown",
+    caller_role: result.receipt?.caller_role || options.callerRole || "swfi_operator",
+    dry_run: Boolean(options.dryRun),
+    endpoint: sanitizeEndpointForAudit(result.receipt?.endpoint || options.endpoint || ""),
+    endpoint_hash: sha256(result.receipt?.endpoint || options.endpoint || ""),
+    input_hash: sha256(stableJson(input)),
+    query_receipt: result.query_receipt || result.receipt?.id || "",
+    data_timestamp: result.data_timestamp || result.receipt?.data_timestamp || "",
+    source_count: sourceLineage.length,
+    item_count: items.length || (data.record ? 1 : 0),
+    allowed: result.status === "ok",
+    approval_required: result.status === "approval_required" || result.approval_required === true,
+    denial_reason: result.status === "blocked" ? String(result.reason || result.missing_data_warning || "blocked") : "",
+    output_shape: Object.keys(data).sort(),
   };
+  fs.mkdirSync(path.dirname(auditPath), { recursive: true });
+  fs.appendFileSync(auditPath, `${JSON.stringify(event)}\n`);
+}
+
+function sanitizeEndpointForAudit(endpoint) {
+  const value = String(endpoint || "");
+  if (!value) return "";
+  try {
+    const parsed = new URL(value, "https://audit.local");
+    const segments = parsed.pathname.split("/").map((segment) => (
+      /^[a-f0-9]{24}$/i.test(segment) ? "{record_id}" : segment
+    ));
+    parsed.pathname = segments.join("/");
+    for (const key of ["id", "ids", "entity_id", "institution_id", "record_id", "buyerEntities"]) {
+      if (parsed.searchParams.has(key)) parsed.searchParams.set(key, "{hash}");
+    }
+    return `${parsed.pathname}${parsed.search}`;
+  } catch {
+    return value
+      .replace(/[a-f0-9]{24}/gi, "{record_id}")
+      .replace(/(ids?=)[^&]+/gi, "$1{hash}");
+  }
 }
 
 function endpointFor(toolName, input, tool) {

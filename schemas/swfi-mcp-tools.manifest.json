@@ -17,6 +17,7 @@
     "object_id",
     "mongo_id",
     "source_gap",
+    "source_gap_reason",
     "backend_http_status",
     "backend_name",
     "api_endpoint",
