@@ -53,7 +53,9 @@ rsync -az --delete --timeout=120 --stats -e "ssh $SSH_OPTS" \
 rsync -az --delete --timeout=120 --stats -e "ssh $SSH_OPTS" \
   --exclude '.git' \
   --exclude '.DS_Store' \
+  --exclude 'node_modules' \
   --exclude '.venv' \
+  --exclude '.verify-venv' \
   --exclude '__pycache__' \
   --exclude '*.pyc' \
   --exclude '.pytest_cache' \
