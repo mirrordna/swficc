@@ -10,13 +10,13 @@ Primary public URL: `https://dashboard.swfi.com/swficc/`
 
 Operational alias: `https://swfipn.activemirror.ai/swficc/`
 
-Deployed release: `/opt/swfipn-acceptance/releases/20260711T111948Z`
+Deployed release: `/opt/swfipn-acceptance/releases/20260713T064834Z`
 
-Public asset version: `20260711T111948Z`
+Public asset version: `20260713T064834Z`
 
 ## Verdict
 
-Acceptance lock: `go_with_caveat`
+Acceptance lock: `go`
 
 Share gate: `pass`, `sendable: true`
 
@@ -95,7 +95,7 @@ Production API DNS cutover: `blocked`
 
 ## Data Quality Caveats
 
-- field_parity_data_anomaly: required displayed fields matched, but 1 secondary source-data anomaly was detected: transactions/6a3a22bd80d352a51521a4a5 field `announcedAt` (out_of_range_bson_datetime, milliseconds=569510352000000).
+- None found.
 
 ## Phase 2 / Change Requests
 
