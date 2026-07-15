@@ -11,6 +11,8 @@
     "contract:gate": "node scripts/swfipn-dashboard20-e2e-contract-gate.mjs",
     "contract:gate:public": "SWFIPN_ORIGIN=https://dashboard.swfi.com/swficc/ node scripts/swfipn-dashboard20-e2e-contract-gate.mjs",
     "contract:logic:test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/swfipn-section-dashboard-logic-test.mjs",
+    "test:record-sort": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/swfipn-record-sort-defaults-test.mjs",
+    "deploy:clean-gate": "node scripts/swfipn-clean-tree-gate.mjs",
     "doctrine:gate": "node scripts/swfipn-doctrine-gate.mjs",
     "doctrine:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ node scripts/swfipn-doctrine-gate.mjs",
     "sitemap:data-map": "node scripts/swfipn-sitemap-data-map.mjs",

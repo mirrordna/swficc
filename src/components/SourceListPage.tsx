@@ -22,8 +22,8 @@ import { DASHBOARD_SECTION_NAV } from "@/lib/dashboardSectionNav";
 import SwfiBrandHeader from "@/components/SwfiBrandHeader";
 import AlertsRuleManager from "@/components/AlertsRuleManager";
 import SavedSearchManager from "@/components/SavedSearchManager";
+import { defaultSortColumn, defaultSortDir, type Kind } from "@/lib/recordSort";
 
-type Kind = "profiles" | "people" | "transactions" | "deals" | "allocators" | "comparisons" | "mandates" | "alerts" | "research" | "intelligence" | "search";
 type Row = Record<string, unknown>;
 type CellLink = { label: string; href?: string; sourceHref?: string };
 // newTab: Paul-sanctioned 2026-07-06 ("can the linkedin links open in a new
@@ -209,15 +209,8 @@ const allocatorSortOptions = [
   ["entity_type", "Entity Type"],
 ] as const;
 
-function defaultSortColumn(kind: Kind): number {
-  // Allocators default to "Most Recent Activity Date" (column index 6) so the
-  // reverse-chronological server sort and the header indicator agree.
-  return kind === "allocators" ? 6 : 0;
-}
-
-function defaultSortDir(kind: Kind): "asc" | "desc" {
-  return kind === "allocators" ? "desc" : "asc";
-}
+// defaultSortColumn / defaultSortDir moved to @/lib/recordSort so the
+// "Top Ranked AUM" default (profiles -> AUM descending) is unit-testable.
 
 function allocatorSortParamForColumn(column: string): string {
   const normalized = column.toLowerCase();
