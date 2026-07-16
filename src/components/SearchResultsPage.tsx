@@ -6,6 +6,7 @@ import type { Packet } from "@/lib/sourcePackets";
 import { fetchPacket, isFact, money, rows, text } from "@/lib/sourcePackets";
 import { appHref, isSwfiPlatformRecordHref, selfContainedHref, swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
 import { businessSearchQueryVariants, dedupeSearchRecords, mergeSearchRecordsPreferPrimary, rankSearchRecords } from "@/lib/searchRelevance";
+import { filterSmartSearchIntentRows, smartSearchIntentForQuery } from "@/lib/smartSearchIntent";
 
 const SEARCH_PREFETCH_CACHE_PREFIX = "swfipn.search.prefetch.v1:";
 const SEARCH_CATEGORIES = ["all", "entities", "opportunities", "transactions", "news", "people"] as const;
@@ -50,6 +51,7 @@ export default function SearchResultsPage() {
   const [peoplePacket, setPeoplePacket] = useState<Packet | null>(null);
   const [opportunityPackets, setOpportunityPackets] = useState<Packet[]>([]);
   const [newsPacket, setNewsPacket] = useState<Packet | null>(null);
+  const [intentPackets, setIntentPackets] = useState<Packet[]>([]);
   const [loading, setLoading] = useState(false);
   const [rowLimit, setRowLimit] = useState(25);
   const [sortKey, setSortKey] = useState<"relevance" | "type" | "result" | "source" | "detail">("relevance");
@@ -58,7 +60,8 @@ export default function SearchResultsPage() {
   useEffect(() => {
     const currentQuery = queryFromUrl();
     const currentCategory = categoryFromUrl();
-    const cached = cachedPacket(currentQuery);
+    const currentIntent = smartSearchIntentForQuery(currentQuery);
+    const cached = currentIntent ? null : cachedPacket(currentQuery);
     let active = true;
     const controller = new AbortController();
     const resetTimer = window.setTimeout(() => {
@@ -75,20 +78,24 @@ export default function SearchResultsPage() {
         controller.abort();
       };
     }
-    const publicSearch = fetchPacket(`/api/v1/public/search?q=${encodeURIComponent(currentQuery)}&limit=100`, 20_000, {
-      signal: controller.signal,
-      attempts: 2,
-    }).then((nextPacket) => {
-      if (!active) return nextPacket;
-      if (isFact(nextPacket)) setPacket(nextPacket);
-      return nextPacket;
-    });
-    const entitySearch = Promise.all(businessSearchQueryVariants(currentQuery).map((variant) => (
-      fetchPacket(`/api/source-data/search/v1?collection=entities&q=${encodeURIComponent(variant)}&limit=100`, 25_000, {
+    const publicSearch: Promise<Packet | null> = currentIntent
+      ? Promise.resolve(null)
+      : fetchPacket(`/api/v1/public/search?q=${encodeURIComponent(currentQuery)}&limit=100`, 20_000, {
         signal: controller.signal,
         attempts: 2,
-      })
-    ))).then((nextPackets) => {
+      }).then((nextPacket) => {
+        if (!active) return nextPacket;
+        if (isFact(nextPacket)) setPacket(nextPacket);
+        return nextPacket;
+      });
+    const entitySearch = currentIntent
+      ? Promise.resolve([] as Packet[])
+      : Promise.all(businessSearchQueryVariants(currentQuery).map((variant) => (
+        fetchPacket(`/api/source-data/search/v1?collection=entities&q=${encodeURIComponent(variant)}&limit=100`, 25_000, {
+          signal: controller.signal,
+          attempts: 2,
+        })
+      ))).then((nextPackets) => {
       const factPackets = nextPackets.filter(isFact);
       if (active) setEntityPackets(factPackets);
       return factPackets;
@@ -97,7 +104,7 @@ export default function SearchResultsPage() {
       return [] as Packet[];
     });
 
-    const peopleSearch = currentCategory === "all" || currentCategory === "people"
+    const peopleSearch = !currentIntent && (currentCategory === "all" || currentCategory === "people")
       ? fetchPacket(`/api/people/search/v1?q=${encodeURIComponent(currentQuery)}&limit=100`, 25_000, {
           signal: controller.signal,
           attempts: 2,
@@ -107,7 +114,7 @@ export default function SearchResultsPage() {
         }).catch(() => null)
       : Promise.resolve(null);
 
-    const opportunitySearch = currentCategory === "all" || currentCategory === "opportunities"
+    const opportunitySearch = !currentIntent && (currentCategory === "all" || currentCategory === "opportunities")
       ? Promise.all([
           fetchPacket("/api/live-opportunities/v1?limit=100&page=1", 25_000, {
             signal: controller.signal,
@@ -127,7 +134,7 @@ export default function SearchResultsPage() {
         })
       : Promise.resolve([] as Packet[]);
 
-    const newsSearch = currentCategory === "all" || currentCategory === "news"
+    const newsSearch = !currentIntent && (currentCategory === "all" || currentCategory === "news")
       ? fetchPacket("/api/source-intelligence/news/v1?limit=100", 25_000, {
           signal: controller.signal,
           attempts: 2,
@@ -137,7 +144,7 @@ export default function SearchResultsPage() {
         }).catch(() => null)
       : Promise.resolve(null);
 
-    const transactionSearch = currentCategory === "all" || currentCategory === "transactions"
+    const transactionSearch = !currentIntent && (currentCategory === "all" || currentCategory === "transactions")
       ? Promise.all([publicSearch, entitySearch]).then(async ([publicPacket, nextEntityPackets]) => {
           if (!active) return null;
           const entityName = resolvedEntityName(currentQuery, publicPacket, nextEntityPackets);
@@ -151,7 +158,20 @@ export default function SearchResultsPage() {
         })
       : Promise.resolve(null);
 
-    void Promise.allSettled([publicSearch, entitySearch, peopleSearch, opportunitySearch, newsSearch, transactionSearch]).then(() => {
+    const intentSearch = currentIntent
+      ? Promise.all(currentIntent.requests.map((request) => (
+          fetchPacket(request.endpoint, 25_000, { signal: controller.signal, attempts: 2 })
+        ))).then((nextPackets) => {
+          const factPackets = nextPackets.filter(isFact);
+          if (active) setIntentPackets(factPackets);
+          return factPackets;
+        }).catch(() => {
+          if (active) setIntentPackets([]);
+          return [] as Packet[];
+        })
+      : Promise.resolve([] as Packet[]);
+
+    void Promise.allSettled([publicSearch, entitySearch, peopleSearch, opportunitySearch, newsSearch, transactionSearch, intentSearch]).then(() => {
       if (active) setLoading(false);
     });
     return () => {
@@ -162,12 +182,23 @@ export default function SearchResultsPage() {
   }, []);
 
   const resultRows = useMemo(() => {
+    const interpretedIntent = smartSearchIntentForQuery(query);
+    const intentRows = interpretedIntent
+      ? filterSmartSearchIntentRows(interpretedIntent, intentPackets.flatMap((intentPacket) => packetRows(intentPacket)))
+        .map((row) => categorizedSearchRow(row, interpretedIntent.category))
+      : [];
+    const intentEntities = intentRows.filter((row) => row.__searchCategory === "entities");
+    const intentTransactions = intentRows.filter((row) => row.__searchCategory === "transactions");
+    const intentOpportunities = intentRows.filter((row) => row.__searchCategory === "opportunities");
     const publicRows = packetRows(packet).map((row) => categorizedSearchRow(row));
     const publicEntities = publicRows.filter((row) => row.__searchCategory === "entities");
     const entityRows = entityPackets
       .flatMap((entityPacket) => packetRows(entityPacket))
       .map((row) => categorizedSearchRow(row, "entities"));
-    const entities = mergeSearchRecordsPreferPrimary(publicEntities, entityRows, query, "entity");
+    const entities = dedupeSearchRecords([
+      ...intentEntities,
+      ...mergeSearchRecordsPreferPrimary(publicEntities, entityRows, query, "entity"),
+    ]);
     const matchedEntityName = transactionPacketEntityName(transactionPacket);
     const joinedTransactions = packetRows(transactionPacket).map((row) => ({
       ...categorizedSearchRow(row, "transactions"),
@@ -181,15 +212,16 @@ export default function SearchResultsPage() {
     // The entity-transactions endpoint is already an exact entity-reference join and
     // returns newest-first rows. Do not text-filter those records by the acronym again:
     // many rows carry the entity only as a backend reference plus `role=Buyer`.
-    const transactions = dedupeSearchRecords([...joinedTransactions, ...publicTransactions]);
+    const transactions = dedupeSearchRecords([...intentTransactions, ...joinedTransactions, ...publicTransactions]);
     const people = rankSearchRecords(dedupeSearchRecords([
       ...packetRows(peoplePacket).map((row) => categorizedSearchRow(row, "people")),
       ...publicRows.filter((row) => row.__searchCategory === "people"),
     ]), query, "person");
-    const opportunities = rankSearchRecords(dedupeSearchRecords([
+    const keywordOpportunities = rankSearchRecords(dedupeSearchRecords([
       ...opportunityPackets.flatMap((opportunityPacket) => packetRows(opportunityPacket)).map((row) => categorizedSearchRow(row, "opportunities")),
       ...publicRows.filter((row) => row.__searchCategory === "opportunities"),
     ]), query, "rfp");
+    const opportunities = dedupeSearchRecords([...intentOpportunities, ...keywordOpportunities]);
     const news = rankSearchRecords(dedupeSearchRecords([
       ...packetRows(newsPacket).map((row) => categorizedSearchRow(row, "news")),
       ...publicRows.filter((row) => row.__searchCategory === "news"),
@@ -201,7 +233,8 @@ export default function SearchResultsPage() {
     if (category === "opportunities") return opportunities;
     if (category === "news") return news;
     return dedupeSearchRecords([...entities, ...transactions, ...opportunities, ...news, ...people]);
-  }, [category, entityPackets, newsPacket, opportunityPackets, packet, peoplePacket, query, transactionPacket]);
+  }, [category, entityPackets, intentPackets, newsPacket, opportunityPackets, packet, peoplePacket, query, transactionPacket]);
+  const interpretedIntent = useMemo(() => smartSearchIntentForQuery(query), [query]);
   const sortedRows = useMemo(() => sortSearchRows(resultRows, sortKey, sortDir), [resultRows, sortDir, sortKey]);
   const visibleRows = sortedRows.slice(0, rowLimit);
   const count = resultRows.length;
@@ -226,6 +259,11 @@ export default function SearchResultsPage() {
             <div>
               <h1 className="m-0 text-[19px] font-bold text-[#11314F]">Smart Search</h1>
               <p className="m-0 mt-1 text-[12px] text-[#7A8A9B]">{searchCategoryLabel(category)} results for {query ? `“${query}”` : "your search"}. Select any row to continue.</p>
+              {interpretedIntent ? (
+                <p className="m-0 mt-2 text-[12px] text-[#234968]" data-testid="smart-search-results-interpretation">
+                  <span className="font-semibold">Interpreted as:</span> {interpretedIntent.explanation}
+                </p>
+              ) : null}
             </div>
             <div className="rounded border border-[#DCE3EA] px-3 py-2 text-[12px] text-[#41566B]">
               <span className="font-semibold">{searchCategoryLabel(category)}</span> · {loading && !packet ? "Loading" : showingText}
@@ -301,7 +339,7 @@ function packetRows(packet: Packet | null | undefined): Record<string, unknown>[
   return dataRows.length ? dataRows : rows(packet);
 }
 
-function resolvedEntityName(query: string, publicPacket: Packet, entityPackets: Packet[]): string {
+function resolvedEntityName(query: string, publicPacket: Packet | null, entityPackets: Packet[]): string {
   const publicEntities = packetRows(publicPacket).filter((row) => inferSearchCategory(row) === "entities");
   const sourceEntities = entityPackets.flatMap((entityPacket) => packetRows(entityPacket));
   const ranked = mergeSearchRecordsPreferPrimary(publicEntities, sourceEntities, query, "entity");
@@ -375,6 +413,9 @@ function searchResultDetail(row: CategorizedSearchRow): string {
           : [
               meaningfulText(row.type || row.entity_type),
               meaningfulText(row.country || row.region),
+              Number(row.activity_count || row.deal_count || 0) > 0
+                ? `${Number(row.activity_count || row.deal_count).toLocaleString("en-US")} activities in 90 days`
+                : "",
               meaningfulMoney(row.aum || row.assets || row.managed_assets),
             ];
   return values.filter(Boolean).join(" / ") || "Details available on SWFI";

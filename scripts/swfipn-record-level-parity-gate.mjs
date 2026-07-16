@@ -2,6 +2,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { isRemoteMongoUri } from "./swfipn-mongo-policy.mjs";
 
 const repoRoot = process.cwd();
 const outputDir = path.join(repoRoot, "output");
@@ -268,7 +269,7 @@ async function fetchJsonWithRetry(pathname) {
 }
 
 function loadMongoUri() {
-  if (process.env.SWFIPN_RECORD_PARITY_MONGO_URI) {
+  if (process.env.SWFIPN_RECORD_PARITY_MONGO_URI && usableMongoUri(process.env.SWFIPN_RECORD_PARITY_MONGO_URI)) {
     return { uri: process.env.SWFIPN_RECORD_PARITY_MONGO_URI, source: "env:SWFIPN_RECORD_PARITY_MONGO_URI" };
   }
   for (const [name, value] of [
@@ -284,13 +285,7 @@ function loadMongoUri() {
 }
 
 function usableMongoUri(value) {
-  if (/^(1|true|yes|on)$/i.test(String(process.env.SWFIPN_RECORD_PARITY_ALLOW_LOCAL_MONGO || ""))) return true;
-  try {
-    const parsed = new URL(value);
-    return !/^(127\.0\.0\.1|localhost|0\.0\.0\.0)$/i.test(parsed.hostname);
-  } catch {
-    return false;
-  }
+  return isRemoteMongoUri(value);
 }
 
 function fetchMongoDocs(idsByCollection, mongoUri) {

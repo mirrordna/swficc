@@ -32,13 +32,19 @@ check("defaultSortDir(profiles)", defaultSortDir("profiles"), "desc");
 check("defaultSortColumn(allocators)", defaultSortColumn("allocators"), 6);
 check("defaultSortDir(allocators)", defaultSortDir("allocators"), "desc");
 
-// 3. Every other record kind keeps the name-ascending default.
-for (const kind of ["people", "transactions", "deals", "comparisons", "mandates", "alerts", "research", "intelligence", "search"]) {
+// 3. News / intelligence expose Published at column 1 and lead newest-first.
+for (const kind of ["research", "intelligence"]) {
+  check(`defaultSortColumn(${kind})`, defaultSortColumn(kind), 1);
+  check(`defaultSortDir(${kind})`, defaultSortDir(kind), "desc");
+}
+
+// 4. Every other record kind keeps the name-ascending default.
+for (const kind of ["people", "transactions", "deals", "comparisons", "mandates", "alerts", "search"]) {
   check(`defaultSortColumn(${kind})`, defaultSortColumn(kind), 0);
   check(`defaultSortDir(${kind})`, defaultSortDir(kind), "asc");
 }
 
-// 4. AUM magnitudes order correctly and "Not disclosed" is non-numeric so it
+// 5. AUM magnitudes order correctly and "Not disclosed" is non-numeric so it
 //    sinks to the bottom of a descending sort (compareCells relies on this).
 const aum139B = numericSortValue("$139.8B");
 const aum380M = numericSortValue("$380.1M");
@@ -55,7 +61,8 @@ const receipt = {
   checked: [
     "profiles default sort = AUM column (3) descending",
     "allocators default sort = most-recent-activity (6) descending",
-    "other kinds default = name (0) ascending",
+    "research and intelligence default sort = Published column (1) descending",
+    "remaining kinds default = name (0) ascending",
     "AUM magnitude ordering ($139.8B > $380.1M > $122.8M) and Not disclosed = null",
   ],
 };

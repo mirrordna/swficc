@@ -28,10 +28,13 @@ export function defaultSortColumn(kind: Kind): number {
   // shows the largest asset owners first instead of an A–Z name list. "Not
   // disclosed" AUM sinks to the bottom via compareCells regardless of direction.
   if (kind === "profiles") return 3;
+  // News and intelligence tables expose Published as column 1 and must lead
+  // with the newest sourced date rather than alphabetizing the current page.
+  if (kind === "research" || kind === "intelligence") return 1;
   return 0;
 }
 
 // Direction the table sorts by on first render.
 export function defaultSortDir(kind: Kind): "asc" | "desc" {
-  return kind === "allocators" || kind === "profiles" ? "desc" : "asc";
+  return kind === "allocators" || kind === "profiles" || kind === "research" || kind === "intelligence" ? "desc" : "asc";
 }

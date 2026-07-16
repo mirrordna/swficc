@@ -1,6 +1,6 @@
 # SWFI /swficc Acceptance Status
 
-Status: Ready for acceptance/demo review
+Status: Not ready
 
 Scope: current `/swficc` dashboard/terminal validation scope.
 
@@ -10,105 +10,124 @@ Primary public URL: `https://dashboard.swfi.com/swficc/`
 
 Operational alias: `https://swfipn.activemirror.ai/swficc/`
 
-Deployed release: `/opt/swfipn-acceptance/releases/20260713T101930Z`
+Deployed release: `unknown`
 
-Public asset version: `20260713T101930Z`
+Public asset version: `unknown`
 
 ## Verdict
 
-Acceptance lock: `go`
+Acceptance lock: `no_go`
 
-Share gate: `pass`, `sendable: true`
+Share gate: `missing`, `sendable: false`
 
-BRD contract truth: `pass`, full-universe parity `PASS`
+BRD contract truth: `missing`, full-universe parity `unknown`
 
-BRD Phase 2 matrix: `fail`, verdict `no_go`
+BRD Phase 2 matrix: `missing`, verdict `unknown`
 
-Runtime staleness: `pass`, failures `0`
+Runtime staleness: `missing`, failures `0`
 
-API vhost readiness: `pass`, HTTP `308` -> `https://api.swfi.com/docs`
+API vhost readiness: `unknown`, HTTP `unknown` -> `unknown`
 
-API key lifecycle on acceptance host: `pass`
+API key lifecycle on acceptance host: `missing`
 
-Production API DNS cutover: `blocked`
+Production API DNS cutover: `missing`
 
 ## Blockers
 
-- None found within current acceptance scope.
-
-## Deferred / Blocked Outside Current Sendable Scope
-
-- `api.swfi.com` production cutover remains blocked outside the current `/swficc` sendable scope.
-  - dns:a_record_not_cut_over_expected_161.35.56.218_got_67.207.93.157
-  - production:docs_http_404
-  - production:docs_status_missing
-  - production:docs_base_url_missing
-  - production:docs_missing_x_api_key_auth
-  - dns_cutover_controller:apply_not_requested_set_SWFIPN_API_DNS_APPLY=1
-- Phase 2 runtime integrations remain blocked outside the current `/swficc` sendable scope.
-  - sendgrid_target_runtime_missing_api_key
-  - sendgrid_target_runtime_missing_from_email
-  - only_non_swfi_sendgrid_candidate_found_do_not_claim_sendgrid
+- swfipn-acceptance-criteria-gate: missing receipt
+- swfipn-dashboard-acceptance-crawler: missing receipt
+- swfipn-data-validation-gate: missing receipt
+- swfipn-provable-terminal-gate: missing receipt
+- swfipn-record-manifest-scan: missing receipt
+- swfipn-record-mirror-gate: missing receipt
+- swfipn-route-ledger-gate: missing receipt
+- swfipn-runtime-staleness-gate: missing receipt
+- swfipn-api-product-gate: missing receipt
+- swfipn-api-key-lifecycle: missing receipt
+- swfipn-admin-api-ui-brd-gate: missing receipt
+- swfipn-admin-governance-brd-gate: missing receipt
+- swfipn-saved-searches-brd-gate: missing receipt
+- swfipn-saved-searches-ui-brd-gate: missing receipt
+- swfipn-alerts-brd-gate: missing receipt
+- swfipn-alerts-ui-brd-gate: missing receipt
+- swfipn-alert-delivery-brd-gate: missing receipt
+- swfipn-record-field-parity-full: missing receipt
+- swfipn-brd-contract-truth-gate: missing receipt
+- swfipn-share-gate: missing receipt
+- swfipn-source-truth-gate: missing receipt
+- swfipn-source-url-coverage: missing receipt
+- swfipn-visual-gate: missing receipt
 
 ## Latest Evidence
 
 | Gate | Result | Receipt |
 | --- | --- | --- |
-| Share/sendability gate | `pass` | `output/swfipn-share-gate-latest.json` |
-| Full-universe mapping gate | `pass` | `output/swfipn-full-universe-mapping-latest.json` |
-| Source/destination manifest gate | `pass` | `output/swfipn-source-destination-manifest-latest.json` |
-| Detail-batch parity gate | `pass` | `output/swfipn-detail-batch-parity-latest.json` |
-| Full route parity gate | `pass` | `output/swfipn-route-parity-full-latest.json` |
-| Record field parity gate | `pass` | `output/swfipn-record-field-parity-full-latest.json` |
-| Adversarial review gate | `pass` | `output/swfipn-adversarial-review-latest.json` |
-| BRD contract truth gate | `pass` | `output/swfipn-brd-contract-truth-gate-latest.json` |
-| Acceptance criteria gate | `pass` | `output/swfipn-acceptance-criteria-gate-latest.json` |
-| KP acceptance gate | `pass` | `output/swfipn-kp-acceptance-gate-latest.json` |
+| Share/sendability gate | `missing` | `output/swfipn-share-gate-latest.json` |
+| Full-universe mapping gate | `missing` | `output/swfipn-full-universe-mapping-latest.json` |
+| Source/destination manifest gate | `missing` | `output/swfipn-source-destination-manifest-latest.json` |
+| Detail-batch parity gate | `missing` | `output/swfipn-detail-batch-parity-latest.json` |
+| Full route parity gate | `missing` | `output/swfipn-route-parity-full-latest.json` |
+| Record field parity gate | `missing` | `output/swfipn-record-field-parity-full-latest.json` |
+| Adversarial review gate | `missing` | `output/swfipn-adversarial-review-latest.json` |
+| BRD contract truth gate | `missing` | `output/swfipn-brd-contract-truth-gate-latest.json` |
+| Acceptance criteria gate | `missing` | `output/swfipn-acceptance-criteria-gate-latest.json` |
+| KP acceptance gate | `missing` | `output/swfipn-kp-acceptance-gate-latest.json` |
 | Route and leakage gates | `pass` | `output/swfipn-link-mapping-leakage-gate-latest.json, output/swfipn-visible-link-escape-gate-latest.json` |
-| BRD Phase 2 gate | `fail` | `output/swfipn-brd-phase2-acceptance-latest.json` |
-| Runtime staleness gate | `pass` | `output/swfipn-runtime-staleness-gate-latest.json` |
-| API product gate | `pass` | `output/swfipn-api-product-gate-latest.json` |
-| API key lifecycle gate | `pass` | `output/swfipn-api-key-lifecycle-latest.json` |
-| Admin API Product Console UI gate | `pass` | `output/swfipn-admin-api-ui-brd-gate-latest.json` |
-| Admin Governance gate | `pass` | `output/swfipn-admin-governance-brd-gate-latest.json` |
-| Saved Searches backend/API + linked alert delivery gate | `pass` | `output/swfipn-saved-searches-brd-gate-latest.json` |
-| Saved Searches page UI + linked alert delivery gate | `pass` | `output/swfipn-saved-searches-ui-brd-gate-latest.json` |
-| Alerts backend/API gate | `pass` | `output/swfipn-alerts-brd-gate-latest.json` |
-| Alerts page UI gate | `pass` | `output/swfipn-alerts-ui-brd-gate-latest.json` |
-| Alert delivery receipts gate | `pass` | `output/swfipn-alert-delivery-brd-gate-latest.json` |
-| SendGrid email delivery gate | `blocked` | `output/swfipn-sendgrid-email-brd-gate-latest.json` |
-| SWFI session bridge gate | `blocked` | `output/swfipn-swfi-session-bridge-brd-gate-latest.json` |
-| Phase 2 runtime preflight | `blocked` | `output/swfipn-phase2-runtime-preflight-latest.json` |
-| Phase 2 closure packet | `blocked_waiting_on_external_runtime_inputs` | `output/swfipn-phase2-closure-packet-latest.json` |
-| API DNS cutover gate | `blocked` | `output/swfipn-api-dns-key-lifecycle-latest.json` |
-| API DNS cutover controller | `ready` | `output/swfipn-api-dns-cutover-latest.json` |
-
-## Share Summary
-
-- receipts: `8`
-- screenshots: `3`
-- failures: `0`
-- source_links: `60`
-- detail_links: `0`
-- mirror_record_links: `40`
-- external_swfi_links: `0`
+| BRD Phase 2 gate | `missing` | `output/swfipn-brd-phase2-acceptance-latest.json` |
+| Runtime staleness gate | `missing` | `output/swfipn-runtime-staleness-gate-latest.json` |
+| API product gate | `missing` | `output/swfipn-api-product-gate-latest.json` |
+| API key lifecycle gate | `missing` | `output/swfipn-api-key-lifecycle-latest.json` |
+| Admin API Product Console UI gate | `missing` | `output/swfipn-admin-api-ui-brd-gate-latest.json` |
+| Admin Governance gate | `missing` | `output/swfipn-admin-governance-brd-gate-latest.json` |
+| Saved Searches backend/API + linked alert delivery gate | `missing` | `output/swfipn-saved-searches-brd-gate-latest.json` |
+| Saved Searches page UI + linked alert delivery gate | `missing` | `output/swfipn-saved-searches-ui-brd-gate-latest.json` |
+| Alerts backend/API gate | `missing` | `output/swfipn-alerts-brd-gate-latest.json` |
+| Alerts page UI gate | `missing` | `output/swfipn-alerts-ui-brd-gate-latest.json` |
+| Alert delivery receipts gate | `missing` | `output/swfipn-alert-delivery-brd-gate-latest.json` |
+| SendGrid email delivery gate | `missing` | `output/swfipn-sendgrid-email-brd-gate-latest.json` |
+| SWFI session bridge gate | `missing` | `output/swfipn-swfi-session-bridge-brd-gate-latest.json` |
+| Phase 2 runtime preflight | `missing` | `output/swfipn-phase2-runtime-preflight-latest.json` |
+| Phase 2 closure packet | `missing` | `output/swfipn-phase2-closure-packet-latest.json` |
+| API DNS cutover gate | `missing` | `output/swfipn-api-dns-key-lifecycle-latest.json` |
+| API DNS cutover controller | `missing` | `output/swfipn-api-dns-cutover-latest.json` |
 
 ## Data Quality Caveats
 
-- None found.
+- The production news API currently returns current stories with blank
+  publication dates. The candidate backend normalizes active WordPress date
+  fields, but that change has not been deployed or probed against remote Atlas.
+- The serving reports catalog contains 78 records and its latest record is
+  dated May 2, 2024. The candidate labels this as a historical catalog; it does
+  not claim that the underlying report inventory is fresh.
+- The repository-wide lint command still has nine errors in untouched legacy
+  files. Targeted lint for this change has no errors.
+- Targeted candidate gates are green, but they do not replace the missing
+  public acceptance-lock, source-parity, visual, auth, API-key, and share
+  receipts listed above.
+
+## Local Candidate Evidence
+
+| Check | Result | Scope |
+| --- | --- | --- |
+| KP browser gate | `pass` | 13 checks covering Smart Search, AUM order, and Deals multi-select |
+| Competition Analysis gate | `pass` | 13 selector, parity, URL-state, and evidence-boundary checks |
+| Freshness browser gate | `pass` | 6 mocked-contract checks for news/report ordering, routing, and catalog disclosure |
+| Smart Search intent tests | `pass` | 12 deterministic intent cases |
+| No-local-Mongo policy and stack gate | `pass` | configuration, manifests, parity scripts, and runtime-policy checks |
+| TypeScript and production build | `pass` | local candidate only |
+| Backend test suite | `pass` | 208 tests against fixtures/mocks; no remote Atlas probe |
 
 ## Phase 2 / Change Requests
 
-- Admin API-key lifecycle UI and Admin Governance pass on the accepted public host; real SWFI auth/session integration remains deferred P2 until the SWFI session bridge gate passes against the target runtime.
-- Alerts backend/API, Alerts page UI API client, and alert in-app/webhook delivery receipts pass on the accepted public host. SendGrid email delivery code and gate are deployed, but public email delivery remains blocked until the target runtime has a configured SendGrid key/from-address and the SendGrid email gate passes.
-- Saved Searches backend/API, page UI API client, and linked in-app alert delivery receipts pass on the accepted public host; local SWFI session bridge mechanics are receipt-backed, but real SWFI auth/session integration remains blocked until SWFI supplies signed assertions and the bridge is configured on the target runtime.
-- SWFI session bridge code and gate are implemented; public runtime remains blocked until `output/swfipn-swfi-session-bridge-brd-gate-latest.json` passes with the SWFI assertion secret/return path configured.
-- SendGrid onboarding remains deferred P2 until `output/swfipn-sendgrid-email-brd-gate-latest.json` passes against the target runtime.
-- api.swfi.com DNS cutover remains blocked/deferred until the DNS/key lifecycle gate passes. The cutover controller found the `api` A record and rollback data, but the available DigitalOcean token lacks DNS write permission. API-key lifecycle, Admin API-key lifecycle UI, Admin Governance, Alerts backend/API, Alerts page UI API client, Alert delivery receipts, Saved Searches backend/API, Saved Searches page UI API client, and saved-search linked in-app alert delivery pass on the accepted public host.
+- Admin, alerts, saved searches, session bridge, SendGrid delivery, production
+  API DNS, and API-key lifecycle are outside this candidate's targeted proof.
+  Their fresh public receipts are missing and no inherited pass claim is carried
+  forward.
 
 ## Required wording
 
-Use: “The current `/swficc` dashboard/terminal scope is deployed, source-backed, and sendable for validation with receipts.”
+Use: “The current candidate is local-only and is not sendable until it is
+deployed and the public acceptance receipts pass.”
 
 Use: “corresponding SWFI core platform record/profile page through SWFI sign-in handoff.”
 
@@ -118,4 +137,4 @@ Do not use: “All SWFI.com pages are fully migrated.”
 
 ## Final acceptance sentence
 
-No blockers are open inside the current `/swficc` dashboard/terminal validation scope. Full BRD Phase 2 remains active because the explicit deferred productization bucket and production `api.swfi.com` DNS cutover are not complete.
+Blockers remain within the current `/swficc` dashboard/terminal validation scope. Do not call this ready or sendable until the required receipts pass.

@@ -32,7 +32,10 @@ const ENDPOINTS = {
   transactions: "/api/recent-transactions/v1?days=90&limit=100&page=1",
   sectorFlows: "/api/sector-flows/v1?days=365",
   news: "/api/source-intelligence/news/v1?limit=100",
-  reports: "/api/reports/v1?limit=100&page=1",
+  // The serving API caps each page at 50. Fetch both pages so the dashboard
+  // represents the 78-record catalog instead of silently presenting page 1.
+  reports: "/api/reports/v1?limit=50&page=1",
+  reports2: "/api/reports/v1?limit=50&page=2",
 };
 
 export default function PdfDoctrinePage() {
@@ -119,7 +122,8 @@ export default function PdfDoctrinePage() {
     ] as TableCell[])
     .filter((row) => displayText(row[0]));
 
-  const reportRows = rows(packets.reports)
+  const reportSourceRows = dedupeRows([...rows(packets.reports), ...rows(packets.reports2)]);
+  const reportRows = reportSourceRows
     .map((row) => [
       linkedName(row, "report"),
       clean(row.type),
@@ -127,6 +131,14 @@ export default function PdfDoctrinePage() {
       clean(row.report_url || row.source_url) ? "Report asset on file" : "",
     ] as TableCell[])
     .filter((row) => displayText(row[0]));
+
+  const reportSourceTotal = Math.max(packetTotal(packets.reports), packetTotal(packets.reports2), reportSourceRows.length);
+  const latestReportDate = latestDate(reportSourceRows, ["published_at", "publishedAt", "date"]);
+  const reportCatalogAsOf = clean(packets.reports?.generated_at || packets.reports2?.generated_at);
+  const historicalReportCatalog = isOlderThanDays(latestReportDate, reportCatalogAsOf, 365);
+  const reportCatalogSummary = latestReportDate
+    ? `Latest report on file: ${displayDate(latestReportDate)} · ${historicalReportCatalog ? "Historical catalog" : "Current catalog"} · ${reportSourceTotal.toLocaleString("en-US")} records`
+    : `${reportSourceTotal.toLocaleString("en-US")} report records on file · latest publication date not disclosed`;
 
   const summaryRows: TableCell[][] = [
     ["Institutions", metricValue(packets.metrics, "institutions") || topAumRows.length.toLocaleString("en-US"), "SWFI records"],
@@ -165,7 +177,7 @@ export default function PdfDoctrinePage() {
             </section>
 
             <section data-gsap-reveal className="rounded border border-[#DCE3EA] bg-white px-4 py-3 text-sm text-[#41566B]">
-              <strong className="text-[#11314F]">Updated from SWFI.</strong> Each linked row opens the corresponding SWFI record.
+              <strong className="text-[#11314F]">{reportCatalogSummary}.</strong> Each linked row opens the corresponding SWFI record.
             </section>
 
             <section
@@ -205,6 +217,7 @@ export default function PdfDoctrinePage() {
                   marketRows={marketRows}
                   allocatorRows={allocatorRows}
                   transactionRows={transactionRows}
+                  reportCatalogSummary={reportCatalogSummary}
                 />
               ) : null}
             </section>
@@ -268,6 +281,8 @@ export default function PdfDoctrinePage() {
                 filename="swfi-quarterly-reports.csv"
                 headers={["Report", "Type", "Published At", "Asset"]}
                 rows={reportRows}
+                initialSortColumn={2}
+                initialSortDir="desc"
                 empty="No report rows available."
               />
             </Section>
@@ -277,6 +292,8 @@ export default function PdfDoctrinePage() {
                 filename="swfi-news.csv"
                 headers={["Article", "Published / Updated"]}
                 rows={newsRows}
+                initialSortColumn={1}
+                initialSortDir="desc"
                 empty="No news rows available."
               />
             </Section>
@@ -296,7 +313,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function ReportsVisualization({ reportRows, marketRows, allocatorRows, transactionRows }: { reportRows: TableCell[][]; marketRows: TableCell[][]; allocatorRows: TableCell[][]; transactionRows: TableCell[][] }) {
+function ReportsVisualization({ reportRows, marketRows, allocatorRows, transactionRows, reportCatalogSummary }: { reportRows: TableCell[][]; marketRows: TableCell[][]; allocatorRows: TableCell[][]; transactionRows: TableCell[][]; reportCatalogSummary: string }) {
   const reportBuckets = bucketTableRows(reportRows, 1);
   const marketBuckets = marketRows.slice(0, 8).map((row) => ({ label: displayText(row[0]), count: numericSortValue(displayText(row[2])) || 1 }));
   const summary = [
@@ -309,7 +326,7 @@ function ReportsVisualization({ reportRows, marketRows, allocatorRows, transacti
     <div className="grid gap-4" data-brd-reports-visualization="true">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="grid gap-1 text-[12px] text-[#7A8A9B]">
-          <span>Updated from SWFI</span>
+          <span>{reportCatalogSummary}</span>
           <span>League Tables and reports are represented from the report asset records on file.</span>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -355,10 +372,24 @@ function ReportsBarChart({ title, rows }: { title: string; rows: { label: string
   );
 }
 
-function ReportTable({ headers, rows: tableRows, filename, empty }: { headers: string[]; rows: TableCell[][]; filename: string; empty: string }) {
+function ReportTable({
+  headers,
+  rows: tableRows,
+  filename,
+  empty,
+  initialSortColumn = 0,
+  initialSortDir = "asc",
+}: {
+  headers: string[];
+  rows: TableCell[][];
+  filename: string;
+  empty: string;
+  initialSortColumn?: number;
+  initialSortDir?: "asc" | "desc";
+}) {
   const [filter, setFilter] = useState("");
-  const [sortColumn, setSortColumn] = useState(0);
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [sortColumn, setSortColumn] = useState(initialSortColumn);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">(initialSortDir);
   const [rowLimit, setRowLimit] = useState(5);
   const [pageIndex, setPageIndex] = useState(0);
 
@@ -527,6 +558,48 @@ function cleanDate(value: unknown): string {
   return valueText.slice(0, 10);
 }
 
+function dedupeRows(items: Row[]): Row[] {
+  const seen = new Set<string>();
+  return items.filter((row) => {
+    const key = clean(
+      row.report_key
+      || row.report_url
+      || row.source_url
+      || row.id
+      || `${clean(row.title || row.name)}|${clean(row.published_at || row.publishedAt || row.date)}`,
+    ).toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function packetTotal(packet?: Packet): number {
+  if (!isFact(packet)) return 0;
+  const data = packetData(packet);
+  const candidates = [data.source_total, data.count].map((value) => Number(value)).filter(Number.isFinite);
+  return candidates.length ? Math.max(...candidates) : rows(packet).length;
+}
+
+function latestDate(items: Row[], keys: string[]): string {
+  return items
+    .map((row) => keys.map((key) => cleanDate(row[key])).find(Boolean) || "")
+    .filter(Boolean)
+    .sort((left, right) => right.localeCompare(left))[0] || "";
+}
+
+function isOlderThanDays(value: string, asOf: string, days: number): boolean {
+  const valueStamp = Date.parse(value);
+  const asOfStamp = Date.parse(asOf);
+  return Number.isFinite(valueStamp) && Number.isFinite(asOfStamp) && asOfStamp - valueStamp > days * 86_400_000;
+}
+
+function displayDate(value: string): string {
+  const stamp = Date.parse(value);
+  if (!Number.isFinite(stamp)) return value;
+  return new Intl.DateTimeFormat("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" }).format(new Date(stamp));
+}
+
 function record(value: unknown): Row {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Row : {};
 }
@@ -560,7 +633,7 @@ function rowSourceHref(row: Row, kind: "entity" | "transaction" | "compass" | "n
   }
   if (kind === "news") {
     const legacy = clean(row.legacy_id || row.legacy_post || row.post_id || row.wordpress_id || row.id);
-    return researchDetailHref(row, provenance || (/^\d+$/.test(legacy) ? `https://www.swfi.com/?p=${encodeURIComponent(legacy)}` : undefined));
+    return researchDetailHref(row, provenance || (/^\d+$/.test(legacy) ? `https://www.swfi.com/v1/news/${encodeURIComponent(legacy)}` : undefined));
   }
   if (kind === "entity") return profileDetailHref(row, provenance || undefined);
   if (kind === "transaction") return transactionDetailHref(row, provenance || undefined);

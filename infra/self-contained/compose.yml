@@ -1,42 +1,6 @@
-name: swfi2-self-contained
+name: swfi2-remote-source
 
 services:
-  mongo:
-    image: mongo:7.0
-    restart: unless-stopped
-    command: ["mongod", "--bind_ip_all", "--auth"]
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:?MONGO_INITDB_ROOT_USERNAME is required}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:?MONGO_INITDB_ROOT_PASSWORD is required}
-    volumes:
-      - swfi2_mongo_data:/data/db
-      - swfi2_mongo_config:/data/configdb
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "mongosh --quiet --username \"$${MONGO_INITDB_ROOT_USERNAME}\" --password \"$${MONGO_INITDB_ROOT_PASSWORD}\" --authenticationDatabase admin --eval 'db.adminCommand({ ping: 1 }).ok' | grep 1",
-        ]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-
-  swfi2-sync-init:
-    build:
-      context: ${SWFI2_BACKEND_CONTEXT:-../../../SWFI2.0-final}
-      dockerfile: Dockerfile
-    image: swfi2/backend:self-contained
-    restart: "no"
-    depends_on:
-      mongo:
-        condition: service_healthy
-    environment:
-      SWFI_MONGO_URI: ${SWFI_MONGO_URI:?SWFI_MONGO_URI must point at the in-stack mongo service}
-      SWFI_MONGO_DB: ${SWFI_MONGO_DB:-swfi}
-      SWFI_ATLAS_URI: ${SWFI_ATLAS_URI:?SWFI_ATLAS_URI is required for bootstrap sync}
-    command: ["python", "scripts/sync_mongo_stream.py"]
-
   swfi2-key-store-init:
     image: alpine:3.21
     restart: "no"
@@ -48,17 +12,13 @@ services:
     build:
       context: ${SWFI2_BACKEND_CONTEXT:-../../../SWFI2.0-final}
       dockerfile: Dockerfile
-    image: swfi2/backend:self-contained
+    image: swfi2/backend:remote-source
     restart: unless-stopped
     depends_on:
-      mongo:
-        condition: service_healthy
-      swfi2-sync-init:
-        condition: service_completed_successfully
       swfi2-key-store-init:
         condition: service_completed_successfully
     environment:
-      SWFI2_SERVICE_NAME: swfi2-self-contained-backend
+      SWFI2_SERVICE_NAME: swfi2-remote-source-backend
       SWFI2_HOST: 0.0.0.0
       SWFI2_PORT: 8362
       SWFI2_FACT_SOURCE: mongo
@@ -70,7 +30,8 @@ services:
       SWFI2_SAVED_SEARCH_STORE_PATH: /app/product-state/saved-searches.json
       SWFI2_ALERT_STORE_PATH: /app/product-state/alerts.json
       SWFI_MONGO_DB: ${SWFI_MONGO_DB:-swfi}
-      SWFI_MONGO_URI: ${SWFI_MONGO_URI:?SWFI_MONGO_URI must point at the in-stack mongo service}
+      # Explicit governed remote Atlas URI. Local and in-stack Mongo are forbidden.
+      SWFI_MONGO_URI: ${SWFI_ATLAS_URI:?SWFI_ATLAS_URI must be an approved remote Atlas URI}
       SWFI2_API_TOKEN: ${SWFI2_API_TOKEN:?SWFI2_API_TOKEN is required}
     volumes:
       - swfi2_api_product_key_store:/app/product-state
@@ -90,7 +51,7 @@ services:
       args:
         NEXT_PUBLIC_SWFI_BACKEND_URL: same-origin
         NEXT_PUBLIC_BACKEND_URL: same-origin
-    image: swfi2/web:self-contained
+    image: swfi2/web:remote-source
     restart: unless-stopped
     depends_on:
       swfi2-backend:
@@ -116,74 +77,6 @@ services:
       retries: 5
       start_period: 30s
 
-  swfi2-sync:
-    image: swfi2/backend:self-contained
-    profiles: ["sync"]
-    restart: "no"
-    depends_on:
-      mongo:
-        condition: service_healthy
-    environment:
-      SWFI_MONGO_URI: ${SWFI_MONGO_URI:?SWFI_MONGO_URI must point at the in-stack mongo service}
-      SWFI_MONGO_DB: ${SWFI_MONGO_DB:-swfi}
-      SWFI_ATLAS_URI: ${SWFI_ATLAS_URI:?SWFI_ATLAS_URI is required for sync}
-    command: ["python", "scripts/sync_mongo_stream.py"]
-
-  swfi2-sync-loop:
-    image: swfi2/backend:self-contained
-    profiles: ["sync-loop"]
-    restart: unless-stopped
-    depends_on:
-      mongo:
-        condition: service_healthy
-    environment:
-      SWFI_MONGO_URI: ${SWFI_MONGO_URI:?SWFI_MONGO_URI must point at the in-stack mongo service}
-      SWFI_MONGO_DB: ${SWFI_MONGO_DB:-swfi}
-      SWFI_ATLAS_URI: ${SWFI_ATLAS_URI:?SWFI_ATLAS_URI is required for sync}
-    command:
-      [
-        "sh",
-        "-c",
-        "while true; do python scripts/sync_mongo_stream.py; sleep \"$${SWFI_SYNC_INTERVAL_SECONDS:-900}\"; done",
-      ]
-
-  swfi2-backup:
-    image: mongo:7.0
-    profiles: ["backup"]
-    restart: "no"
-    depends_on:
-      mongo:
-        condition: service_healthy
-    environment:
-      SWFI_MONGO_URI: ${SWFI_MONGO_URI:?SWFI_MONGO_URI must point at the in-stack mongo service}
-    volumes:
-      - swfi2_mongo_backups:/backups
-    command:
-      [
-        "sh",
-        "-c",
-        "mongodump --uri \"$${SWFI_MONGO_URI}\" --archive=\"/backups/swfi-$$(date -u +%Y%m%dT%H%M%SZ).archive\" --gzip",
-      ]
-
-  swfi2-restore:
-    image: mongo:7.0
-    profiles: ["restore"]
-    restart: "no"
-    depends_on:
-      mongo:
-        condition: service_healthy
-    environment:
-      SWFI_MONGO_URI: ${SWFI_MONGO_URI:?SWFI_MONGO_URI must point at the in-stack mongo service}
-      SWFI_RESTORE_ARCHIVE: ${SWFI_RESTORE_ARCHIVE:-}
-    volumes:
-      - swfi2_mongo_backups:/backups
-    command:
-      [
-        "sh",
-        "-c",
-        "test -n \"$${SWFI_RESTORE_ARCHIVE}\" || { echo 'SWFI_RESTORE_ARCHIVE is required for restore profile' >&2; exit 2; }; mongorestore --uri \"$${SWFI_MONGO_URI}\" --archive=\"/backups/$${SWFI_RESTORE_ARCHIVE}\" --gzip --drop",
-      ]
-
   caddy:
     image: caddy:2.10-alpine
     restart: unless-stopped
@@ -203,9 +96,6 @@ services:
       - swfi2_caddy_config:/config
 
 volumes:
-  swfi2_mongo_data:
-  swfi2_mongo_config:
-  swfi2_mongo_backups:
   swfi2_api_product_key_store:
   swfi2_caddy_data:
   swfi2_caddy_config:

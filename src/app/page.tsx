@@ -56,6 +56,7 @@ function worldFlowPairs(transactionRows: Record<string, unknown>[]): WorldFlowPa
 }
 import { useDashboardSessionDisplayName } from "@/lib/dashboardAuth";
 import { businessSearchQueryVariants, dedupeSearchRecords, rankSearchRecords, searchRelevanceScore as businessSearchRelevanceScore, type SearchKind } from "@/lib/searchRelevance";
+import { filterSmartSearchIntentRows, smartSearchIntentForQuery, type SmartSearchIntent } from "@/lib/smartSearchIntent";
 
 const ENDPOINTS = {
   metrics: "/api/swfi/dashboard-metrics/v1",
@@ -147,7 +148,9 @@ export default function DashboardPage() {
   // /api/people/search/v1 live and feed its matches into the People search category as
   // the primary source (same shape as the entity->transactions join above).
   const [searchPeoplePacket, setSearchPeoplePacket] = useState<Packet | undefined>();
+  const [searchIntentPackets, setSearchIntentPackets] = useState<Packet[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [searchIntentLoading, setSearchIntentLoading] = useState(false);
   const [activeSearchIndex, setActiveSearchIndex] = useState(0);
   const [newsTab, setNewsTab] = useState<"latest" | "referenced" | "topics">("latest");
   const [recentTab, setRecentTab] = useState<"transactions" | "rfps" | "opportunities" | "people">("transactions");
@@ -246,7 +249,15 @@ export default function DashboardPage() {
     ...searchEntityPackets.flatMap((packet) => [...rows(packet, "results"), ...rows(packet)]),
   ]), [dashboardEntitySearchRows, searchEntityPackets]);
   const liveSearchGroups = useMemo(() => brdPublicSearchGroups(searchQuery, searchPacket, searchEntityPackets), [searchQuery, searchPacket, searchEntityPackets]);
-  const baseSearchGroups = useMemo(() => mergeSearchGroups(liveSearchGroups, dashboardSearchGroups), [liveSearchGroups, dashboardSearchGroups]);
+  const searchIntent = useMemo(() => smartSearchIntentForQuery(searchQuery), [searchQuery]);
+  const intentSearchGroups = useMemo(
+    () => smartSearchGroups(searchIntent, searchIntentPackets),
+    [searchIntent, searchIntentPackets],
+  );
+  const baseSearchGroups = useMemo(
+    () => mergeSearchGroups(intentSearchGroups, mergeSearchGroups(liveSearchGroups, dashboardSearchGroups)),
+    [intentSearchGroups, liveSearchGroups, dashboardSearchGroups],
+  );
   // Resolve the top-ranked entity candidates for the query; their names drive the
   // entity->transactions fetch. We keep the top few (not just #1) so the join can fall
   // through to the real fund when the #1 result is a short/side entity with no deals.
@@ -260,15 +271,16 @@ export default function DashboardPage() {
   // Transactions section fills immediately instead of after a second entity-resolve hop
   // (that double-hop was the latency that briefly showed "No matches" for alias queries).
   const transactionCandidateKey = useMemo(() => {
+    if (searchIntent) return "";
     const clean = searchQuery.trim();
     if (clean.length < 2) return "";
     const aliasTargets = businessSearchQueryVariants(clean, sourceBackedSearchEntityRows).slice(1);
     return [...new Set([...aliasTargets, ...topSearchEntityNames])].join("|");
-  }, [searchQuery, sourceBackedSearchEntityRows, topSearchEntityNames]);
+  }, [searchIntent, searchQuery, sourceBackedSearchEntityRows, topSearchEntityNames]);
   const searchGroups = useMemo(() => {
     const clean = searchQuery.trim();
     if (clean.length >= 2) {
-      if (isShortBusinessQuery(clean) && searchLoading && !hasAnySearchItems(liveSearchGroups) && !hasAnySearchItems(dashboardSearchGroups)) return completeSearchGroups([]);
+      if (isShortBusinessQuery(clean) && (searchLoading || searchIntentLoading) && !hasAnySearchItems(liveSearchGroups) && !hasAnySearchItems(dashboardSearchGroups)) return completeSearchGroups([]);
       // Live groups are PRIMARY so a resolved entity's real transactions lead the
       // Transactions category (fills the "No matches" gap) and the live /api/people/search
       // matches lead the People category instead of the 25-row pre-loaded slice.
@@ -279,7 +291,7 @@ export default function DashboardPage() {
       return completeSearchGroups(mergeSearchGroups(primaryLiveGroups, baseSearchGroups));
     }
     return dashboardSearchGroups;
-  }, [baseSearchGroups, dashboardSearchGroups, liveSearchGroups, searchLoading, searchQuery, searchTransactionPacket, searchPeoplePacket]);
+  }, [baseSearchGroups, dashboardSearchGroups, liveSearchGroups, searchLoading, searchIntentLoading, searchQuery, searchTransactionPacket, searchPeoplePacket]);
   const searchItems = useMemo(() => searchGroups.flatMap((group) => group.items), [searchGroups]);
 
   useEffect(() => {
@@ -293,6 +305,12 @@ export default function DashboardPage() {
     if (clean.length < 2) return;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
+      if (smartSearchIntentForQuery(clean)) {
+        setSearchPacket(undefined);
+        setSearchEntityPackets([]);
+        setSearchLoading(false);
+        return;
+      }
       setSearchLoading(true);
       setSearchEntityPackets([]);
       const publicSearch = fetchPacket(`/api/v1/public/search?q=${encodeURIComponent(clean)}&limit=25`, 10_000, {
@@ -347,6 +365,33 @@ export default function DashboardPage() {
     };
   }, [searchOpen, searchQuery]);
 
+  useEffect(() => {
+    if (!searchOpen) return;
+    const intent = smartSearchIntentForQuery(searchQuery);
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      if (!intent) {
+        setSearchIntentPackets([]);
+        setSearchIntentLoading(false);
+        return;
+      }
+      setSearchIntentPackets([]);
+      setSearchIntentLoading(true);
+      void Promise.all(intent.requests.map((request) => (
+        fetchPacket(request.endpoint, 25_000, { signal: controller.signal, attempts: 2 })
+      ))).then((packets) => {
+        if (controller.signal.aborted) return;
+        setSearchIntentPackets(packets.filter(isFact));
+      }).finally(() => {
+        if (!controller.signal.aborted) setSearchIntentLoading(false);
+      });
+    }, 120);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [searchOpen, searchQuery]);
+
   // Entity->transactions join: once the query resolves to a top entity, fetch that
   // entity's transactions by exact name (buyer/seller entity reference join, returned
   // pre-built with swfi.com transaction URLs). This is what fixes the
@@ -388,6 +433,7 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!searchOpen) return;
     const clean = searchQuery.trim();
+    if (smartSearchIntentForQuery(clean)) return;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       if (clean.length < 2) {
@@ -454,7 +500,7 @@ export default function DashboardPage() {
           onActiveIndexChange={setActiveSearchIndex}
           onClose={() => setSearchOpen(false)}
           flatItems={searchItems}
-          loading={searchLoading}
+          loading={searchLoading || searchIntentLoading}
         />
       ) : null}
     </div>
@@ -715,7 +761,7 @@ function VisualExecutiveOverview({
               expanded={expandedPanel === "ai-insights"}
               onToggle={onTogglePanel}
               detail={<ExpandedUnifiedInsightRows rows={unifiedRows} controls={controls} />}
-              explain="Signals from the data already on this page: allocator activity, disclosed deals, fundraising, intelligence, and Premjit's Competition Analysis path. No generated values."
+              explain="Signals from the data already on this page: allocator activity, disclosed deals, fundraising, intelligence, and the Competition Analysis path. No generated values."
             >
               <AiInsightsPanel topInvestors={allocatorRows} marketRows={transactionRows} fundraisingRows={rfpRows} newsRows={newsRows} sectorRows={sectorRows} />
             </ExpandablePanel>
@@ -980,6 +1026,7 @@ function BrdSearchModal({
   const [filter, setFilter] = useState<SearchCategoryLabel>("All");
   const availableFilters = SEARCH_CATEGORY_LABELS;
   const selectedFilter = availableFilters.some((label) => label === filter) ? filter : "All";
+  const interpretedIntent = smartSearchIntentForQuery(query);
   const visibleGroups = selectedFilter === "All" ? groups : groups.filter((group) => group.label === selectedFilter);
   const visibleItems = visibleGroups.flatMap((group) => group.items);
   const activeItem = visibleItems[Math.min(activeIndex, Math.max(0, visibleItems.length - 1))];
@@ -1049,6 +1096,11 @@ function BrdSearchModal({
             </button>
           ))}
         </div>
+        {interpretedIntent ? (
+          <div className="border-b border-[#D7E5F2] bg-[#F2F7FB] px-5 py-2 text-[12px] text-[#234968]" data-testid="smart-search-interpretation">
+            <span className="font-bold">Interpreted as:</span> {interpretedIntent.explanation}
+          </div>
+        ) : null}
         <div className="max-h-[56vh] overflow-y-auto px-5 py-4">
           {visibleGroups.map((group) => (
             <section key={group.label} className="mb-5 last:mb-0">
@@ -1214,6 +1266,22 @@ function completeSearchGroups(groups: BrdSearchGroup[]): BrdSearchGroup[] {
     .map((label) => ({ label, items: byLabel.get(label) || [] }));
 }
 
+function smartSearchGroups(intent: SmartSearchIntent | null, packets: Packet[]): BrdSearchGroup[] {
+  if (!intent) return [];
+  const sourceRows = dedupeSearchRecords(packets.flatMap((packet) => {
+    const resultRows = rows(packet, "results");
+    return resultRows.length ? resultRows : rows(packet);
+  }));
+  const matchedRows = filterSmartSearchIntentRows(intent, sourceRows);
+  const label = intent.category === "entities"
+    ? "Entities"
+    : intent.category === "opportunities"
+      ? "RFPs & Opportunities"
+      : "Transactions";
+  const items = matchedRows.slice(0, 5).map((row) => brdPublicSearchItem(row, label));
+  return items.length ? [{ label, items }] : [];
+}
+
 function brdPublicSearchGroups(query: string, packet?: Packet, entityPackets: Packet[] = []): BrdSearchGroup[] {
   if (query.trim().length < 2) return [];
   const grouped = new Map<string, BrdSearchItem[]>();
@@ -1268,6 +1336,12 @@ function brdPublicSearchItem(row: Record<string, unknown>, group: string): BrdSe
   const source = sourceHref(row);
   const detail = group === "Transactions"
     ? transactionSearchDetail(row)
+    : group === "Entities" && Number(row.activity_count || row.deal_count || 0) > 0
+      ? [
+          brdText(row.type || row.entity_type, ""),
+          brdText(row.country || row.region, ""),
+          `${Number(row.activity_count || row.deal_count).toLocaleString("en-US")} activities in 90 days`,
+        ].filter(Boolean).join(" · ")
     : [
         brdText(row.type || row.entity_type || row.title, ""),
         brdText(row.country || row.region || row.institution, ""),

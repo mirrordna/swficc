@@ -10,9 +10,7 @@ metadata:
   namespace: swfi2
 type: Opaque
 stringData:
-  mongoRootUsername: swfi2_root
-  mongoRootPassword: REPLACE_ME
-  swfiMongoUri: mongodb://swfi2_root:REPLACE_ME@swfi2-mongo:27017/swfi?authSource=admin
+  # Remote Atlas only. This stack never provisions or accepts a local Mongo.
   swfiAtlasUri: mongodb+srv://REPLACE_ME
   swfi2ApiToken: REPLACE_ME
   swfipnBackendToken: REPLACE_ME
@@ -33,72 +31,6 @@ data:
   SWFI2_MONGO_CUTOVER_GUARD: "1"
   SWFIPN_BACKEND: http://swfi2-backend:8362
   SWFIPN_BACKEND_TIMEOUT: "75"
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: swfi2-mongo
-  namespace: swfi2
-spec:
-  ports:
-    - name: mongo
-      port: 27017
-      targetPort: 27017
-  selector:
-    app: swfi2-mongo
----
-apiVersion: apps/v1
-kind: StatefulSet
-metadata:
-  name: swfi2-mongo
-  namespace: swfi2
-spec:
-  serviceName: swfi2-mongo
-  replicas: 1
-  selector:
-    matchLabels:
-      app: swfi2-mongo
-  template:
-    metadata:
-      labels:
-        app: swfi2-mongo
-    spec:
-      containers:
-        - name: mongo
-          image: mongo:7.0
-          args: ["mongod", "--bind_ip_all", "--auth"]
-          ports:
-            - containerPort: 27017
-          env:
-            - name: MONGO_INITDB_ROOT_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: swfi2-secrets
-                  key: mongoRootUsername
-            - name: MONGO_INITDB_ROOT_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: swfi2-secrets
-                  key: mongoRootPassword
-          readinessProbe:
-            exec:
-              command:
-                - sh
-                - -c
-                - mongosh --quiet --username "$MONGO_INITDB_ROOT_USERNAME" --password "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --eval 'db.adminCommand({ ping: 1 }).ok' | grep 1
-            initialDelaySeconds: 30
-            periodSeconds: 20
-          volumeMounts:
-            - name: mongo-data
-              mountPath: /data/db
-  volumeClaimTemplates:
-    - metadata:
-        name: mongo-data
-      spec:
-        accessModes: ["ReadWriteOnce"]
-        resources:
-          requests:
-            storage: 200Gi
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -157,7 +89,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: swfi2-secrets
-                  key: swfiMongoUri
+                  key: swfiAtlasUri
             - name: SWFI2_API_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -274,94 +206,6 @@ spec:
       targetPort: 8353
   selector:
     app: swfipn-web
----
-apiVersion: batch/v1
-kind: CronJob
-metadata:
-  name: swfi2-mongo-sync
-  namespace: swfi2
-spec:
-  schedule: "*/15 * * * *"
-  concurrencyPolicy: Forbid
-  failedJobsHistoryLimit: 3
-  successfulJobsHistoryLimit: 3
-  jobTemplate:
-    spec:
-      backoffLimit: 1
-      template:
-        spec:
-          restartPolicy: Never
-          containers:
-            - name: sync
-              image: registry.example.com/swfi2/backend@sha256:REPLACE_BACKEND_DIGEST
-              imagePullPolicy: IfNotPresent
-              command: ["python", "scripts/sync_mongo_stream.py"]
-              env:
-                - name: SWFI_MONGO_DB
-                  valueFrom:
-                    configMapKeyRef:
-                      name: swfi2-config
-                      key: SWFI_MONGO_DB
-                - name: SWFI_MONGO_URI
-                  valueFrom:
-                    secretKeyRef:
-                      name: swfi2-secrets
-                      key: swfiMongoUri
-                - name: SWFI_ATLAS_URI
-                  valueFrom:
-                    secretKeyRef:
-                      name: swfi2-secrets
-                      key: swfiAtlasUri
----
-apiVersion: batch/v1
-kind: CronJob
-metadata:
-  name: swfi2-mongo-backup
-  namespace: swfi2
-spec:
-  schedule: "17 */6 * * *"
-  concurrencyPolicy: Forbid
-  failedJobsHistoryLimit: 3
-  successfulJobsHistoryLimit: 6
-  jobTemplate:
-    spec:
-      backoffLimit: 1
-      template:
-        spec:
-          restartPolicy: Never
-          containers:
-            - name: backup
-              image: mongo:7.0
-              imagePullPolicy: IfNotPresent
-              command:
-                - sh
-                - -c
-                - mongodump --uri "$SWFI_MONGO_URI" --archive="/backups/swfi-$(date -u +%Y%m%dT%H%M%SZ).archive" --gzip
-              env:
-                - name: SWFI_MONGO_URI
-                  valueFrom:
-                    secretKeyRef:
-                      name: swfi2-secrets
-                      key: swfiMongoUri
-              volumeMounts:
-                - name: mongo-backups
-                  mountPath: /backups
-          volumes:
-            - name: mongo-backups
-              persistentVolumeClaim:
-                claimName: swfi2-mongo-backups
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: swfi2-mongo-backups
-  namespace: swfi2
-spec:
-  accessModes: ["ReadWriteOnce"]
-  resources:
-    requests:
-      storage: 200Gi
----
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

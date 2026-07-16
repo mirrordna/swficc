@@ -22,6 +22,7 @@ import { DASHBOARD_SECTION_NAV } from "@/lib/dashboardSectionNav";
 import SwfiBrandHeader from "@/components/SwfiBrandHeader";
 import AlertsRuleManager from "@/components/AlertsRuleManager";
 import SavedSearchManager from "@/components/SavedSearchManager";
+import CompetitionAnalysisWorkbench from "@/components/CompetitionAnalysisWorkbench";
 import { defaultSortColumn, defaultSortDir, type Kind } from "@/lib/recordSort";
 
 type Row = Record<string, unknown>;
@@ -122,17 +123,16 @@ const CONFIG: Record<Kind, { title: string; endpoint: string; columns: string[];
   research: {
     title: "Research / News",
     endpoint: "/api/source-intelligence/news/v1?limit=100",
-    columns: ["Title", "Summary", "Citation"],
+    columns: ["Title", "Published", "Summary", "Citation"],
   },
   intelligence: {
     // Value-add fix 2026-07-06 (Paul: "what value add is this page
     // providing?"): the feed serves full excerpts (25/25 probe receipt) that
-    // were never displayed, while Source was the constant "SWFI" and
-    // Published was 0/25-filled at source — two dead columns replaced by
-    // the story summary. Dates return when the source carries them.
+    // were never displayed. Published is now normalized by the backend from
+    // the active WordPress date fields and leads the records view newest-first.
     title: "Intelligence",
     endpoint: "/api/source-intelligence/news/v1?limit=100",
-    columns: ["Title", "Summary", "Citation"],
+    columns: ["Title", "Published", "Summary", "Citation"],
   },
   search: {
     title: "Smart Search",
@@ -191,6 +191,7 @@ function rowCells(kind: Kind, row: Row): Cell[] {
     const excerpt = text(row.excerpt, "").replace(/\s+/g, " ").trim();
     return [
       researchCell(row),
+      text(row.published_at || row.publishedAt || row.date || row.updated_at || row.updatedAt),
       excerpt ? (excerpt.length > 220 ? `${excerpt.slice(0, 219)}…` : excerpt) : NOT_DISCLOSED,
       citation(researchHref, "/intelligence/"),
     ];
@@ -271,6 +272,103 @@ function fieldOptionsForRows(items: Row[], field: "industry" | "sector", selecte
   return [...values].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
 }
 
+function MultiSelectField({
+  label,
+  options,
+  value,
+  onChange,
+  testId,
+  allowCustom = false,
+  maxSelections = 8,
+}: {
+  label: string;
+  options: string[];
+  value: string[];
+  onChange: (value: string[]) => void;
+  testId: string;
+  allowCustom?: boolean;
+  maxSelections?: number;
+}) {
+  const [customValue, setCustomValue] = useState("");
+  const selected = new Set(value);
+  const atLimit = value.length >= maxSelections;
+
+  function toggle(option: string) {
+    if (selected.has(option)) {
+      onChange(value.filter((item) => item !== option));
+      return;
+    }
+    if (!atLimit) onChange([...value, option]);
+  }
+
+  function addCustomValue() {
+    const clean = customValue.trim();
+    if (!clean || selected.has(clean) || atLimit) return;
+    onChange([...value, clean]);
+    setCustomValue("");
+  }
+
+  return (
+    <div className="grid min-w-0 gap-1" data-testid={testId}>
+      <span className="font-semibold text-[#41566B]">{label}</span>
+      <details className="relative rounded border border-[#C7D2DD] bg-white">
+        <summary className="min-h-9 cursor-pointer list-none px-2 py-2 text-sm text-[#41566B] marker:hidden">
+          {value.length ? `${value.length} selected` : `Select ${label.toLowerCase()}`}
+        </summary>
+        <div className="absolute z-30 mt-1 grid max-h-64 w-[min(320px,85vw)] gap-1 overflow-y-auto rounded border border-[#C7D2DD] bg-white p-2 shadow-lg" role="group" aria-label={`${label} options`}>
+          {options.length ? options.map((option) => (
+            <label key={option} className="flex min-h-8 items-center gap-2 rounded px-2 py-1 text-sm hover:bg-[#F2F6F9]">
+              <input
+                type="checkbox"
+                checked={selected.has(option)}
+                disabled={!selected.has(option) && atLimit}
+                onChange={() => toggle(option)}
+              />
+              <span>{option}</span>
+            </label>
+          )) : (
+            <span className="px-2 py-1 text-xs text-[#7A8A9B]">No loaded source values</span>
+          )}
+          {allowCustom ? (
+            <div className="mt-1 flex gap-1 border-t border-[#E1E7ED] pt-2">
+              <input
+                type="search"
+                value={customValue}
+                onChange={(event) => setCustomValue(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") return;
+                  event.preventDefault();
+                  addCustomValue();
+                }}
+                placeholder={`Add ${label.toLowerCase()}`}
+                className="min-h-8 min-w-0 flex-1 rounded border border-[#C7D2DD] px-2 text-sm outline-none"
+              />
+              <button type="button" onClick={addCustomValue} disabled={!customValue.trim() || atLimit} className="rounded border border-[#C7D2DD] px-2 text-xs font-semibold text-[#16538C] disabled:opacity-50">Add</button>
+            </div>
+          ) : null}
+        </div>
+      </details>
+      {value.length ? (
+        <div className="flex max-w-[320px] flex-wrap gap-1" aria-label={`Selected ${label.toLowerCase()}`}>
+          {value.map((option) => (
+            <button
+              key={option}
+              type="button"
+              onClick={() => onChange(value.filter((item) => item !== option))}
+              className="max-w-full truncate rounded-full bg-[#E8F0F7] px-2 py-1 text-left text-[11px] font-semibold text-[#16538C]"
+              aria-label={`Remove ${option}`}
+            >
+              {option} ×
+            </button>
+          ))}
+          <button type="button" onClick={() => onChange([])} className="px-1 text-[11px] font-semibold text-[#6B7785] underline">Clear all</button>
+        </div>
+      ) : null}
+      <span className="sr-only">Select up to {maxSelections}; matching uses any selected value.</span>
+    </div>
+  );
+}
+
 export default function SourceListPage({ kind }: { kind: Kind }) {
   const rootRef = useGsapReveal<HTMLDivElement>();
   const config = CONFIG[kind];
@@ -306,7 +404,6 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
     }
   }, []);
   const [pageIndex, setPageIndex] = useState(0);
-  const [comparisonPackets, setComparisonPackets] = useState<Record<string, Packet>>({});
   const serverPageIndex = isServerPagedKind(kind) ? pageIndex : 0;
   const serverRowLimit = isServerPagedKind(kind) ? rowLimit : 0;
   const serverFilterTerm = supportsServerFilter(kind) ? tableFilter.trim() : "";
@@ -334,14 +431,11 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
         if (kind === "deals" && dealFieldFilters.length) {
           const fieldSources = Object.fromEntries(dealFieldFilters.map((filter, index) => [
             `dealField:${index}:${filter.field}`,
-            `/api/transaction-drilldown/v1?field=${filter.field}&value=${encodeURIComponent(filter.value)}&days=3650&limit=${serverRowLimit}&page=${serverPageIndex + 1}`,
+            `/api/transaction-drilldown/v1?field=${filter.field}&value=${encodeURIComponent(filter.value)}&days=365&limit=${serverRowLimit}&page=${serverPageIndex + 1}`,
           ]));
           return { ...fieldSources, ...taxonomySource };
         }
-        const transactionFilter = [
-          serverFilterTerm,
-          ...(kind === "deals" ? selectedDealEntityTypes : []),
-        ].filter(Boolean).join(" ");
+        const transactionFilter = serverFilterTerm;
         const transactionQuery = transactionFilter ? `&q=${encodeURIComponent(transactionFilter)}` : "";
         const main = `/api/transactions/v1?limit=${serverRowLimit}&page=${serverPageIndex + 1}${transactionQuery}`;
         return kind === "deals"
@@ -372,7 +466,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
     return {
       institutions: `/api/v1/public/search?q=${encoded}&limit=${rowLimit}`,
     };
-  }, [allocatorSort, config.endpoint, config.sources, dealFieldFilters, kind, rowLimit, selectedDealEntityTypes, serverFilterTerm, serverPageIndex, serverRowLimit, serverSortDir, submittedQuery]);
+  }, [allocatorSort, config.endpoint, config.sources, dealFieldFilters, kind, rowLimit, serverFilterTerm, serverPageIndex, serverRowLimit, serverSortDir, submittedQuery]);
 
   useEffect(() => {
     let active = true;
@@ -476,7 +570,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
     const scopedRows = kind === "deals" && selectedDealEntityTypes.length
       ? packetRows.filter((row) => {
         const rowTypes = entityTypesForTransactionRow(row);
-        return selectedDealEntityTypes.every((entityType) => rowTypes.includes(entityType));
+        return selectedDealEntityTypes.some((entityType) => rowTypes.includes(entityType));
       })
       : packetRows;
     return scopedRows.map((row) => rowCells(kind, row));
@@ -517,18 +611,6 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
       : source;
     return [...filtered].sort((a, b) => compareCells(rowCells("comparisons", a)[sortColumn], rowCells("comparisons", b)[sortColumn], sortDir));
   }, [kind, packet, sortColumn, sortDir, tableFilter]);
-  const visibleComparisonRecords = useMemo(() => {
-    // Minutes 2026-07-03 (discussion I / action 10): comparisons only between
-    // similar entity types — an asset manager is not a family office's peer.
-    // Anchor on the first record of the current page, then build the peer set
-    // from same-type records only (never silently mix types).
-    const pageRows = comparisonRecords.slice(pageStart, pageStart + rowLimit);
-    const anchor = pageRows[0] || comparisonRecords[0];
-    if (!anchor) return [];
-    const peerType = businessText(anchor.type || anchor.entity_type);
-    const sameType = comparisonRecords.filter((row) => businessText(row.type || row.entity_type) === peerType);
-    return sameType.slice(0, 5);
-  }, [comparisonRecords, pageStart, rowLimit]);
   const countDetails = tableCountDetails(kind, packet, packets, totalRows, sourceRows.length);
   const visualizationRows = useMemo(() => isFact(packet) ? rows(packet) : [], [packet]);
   const dealEntityTypeOptions = useMemo(() => {
@@ -546,28 +628,6 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
     kind === "deals" ? fieldOptionsForRows(dealFieldOptionRows(packet, packets), "sector", selectedDealSectors) : []
   ), [kind, packet, packets, selectedDealSectors]);
   const activeRoute = routeByKind[kind];
-
-  useEffect(() => {
-    if (kind !== "comparisons" || !visibleComparisonRecords.length) {
-      return;
-    }
-    let active = true;
-    const controllers: AbortController[] = [];
-    visibleComparisonRecords.forEach((row) => {
-      const id = comparisonRecordId(row);
-      if (!id) return;
-      const controller = new AbortController();
-      controllers.push(controller);
-      void fetchPacket(`/api/profiles/${encodeURIComponent(id)}/v1`, 90_000, { signal: controller.signal, attempts: 2 }).then((detailPacket) => {
-        if (!active) return;
-        setComparisonPackets((current) => ({ ...current, [id]: detailPacket }));
-      });
-    });
-    return () => {
-      active = false;
-      controllers.forEach((controller) => controller.abort());
-    };
-  }, [kind, visibleComparisonRecords]);
 
   return (
     <div ref={rootRef} className="flex min-h-screen flex-col bg-[#F2F4F6] font-sans text-[#1B2733] lg:h-screen lg:overflow-hidden">
@@ -587,7 +647,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
         </aside>
 
         <main className="min-w-0 flex-1 overflow-visible lg:overflow-y-auto">
-          <div className="mx-auto grid w-full max-w-[1188px] gap-4 p-4 sm:p-[20px_22px_30px]">
+          <div className="mx-auto grid w-full max-w-[1188px] grid-cols-1 gap-4 p-4 sm:p-[20px_22px_30px]">
             <section data-gsap-reveal className="rounded border border-[#DCE3EA] bg-white p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
@@ -609,7 +669,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
             action="/swficc/search/"
             method="get"
             data-gsap-reveal
-            className="grid gap-2 rounded border border-[#DCE3EA] bg-white px-4 py-3 sm:grid-cols-[180px_minmax(0,1fr)_120px] sm:items-center"
+            className="grid grid-cols-1 gap-2 rounded border border-[#DCE3EA] bg-white px-4 py-3 sm:grid-cols-[180px_minmax(0,1fr)_120px] sm:items-center"
             onSubmit={(event) => {
               event.preventDefault();
               const clean = query.trim() || DEFAULT_SEARCH_QUERY;
@@ -633,7 +693,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
         ) : null}
 
         {kind === "comparisons" ? (
-          <ComparisonWorkbench records={visibleComparisonRecords} packets={comparisonPackets} />
+          <CompetitionAnalysisWorkbench seedRecords={comparisonRecords} />
         ) : null}
 
         {kind === "deals" ? (
@@ -684,7 +744,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
 		          <span className="mt-1 block text-[#7A8A9B]">Reached from a chart, ranking, or filter, this table shows the matching records; unfiltered, it shows the first preview pages only. Every row links to its SWFI platform page, where the full record lives.</span>
         </section>
 
-        <section data-gsap-reveal className={`grid gap-2 rounded border border-[#DCE3EA] bg-white px-4 py-3 text-sm sm:items-center ${showRecordData ? "" : "hidden"} ${kind === "allocators" ? "sm:grid-cols-[minmax(0,1fr)_180px_150px_190px]" : kind === "deals" ? "sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_160px_120px_180px_180px_180px]" : "sm:grid-cols-[minmax(0,1fr)_180px_150px]"}`}>
+        <section data-gsap-reveal className={`grid grid-cols-1 gap-2 rounded border border-[#DCE3EA] bg-white px-4 py-3 text-sm sm:items-center ${showRecordData ? "" : "hidden"} ${kind === "allocators" ? "sm:grid-cols-[minmax(0,1fr)_180px_150px_190px]" : kind === "deals" ? "sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_160px_120px_180px_180px_180px]" : "sm:grid-cols-[minmax(0,1fr)_180px_150px]"}`}>
           <div className="font-semibold text-[#11314F]">
             {waitingForSearch
               ? "Enter an institution, person, or strategy"
@@ -692,7 +752,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
                 ? LOADING
               : `Showing ${visibleRows.length.toLocaleString("en-US")} of ${totalRows.toLocaleString("en-US")}${countDetails}${tableFilter.trim() ? ` / filtered ${filteredRows.length.toLocaleString("en-US")}` : ""}`}
           </div>
-          <label className="grid gap-1">
+          <label className="grid grid-cols-1 gap-1">
             <span className="font-semibold text-[#41566B]">Filter</span>
             <input
               type="search"
@@ -705,7 +765,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
               placeholder="Filter rows"
             />
           </label>
-          <label className="grid gap-1">
+          <label className="grid grid-cols-1 gap-1">
             <span className="font-semibold text-[#41566B]">Rows</span>
             <select
               value={rowLimit}
@@ -719,103 +779,47 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
             </select>
 	          </label>
 	          {kind === "deals" ? (
-	            <label className="grid gap-1">
-	              <span className="font-semibold text-[#41566B]">Entity Type</span>
-	              <select
-	                multiple
-	                value={selectedDealEntityTypes}
-	                disabled={!dealEntityTypeOptions.length}
-	                onChange={(event) => {
-	                  const nextValues = Array.from(event.currentTarget.selectedOptions, (option) => option.value);
-	                  setSelectedDealEntityTypes(nextValues);
-	                  setPageIndex(0);
-	                }}
-	                className="min-h-[78px] rounded border border-[#C7D2DD] bg-white px-2 py-1"
-	              >
-	                {dealEntityTypeOptions.map((entityType) => (
-	                  <option key={entityType} value={entityType}>{entityType}</option>
-	                ))}
-	              </select>
-	              {selectedDealEntityTypes.length ? (
-	                <button
-	                  type="button"
-	                  className="w-fit bg-transparent p-0 text-left text-[12px] font-semibold text-[#16538C] underline"
-	                  onClick={() => {
-	                    setSelectedDealEntityTypes([]);
-	                    setPageIndex(0);
-	                  }}
-	                >
-	                  Clear Entity Type
-	                </button>
-	              ) : null}
-	            </label>
+              <MultiSelectField
+                label="Entity Type"
+                options={dealEntityTypeOptions}
+                value={selectedDealEntityTypes}
+                onChange={(nextValues) => {
+                  setSelectedDealEntityTypes(nextValues);
+                  setPageIndex(0);
+                }}
+                testId="deals-entity-type-multiselect"
+              />
 	          ) : null}
 	          {kind === "deals" ? (
-	            <label className="grid gap-1">
-	              <span className="font-semibold text-[#41566B]">Industry</span>
-	              <select
-	                multiple
-	                value={selectedDealIndustries}
-	                disabled={!dealIndustryOptions.length}
-	                onChange={(event) => {
-	                  const nextValues = Array.from(event.currentTarget.selectedOptions, (option) => option.value);
-	                  setSelectedDealIndustries(nextValues);
-	                  setPageIndex(0);
-	                }}
-	                className="min-h-[78px] rounded border border-[#C7D2DD] bg-white px-2 py-1"
-	              >
-	                {dealIndustryOptions.map((industry) => (
-	                  <option key={industry} value={industry}>{industry}</option>
-	                ))}
-	              </select>
-	              {selectedDealIndustries.length ? (
-	                <button
-	                  type="button"
-	                  className="w-fit bg-transparent p-0 text-left text-[12px] font-semibold text-[#16538C] underline"
-	                  onClick={() => {
-	                    setSelectedDealIndustries([]);
-	                    setPageIndex(0);
-	                  }}
-	                >
-	                  Clear Industry
-	                </button>
-	              ) : null}
-	            </label>
+              <MultiSelectField
+                label="Industry"
+                options={dealIndustryOptions}
+                value={selectedDealIndustries}
+                onChange={(nextValues) => {
+                  setSelectedDealIndustries(nextValues);
+                  setPageIndex(0);
+                }}
+                testId="deals-industry-multiselect"
+                allowCustom
+                maxSelections={5}
+              />
 	          ) : null}
 	          {kind === "deals" ? (
-	            <label className="grid gap-1">
-	              <span className="font-semibold text-[#41566B]">Sector</span>
-	              <select
-	                multiple
-	                value={selectedDealSectors}
-	                disabled={!dealSectorOptions.length}
-	                onChange={(event) => {
-	                  const nextValues = Array.from(event.currentTarget.selectedOptions, (option) => option.value);
-	                  setSelectedDealSectors(nextValues);
-	                  setPageIndex(0);
-	                }}
-	                className="min-h-[78px] rounded border border-[#C7D2DD] bg-white px-2 py-1"
-	              >
-	                {dealSectorOptions.map((sector) => (
-	                  <option key={sector} value={sector}>{sector}</option>
-	                ))}
-	              </select>
-	              {selectedDealSectors.length ? (
-	                <button
-	                  type="button"
-	                  className="w-fit bg-transparent p-0 text-left text-[12px] font-semibold text-[#16538C] underline"
-	                  onClick={() => {
-	                    setSelectedDealSectors([]);
-	                    setPageIndex(0);
-	                  }}
-	                >
-	                  Clear Sector
-	                </button>
-	              ) : null}
-	            </label>
+              <MultiSelectField
+                label="Sector"
+                options={dealSectorOptions}
+                value={selectedDealSectors}
+                onChange={(nextValues) => {
+                  setSelectedDealSectors(nextValues);
+                  setPageIndex(0);
+                }}
+                testId="deals-sector-multiselect"
+                allowCustom
+                maxSelections={5}
+              />
 	          ) : null}
 	          {kind === "allocators" ? (
-            <label className="grid gap-1">
+            <label className="grid grid-cols-1 gap-1">
               <span className="font-semibold text-[#41566B]">Sort</span>
               <select
                 value={allocatorSort}
@@ -834,7 +838,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
           ) : null}
         </section>
 
-        <div data-gsap-reveal className={`grid gap-3 sm:hidden ${showRecordData ? "" : "hidden"}`}>
+        <div data-gsap-reveal className={`grid grid-cols-1 gap-3 sm:hidden ${showRecordData ? "" : "hidden"}`}>
           {visibleRows.length ? visibleRows.map((row, rowIndex) => (
             <article key={rowIndex} className="rounded border border-[#DCE3EA] bg-white px-3 py-2.5 shadow-[0_1px_0_rgba(17,49,79,0.03)]">
               <div className="min-w-0 text-[15px] font-semibold leading-snug text-[#11314F]">
@@ -939,7 +943,7 @@ function displayCell(value?: Cell) {
   const label = cellText(value);
   if (typeof value === "object" && value?.links?.length) {
     return (
-      <span className="grid gap-1">
+      <span className="grid grid-cols-1 gap-1">
         {value.links.map((link, index) => {
           if (!link.href) {
             return <span key={`${link.label}-${index}`}>{link.label}</span>;
@@ -947,7 +951,7 @@ function displayCell(value?: Cell) {
           const preferredHref = link.sourceHref && isSwfiPlatformRecordHref(link.sourceHref) ? link.sourceHref : link.href;
           const target = productHref(preferredHref, "/");
           return (
-            <span key={`${link.label}-${index}`} className="grid gap-1">
+            <span key={`${link.label}-${index}`} className="grid grid-cols-1 gap-1">
               <a href={target} onClick={(event) => hardNavigateSameRouteFilter(event, target)} title={link.sourceHref ? "View details" : undefined} data-record-link={isFirstPartyRecordHref(target) ? "true" : undefined} data-source-state={link.sourceHref ? "on-file" : undefined} className="text-[#16538C] underline">{link.label}</a>
             </span>
           );
@@ -962,7 +966,7 @@ function displayCell(value?: Cell) {
     // pop a separate page; the in-tab chain still ends at swfi.com.
     if (typeof value === "object" && value?.newTab) {
       return (
-        <span className="grid gap-1">
+        <span className="grid grid-cols-1 gap-1">
           <a href={href} target="_blank" rel="noopener noreferrer" className="text-[#16538C] underline">{label}</a>
         </span>
       );
@@ -971,7 +975,7 @@ function displayCell(value?: Cell) {
     const preferredHref = sourceHref && isSwfiPlatformRecordHref(sourceHref) ? sourceHref : href;
     const target = productHref(preferredHref, "/");
     return (
-      <span className="grid gap-1">
+      <span className="grid grid-cols-1 gap-1">
         <a href={target} onClick={(event) => hardNavigateSameRouteFilter(event, target)} title={sourceHref ? "View details" : undefined} data-record-link={isFirstPartyRecordHref(target) ? "true" : undefined} data-source-state={sourceHref ? "on-file" : undefined} className="text-[#16538C] underline">{label}</a>
       </span>
     );
@@ -1149,7 +1153,7 @@ function researchSourceHref(row: Row): string | undefined {
   const explicit = sourceHref(row);
   if (explicit) return explicit;
   const legacy = text(row.legacy_post || row.legacy_post_id || row.post_id || row.wordpress_id, "");
-  if (/^\d+$/.test(legacy)) return `https://www.swfi.com/?p=${encodeURIComponent(legacy)}`;
+  if (/^\d+$/.test(legacy)) return `https://www.swfi.com/v1/news/${encodeURIComponent(legacy)}`;
   return undefined;
 }
 
@@ -1524,9 +1528,9 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
   ] as const;
 
   return (
-    <div className="grid gap-4" data-brd-section-visualization={kind}>
+    <div className="grid grid-cols-1 gap-4" data-brd-section-visualization={kind}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="grid gap-1 text-[12px] text-[#7A8A9B]">
+        <div className="grid grid-cols-1 gap-1 text-[12px] text-[#7A8A9B]">
           <span>SWFI platform data</span>
           <span>This view summarizes {sourceRows.length.toLocaleString("en-US")} visible items from {totalRows.toLocaleString("en-US")} total items.</span>
         </div>
@@ -1536,7 +1540,7 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
         </a>
       </div>
       <div
-        className="grid gap-3 sm:grid-cols-3"
+        className="grid grid-cols-1 gap-3 sm:grid-cols-3"
         data-display-id={`summary-tiles-${kind}`}
         data-display-type="metric"
         data-title="Summary tiles"
@@ -1563,13 +1567,13 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
         </div>
       ) : null}
       {universeFacets.length > 0 ? (
-        <div className="grid gap-4" data-brd-universe-facets={kind}>
+        <div className="grid grid-cols-1 gap-4" data-brd-universe-facets={kind}>
           <div className="text-[12px] text-[#7A8A9B]">
             Distributions below cover all {universeTotal.toLocaleString("en-US")} records in SWFI (computed at source), not just this page. Top 12 values shown; blanks excluded and disclosed per chart.
           </div>
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             {universeFacets.slice(0, 2).map((facet) => (
-              <div key={facet.field} className="grid gap-1">
+              <div key={facet.field} className="grid grid-cols-1 gap-1">
                 <SectionBarChart kind={kind} title={`All records by ${facet.label}`} rows={facet.rows} />
                 {facet.covered < facet.disclosed_of_total ? (
                   <div className="text-[11px] text-[#7A8A9B]">
@@ -1587,7 +1591,7 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
            3-point line across years reads as market history that never
            happened), and never render an EMPTY chart frame (a chart with no
            rows is a dead element — minutes F). */
-        <div className="grid gap-4 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           {kind !== "allocators" && categoryRows.length > 1 ? <SectionBarChart kind={kind} title="Records by Category (current page)" rows={categoryRows} /> : null}
           {geographyRows.length > 1 ? <SectionBarChart kind={kind} title="Records by Geography (current page)" rows={geographyRows} /> : null}
           {trendRows.length >= 4 ? (
@@ -1629,9 +1633,9 @@ function SectionBarChart({ kind, title, rows: chartRows }: { kind: Kind; title: 
       data-cta-href={chartRows[0] ? appHref(`${routeByKind[kind]}/?filter=${encodeURIComponent(chartRows[0].label)}`) : ""}
     >
       <h3 className="m-0 mb-3 text-[13px] font-bold text-[#11314F]">{title}</h3>
-      <div className="grid gap-2">
+      <div className="grid grid-cols-1 gap-2">
         {chartRows.length ? chartRows.slice(0, 8).map((row) => (
-          <a key={`${title}-${row.label}`} href={appHref(`${routeByKind[kind]}/?filter=${encodeURIComponent(row.label)}`)} className="grid gap-1 text-inherit no-underline">
+          <a key={`${title}-${row.label}`} href={appHref(`${routeByKind[kind]}/?filter=${encodeURIComponent(row.label)}`)} className="grid grid-cols-1 gap-1 text-inherit no-underline">
             <div className="flex justify-between gap-3 text-[12px]">
               <span className="truncate font-semibold text-[#41566B]">{row.label}</span>
               <span className="font-bold text-[#11314F]">{row.count.toLocaleString("en-US")}</span>
@@ -1707,7 +1711,7 @@ function SectionTopRecords({ kind, rows: topRows }: { kind: Kind; rows: Row[] })
         <h3 className="m-0 text-[13px] font-bold text-[#11314F]">Highlighted SWFI Pages</h3>
         <span className="text-sm font-semibold text-[#7A8A9B]">Use Data for the analytical table</span>
       </div>
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
         {topRows.length ? topRows.map((row, index) => {
           const source = sourceHref(row);
           const href = sectionRecordHref(kind, row, source);
@@ -1730,6 +1734,7 @@ function sectionRecordLabel(kind: Kind, row: Row): string {
 }
 
 function sectionRecordHref(kind: Kind, row: Row, source?: string): string {
+  if (kind === "research" || kind === "intelligence") return researchDetailHref(row, researchSourceHref(row));
   if (source) return source;
   if (kind === "people") return personDetailHref(row, source);
   if (kind === "transactions" || kind === "deals") return transactionDetailHref(row, source);
@@ -1921,7 +1926,7 @@ function SectionFreshness({ kind, rows: sourceRows }: { kind: Kind; rows: Row[] 
       <div className="mb-2 text-[12px] text-[#7A8A9B]">
         {summary.newCount.toLocaleString("en-US")} new and {summary.updatedCount.toLocaleString("en-US")} updated records among the ones loaded in this view, dated within the last {summary.windowDays} days. Click a name to open its SWFI page.
       </div>
-      <div className="grid gap-1">
+      <div className="grid grid-cols-1 gap-1">
         {summary.entries.map(({ record, changeKind, stamp }, index) => {
           const source = sourceHref(record.row);
           const href = productHref(sectionRecordHref(kind, record.row, source), routeByKind[kind]);
@@ -1968,7 +1973,7 @@ function SectionRankings({ kind, tabs, rowCount }: { kind: Kind; tabs: RankingTa
         ) : <span className="text-[12px] font-semibold text-[#7A8A9B]">{tab.label}</span>}
       </div>
       <div className="mb-2 text-[12px] text-[#7A8A9B]">{tab.explain} among the {rowCount.toLocaleString("en-US")} records loaded in this view. Click a name to open its SWFI page.</div>
-      <div className="grid gap-1">
+      <div className="grid grid-cols-1 gap-1">
         {tab.entries.map(({ row, value }, index) => {
           const source = sourceHref(row);
           const href = productHref(sectionRecordHref(kind, row, source), routeByKind[kind]);
@@ -2006,11 +2011,11 @@ function SectionQuickCounts({ kind, facets, universeTotal }: { kind: Kind; facet
       <div className="mb-2 text-[12px] text-[#7A8A9B]">
         Counts cover all {universeTotal.toLocaleString("en-US")} records in SWFI, computed at source. Click a value to filter this page to it.
       </div>
-      <div className="grid gap-3">
+      <div className="grid grid-cols-1 gap-3">
         {facets.map((facet) => (
           <div key={facet.field}>
             <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.08em] text-[#7A8A9B]">{facet.label}</div>
-            <div className="grid gap-1">
+            <div className="grid grid-cols-1 gap-1">
               {facet.rows.slice(0, 5).map((row) => (
                 <a key={`${facet.field}-${row.label}`} href={appHref(`${routeByKind[kind]}/?filter=${encodeURIComponent(row.label)}`)} className="flex items-center justify-between gap-2 rounded px-1 py-0.5 text-[12px] no-underline hover:bg-[#F7F9FA]">
                   <span className="truncate font-semibold text-[#41566B]">{row.label}</span>
@@ -2148,7 +2153,7 @@ function SectionInsights({ kind, rows: sourceRows }: { kind: Kind; rows: Row[] }
     >
       <h3 className="m-0 mb-1 text-[13px] font-bold text-[#11314F]">What stands out</h3>
       <div className="mb-2 text-[12px] text-[#7A8A9B]">Computed from the records loaded in this view. Each line links to its records.</div>
-      <div className="grid gap-1.5">
+      <div className="grid grid-cols-1 gap-1.5">
         {chips.map((chip) => (
           <div key={chip.text} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 rounded border border-[#EEF2F6] px-3 py-1.5 text-[12px]">
             <span className="min-w-0 flex-1 text-[#41566B]">{chip.text}</span>
@@ -2181,7 +2186,7 @@ function CompassVisualization({ rows: sourceRows, totalRows }: { rows: Row[]; to
   ];
   return (
     <div
-      className="grid gap-4"
+      className="grid grid-cols-1 gap-4"
       data-brd-compass-visualization="true"
       data-display-id="compass-visualization"
       data-display-type="chart"
@@ -2192,7 +2197,7 @@ function CompassVisualization({ rows: sourceRows, totalRows }: { rows: Row[]; to
       data-cta-href={appHref("/mandates/?filter=")}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="grid gap-1 text-[12px] text-[#7A8A9B]">
+        <div className="grid grid-cols-1 gap-1 text-[12px] text-[#7A8A9B]">
           <span>Updated from SWFI</span>
           <span>Showing {sourceRows.length.toLocaleString("en-US")} loaded Compass rows from {totalRows.toLocaleString("en-US")} total records.</span>
         </div>
@@ -2204,7 +2209,7 @@ function CompassVisualization({ rows: sourceRows, totalRows }: { rows: Row[]; to
       <SectionFreshness kind="mandates" rows={sourceRows} />
       <SectionFocusLens chips={focusChips} focusTerms={focusTerms} onToggle={toggleFocusTerm} onClear={clearFocusTerms} />
       {rankingTabs.length ? <SectionRankings kind="mandates" tabs={rankingTabs} rowCount={sourceRows.length} /> : null}
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         {summary.map(([label, value]) => (
           <a key={label} href={appHref("/mandates/?filter=")} className="rounded border border-[#DCE3EA] bg-[#F7F9FA] px-3 py-3 no-underline">
             <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#7A8A9B]">{label}</div>
@@ -2213,7 +2218,7 @@ function CompassVisualization({ rows: sourceRows, totalRows }: { rows: Row[]; to
           </a>
         ))}
       </div>
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <CompassBarChart title="RFPs by Investment Type" rows={investmentTypeRows} />
         <CompassBarChart title="RFPs by Region" rows={regionRows} />
         <CompassLineChart title="RFPs Posted Per Month" rows={monthRows} recordsHref={appHref("/mandates/?filter=")} />
@@ -2227,9 +2232,9 @@ function CompassBarChart({ title, rows: chartRows }: { title: string; rows: { la
   return (
     <div className="rounded border border-[#DCE3EA] bg-white p-3">
       <h3 className="m-0 mb-3 text-[13px] font-bold text-[#11314F]">{title}</h3>
-      <div className="grid gap-2">
+      <div className="grid grid-cols-1 gap-2">
         {chartRows.length ? chartRows.slice(0, 8).map((row) => (
-          <a key={row.label} href={appHref(`/mandates/?filter=${encodeURIComponent(row.label)}`)} className="grid gap-1 text-inherit no-underline">
+          <a key={row.label} href={appHref(`/mandates/?filter=${encodeURIComponent(row.label)}`)} className="grid grid-cols-1 gap-1 text-inherit no-underline">
             <div className="flex justify-between gap-3 text-[12px]">
               <span className="truncate font-semibold text-[#41566B]">{row.label}</span>
               <span className="font-bold text-[#11314F]">{row.count.toLocaleString("en-US")}</span>
@@ -2308,24 +2313,30 @@ function monthBucket(value: unknown) {
 }
 
 function DealEnginePanel() {
-  const [query, setQuery] = useState("infrastructure");
-  const [submittedQuery, setSubmittedQuery] = useState("infrastructure");
+  const [selectedValues, setSelectedValues] = useState<string[]>(["Infrastructure"]);
+  const [submittedValues, setSubmittedValues] = useState<string[]>(["Infrastructure"]);
   const [drilldownField, setDrilldownField] = useState<"industry" | "sector">("industry");
   const [days, setDays] = useState(365);
   const [packets, setPackets] = useState<Record<string, Packet>>({});
 
   const sources = useMemo(() => {
-    const encoded = encodeURIComponent(submittedQuery.trim() || "infrastructure");
+    const values = submittedValues.length ? submittedValues : ["Infrastructure"];
+    const primary = encodeURIComponent(values[0]);
+    const fieldSources = Object.fromEntries(values.map((value, index) => [
+      `latestTransactions:${index}`,
+      `/api/transaction-drilldown/v1?field=${drilldownField}&value=${encodeURIComponent(value)}&days=${days}&limit=100&page=1`,
+    ]));
     return {
       // Industry and sector are distinct backend fields. Keep the user's mode
       // explicit so values such as "Technology" query industry rather than the
       // differently named sector field (for example, "Information Technology").
-      latestTransactions: `/api/transaction-drilldown/v1?field=${drilldownField}&value=${encoded}&days=${days}&limit=8`,
-      ticketSize: `/api/deal-intelligence/ticket-size/v1?q=${encoded}&days=${days}&limit=5`,
-      frequency: `/api/deal-intelligence/investment-frequency/v1?q=${encoded}&days=${days}&limit=5`,
+      ...fieldSources,
+      taxonomy: "/api/transactions/v1?limit=100&page=1",
+      ticketSize: `/api/deal-intelligence/ticket-size/v1?q=${primary}&days=${days}&limit=5`,
+      frequency: `/api/deal-intelligence/investment-frequency/v1?q=${primary}&days=${days}&limit=5`,
       coInvestments: `/api/co-investments/v1?days=${days}&limit=5`,
     };
-  }, [days, drilldownField, submittedQuery]);
+  }, [days, drilldownField, submittedValues]);
 
   useEffect(() => {
     let active = true;
@@ -2370,10 +2381,12 @@ function DealEnginePanel() {
     ])
     : [];
   const latestTransactionDate = (row: Row): string => text(row.activity_date || row.announced_at || row.relevant_date || row.closed_at || row.date, "");
-  const latestTransactionRows: Cell[][] = isFact(packets.latestTransactions)
-    ? rows(packets.latestTransactions)
+  const latestSourceRows = uniqueTransactionRows(Object.entries(packets)
+    .filter(([key, packet]) => key.startsWith("latestTransactions:") && isFact(packet))
+    .flatMap(([, packet]) => rows(packet)));
+  const latestTransactionRows: Cell[][] = latestSourceRows.length
+    ? latestSourceRows
       // ISO YYYY-MM-DD sorts lexicographically == chronologically; newest first.
-      // The endpoint already returns this order; the sort guarantees it in the UI.
       .slice()
       .sort((a, b) => latestTransactionDate(b).localeCompare(latestTransactionDate(a)))
       .map((row) => [
@@ -2384,39 +2397,42 @@ function DealEnginePanel() {
         transactionFactCell(row, latestTransactionDate(row) || NOT_DISCLOSED),
       ])
     : [];
-  const readyCount = [packets.latestTransactions, packets.ticketSize, packets.frequency, packets.coInvestments].filter(isFact).length;
+  const readySourceKeys = Object.keys(sources).filter((key) => key !== "taxonomy");
+  const readyCount = readySourceKeys.filter((key) => isFact(packets[key])).length;
   const drilldownFieldLabel = drilldownField === "industry" ? "Industry" : "Sector";
+  const taxonomyRows = isFact(packets.taxonomy) ? rows(packets.taxonomy) : [];
+  const fieldOptions = fieldOptionsForRows(taxonomyRows, drilldownField, selectedValues);
+  const selectedLabel = submittedValues.join(", ") || "Infrastructure";
 
   return (
-    <section data-gsap-reveal className="grid gap-3 rounded border border-[#DCE3EA] bg-white px-4 py-3">
+    <section data-gsap-reveal className="grid grid-cols-1 gap-3 rounded border border-[#DCE3EA] bg-white px-4 py-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="m-0 text-[16px] font-bold text-[#11314F]">Capital Deal Engine</h2>
           <div className="mt-1 text-[12px] text-[#7A8A9B]">Latest transactions matching the selected industry or sector (newest first), plus analytical deal records: ticket size, investment frequency, and co-investment intelligence from transaction activity.</div>
         </div>
         <div className="rounded border border-[#DCE3EA] px-3 py-2 text-[12px] text-[#41566B]">
-          {readyCount === 4 ? "4 of 4 SWFI record sets ready" : `Loading ${readyCount} of 4 SWFI record sets`}
+          {readyCount === readySourceKeys.length ? `${readyCount} of ${readySourceKeys.length} SWFI record sets ready` : `Loading ${readyCount} of ${readySourceKeys.length} SWFI record sets`}
         </div>
       </div>
 
       <form
-        className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_170px_140px_120px] sm:items-end"
+        className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_170px_140px_120px] sm:items-end"
         onSubmit={(event) => {
           event.preventDefault();
-          setSubmittedQuery(query.trim() || "infrastructure");
+          if (selectedValues.length) setSubmittedValues(selectedValues);
         }}
       >
-        <label className="grid gap-1 text-sm">
-          <span className="font-semibold text-[#41566B]">{drilldownFieldLabel}</span>
-          <input
-            type="search"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            className="min-h-9 rounded border border-[#C7D2DD] px-2 outline-none"
-            placeholder="Infrastructure"
-          />
-        </label>
-        <fieldset className="grid gap-1 border-0 p-0 text-sm">
+        <MultiSelectField
+          label={drilldownFieldLabel}
+          options={fieldOptions}
+          value={selectedValues}
+          onChange={setSelectedValues}
+          testId="capital-deal-engine-multiselect"
+          allowCustom
+          maxSelections={5}
+        />
+        <fieldset className="grid grid-cols-1 gap-1 border-0 p-0 text-sm">
           <legend className="font-semibold text-[#41566B]">Match by</legend>
           <div className="grid min-h-9 grid-cols-2 overflow-hidden rounded border border-[#C7D2DD] bg-white">
             {(["industry", "sector"] as const).map((field) => (
@@ -2432,24 +2448,25 @@ function DealEnginePanel() {
             ))}
           </div>
         </fieldset>
-        <label className="grid gap-1 text-sm">
+        <label className="grid grid-cols-1 gap-1 text-sm">
           <span className="font-semibold text-[#41566B]">Period</span>
           <select value={days} onChange={(event) => setDays(Number(event.target.value))} className="min-h-9 rounded border border-[#C7D2DD] bg-white px-2">
             <option value={90}>90 days</option>
             <option value={365}>1 year</option>
-            <option value={1095}>3 years</option>
           </select>
         </label>
-        <button type="submit" className="min-h-9 rounded border border-[#C7D2DD] bg-white px-3 text-sm font-semibold text-[#16538C]">Apply</button>
+        <button type="submit" disabled={!selectedValues.length} className="min-h-9 rounded border border-[#C7D2DD] bg-white px-3 text-sm font-semibold text-[#16538C] disabled:opacity-50">Apply</button>
       </form>
 
+      <div className="text-[11px] text-[#6C7A89]">Latest transactions match any selected {drilldownFieldLabel.toLowerCase()} and are de-duplicated. Ticket-size and frequency analytics retain the first selection ({submittedValues[0] || "Infrastructure"}) because those source endpoints accept one value.</div>
+
       <DealEngineTable
-        title={`Latest transactions by ${drilldownFieldLabel.toLowerCase()} — ${submittedQuery.trim() || "Infrastructure"} (newest first)`}
+        title={`Latest transactions by ${drilldownFieldLabel.toLowerCase()} — ${selectedLabel} (newest first)`}
         columns={["Transaction", "Investors", "Industry", "Amount", "Date"]}
         rows={latestTransactionRows}
       />
 
-      <div className="grid gap-3 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
         {/* Audit 2026-07-06: the Deal Engine's own data was table-only —
             deal-count micro-bars (one unit, nothing converted) make the
             band and investor distributions readable at a glance. */}
@@ -2478,7 +2495,7 @@ function DealEngineBars({ title, rows: barRows }: { title: string; rows: { label
   if (!shown.length) return null;
   const max = Math.max(1, ...shown.map((row) => row.count));
   return (
-    <div className="grid gap-1 rounded border border-[#EDF1F5] bg-[#FBFCFE] p-2" role="img" aria-label={title}>
+    <div className="grid grid-cols-1 gap-1 rounded border border-[#EDF1F5] bg-[#FBFCFE] p-2" role="img" aria-label={title}>
       <div className="text-[10px] font-extrabold uppercase tracking-[0.08em] text-[#7B8996]">{title}</div>
       {shown.map((row) => (
         <div key={row.label} className="grid grid-cols-[minmax(0,1fr)_30px] items-center gap-2">
@@ -2527,123 +2544,6 @@ function DealEngineTable({ title, columns, rows: tableRows }: { title: string; c
   );
 }
 
-function comparisonStrategyText(row: Row): string {
-  // KP's ask (minutes 2026-07-03 item K): investment strategy belongs in the
-  // fund-comparison view. The profile packet ships it at
-  // modules.strategy.fields.Strategy; strip markup, never invent.
-  const modules = row.modules as Record<string, unknown> | undefined;
-  const strategyModule = modules?.strategy as Record<string, unknown> | undefined;
-  const fields = strategyModule?.fields as Record<string, unknown> | undefined;
-  const raw = typeof fields?.Strategy === "string" ? fields.Strategy : "";
-  const clean = raw.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-  if (!clean) return NOT_DISCLOSED;
-  return clean.length > 220 ? `${clean.slice(0, 220)}…` : clean;
-}
-
-function ComparisonWorkbench({ records, packets }: { records: Row[]; packets: Record<string, Packet> }) {
-  const hydrated = records.map((record) => comparisonHydratedRecord(record, packets));
-  const metrics = [
-    ["Entity Type", (row: Row) => businessText(row.type || row.entity_type)],
-    ["Country", (row: Row) => businessText(row.country)],
-    ["Region", (row: Row) => businessText(row.region)],
-    ["AUM", (row: Row) => disclosedMoney(row.aum || row.assets)],
-    ["AUM Date", (row: Row) => businessText(row.aum_date)],
-    ["Managed Assets", (row: Row) => disclosedMoney(row.managed_assets)],
-    ["Investment Strategy", (row: Row) => comparisonStrategyText(row)],
-    ["Peer Group", (row: Row) => businessText(row.type || row.entity_type)],
-    ["Source", (row: Row) => sourceHref(row) ? "View details" : NOT_DISCLOSED],
-  ] as const;
-
-  return (
-    <section data-gsap-reveal className="grid gap-3 rounded border border-[#DCE3EA] bg-white px-4 py-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h2 className="m-0 text-[16px] font-bold text-[#11314F]">Current Peer Set</h2>
-          <div className="mt-1 text-[12px] text-[#7A8A9B]">
-            Limited preview peer matrix. Peer group: {businessText(hydrated[0]?.type || hydrated[0]?.entity_type)} — comparisons stay within one entity type. Exact profile packets hydrated: {hydrated.filter((row) => row.__profile_fact === true).length} of {hydrated.length}
-          </div>
-        </div>
-        <div className="rounded border border-[#DCE3EA] px-3 py-2 text-[12px] text-[#41566B]">
-          Comparing {hydrated.length.toLocaleString("en-US")} institutions
-        </div>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[820px] border-collapse text-left text-sm">
-          <thead>
-            <tr className="bg-[#F7F9FA]">
-              <th className="w-[170px] border-b border-[#DCE3EA] px-3 py-2 text-[#41566B]">Metric</th>
-              {hydrated.map((row) => {
-                const source = sourceHref(row);
-                const href = source || profileDetailHref(row, source);
-                return (
-                  <th key={comparisonRecordId(row) || comparisonName(row)} className="border-b border-[#DCE3EA] px-3 py-2 text-[#11314F]">
-                    <a href={productHref(href, "/profiles/")} data-source-state={source ? "on-file" : undefined} className="text-[#16538C] underline">
-                      {comparisonName(row)}
-                    </a>
-                  </th>
-                );
-              })}
-            </tr>
-          </thead>
-          <tbody>
-            {metrics.map(([label, valueForMetric]) => (
-              <tr key={label} className="border-b border-[#F2F5F8] last:border-b-0">
-                <td className="px-3 py-2 font-semibold text-[#11314F]">{label}</td>
-                {hydrated.map((row) => {
-                  const value = valueForMetric(row);
-                  const source = label === "Source" ? sourceHref(row) : "";
-                  const profileHref = source || profileDetailHref(row, source || undefined);
-                  // Peer AUM bars (audit 2026-07-06): scaled ONLY on the
-                  // verified-USD assets figure — never across mixed native
-                  // currencies. No figure, no bar; the label already says
-                  // "Not disclosed".
-                  const usdBasis = label === "AUM" ? numericSortValue(text(row.assets, "")) : null;
-                  const usdMax = label === "AUM" ? Math.max(1, ...hydrated.map((peer) => numericSortValue(text(peer.assets, "")) || 0)) : 1;
-                  return (
-                    <td key={`${comparisonRecordId(row) || comparisonName(row)}-${label}`} className="px-3 py-2 align-top text-[#41566B]">
-                      {source ? (
-                        <a href={productHref(source, profileHref)} data-source-state="on-file" className="text-[#16538C] underline">
-                          {value}
-                        </a>
-                      ) : value}
-                      {usdBasis ? (
-                        <span className="mt-1 block h-[6px] max-w-[160px] overflow-hidden rounded bg-[#EAF1F7]">
-                          <span className="block h-full rounded bg-[#0A66C2]" style={{ width: `${Math.max(1.5, (usdBasis / usdMax) * 100)}%` }} />
-                        </span>
-                      ) : null}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="text-[10.5px] font-semibold text-[#7B8996]">
-        AUM bars compare the verified USD assets figure across this peer set; institutions without it show no bar — nothing is converted or estimated.
-      </div>
-    </section>
-  );
-}
-
-function comparisonHydratedRecord(record: Row, packets: Record<string, Packet>): Row {
-  const id = comparisonRecordId(record);
-  const packet = id ? packets[id] : undefined;
-  const profile = isFact(packet) ? packetData(packet).profile as Row | undefined : undefined;
-  if (!profile) return { ...record, __profile_fact: false };
-  return {
-    ...record,
-    ...profile,
-    source_url: sourceHref(profile) || sourceHref(record),
-    swfi_url: text(profile.swfi_url || record.swfi_url, ""),
-    __profile_fact: true,
-  };
-}
-
 function comparisonRecordId(row: Row): string {
   return text(row.entity_id, "") || sourceRecordIdFor(sourceHref(row), "entities") || text(row.id || row.source_record_id, "");
-}
-
-function comparisonName(row: Row): string {
-  return text(row.name || row.institution || row.legal_name, NOT_DISCLOSED);
 }

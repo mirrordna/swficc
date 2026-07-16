@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
+import { isRemoteMongoUri } from "./swfipn-mongo-policy.mjs";
 
 const repoRoot = process.cwd();
 const outputDir = path.join(repoRoot, "output");
@@ -335,14 +336,7 @@ function loadMongoUri() {
 }
 
 function isAllowedMongoUri(value) {
-  if (/^(1|true|yes|on)$/i.test(String(process.env.SWFIPN_RECORD_PARITY_ALLOW_LOCAL_MONGO || ""))) return true;
-  try {
-    const parsed = new URL(value);
-    const host = parsed.hostname.toLowerCase();
-    return !["localhost", "127.0.0.1", "::1", "0.0.0.0"].includes(host);
-  } catch {
-    return false;
-  }
+  return isRemoteMongoUri(value);
 }
 
 function fetchMongoDocs(collection, ids, mongoUri, projection = null) {
@@ -586,7 +580,7 @@ async function main() {
       status: "blocked",
       generated_at: new Date().toISOString(),
       reason: "mongo_uri_unavailable",
-      detail: "No governed non-local Mongo URI is available for full field parity. Localhost Mongo URIs are rejected unless SWFIPN_RECORD_PARITY_ALLOW_LOCAL_MONGO=1.",
+      detail: "No governed non-local Mongo URI is available for full field parity. Local Mongo URIs are always rejected; there is no bypass.",
       rejected_sources: mongo.rejected || [],
     };
     fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);

@@ -131,6 +131,48 @@ def search_query_variants(query):
     return variants[:3]
 
 
+def is_natural_language_intent_query(query):
+    """Route supported natural-language intents to the category-aware Next app.
+
+    The server-rendered fallback is intentionally limited to literal entity search;
+    it cannot execute the source-specific query plans used by the dashboard app.
+    """
+    clean = search_text(query)
+    if not clean:
+        return False
+
+    region = bool(re.search(
+        r"\b(?:middle east(?:ern)?|mena|gcc|emea|europe(?:an)?|eu|apac|asia(?:n)?|africa(?:n)?|north america(?:n)?|latin america(?:n)?|latam|americas|australia(?:n)?(?: and pacific)?|pacific|oceania)\b",
+        clean,
+    ))
+    entity = bool(re.search(
+        r"\b(?:sovereign wealth funds?|swfs?|sovereign investors?|(?:public |private )?(?:pension funds?|pension plans?|retirement systems?)|superannuation (?:funds?|schemes?)|super funds?|central banks?|family offices?|endowments?(?: plans?)?|foundations?|insurance companies|insurers?|asset managers?|investment consultants?)\b",
+        clean,
+    ))
+    theme = bool(re.search(
+        r"\b(?:ai|artificial intelligence|machine learning|generative ai|cyber(?:security)?|semiconductors?|chips?|biotech|biotechnology|renewables?|renewable energy|healthcare|health care|life sciences?|real estate|property|infrastructure|agriculture|agritech|software|information technology|technology|tech|financials?|financial services|energy|industrials?)\b",
+        clean,
+    ))
+    investment_action = bool(re.search(
+        r"\b(?:invest(?:ing|ed|ments?)?|deals?|transactions?|allocat(?:ing|ed) to|deploy(?:ing|ed) (?:capital )?(?:in|into)|exposure to|back(?:ing|ed)|commit(?:ting|ted) to)\b",
+        clean,
+    ))
+    active = bool(
+        re.search(r"\b(?:top|most) active (?:institutional )?(?:investors?|allocators?|lps?|asset owners?)\b", clean)
+        or re.search(r"\bactive (?:investors?|allocators?|lps?|asset owners?)\b", clean)
+        or re.search(r"\b(?:top|most) active (?:sovereign|pension|retirement|superannuation|family|endowment|foundation|insurance|asset|investment)\b", clean)
+        or re.search(r"\bactively (?:deploying|allocating|committing) capital\b", clean)
+        or re.search(r"\bmaking new manager commitments\b", clean)
+    )
+    if active:
+        return True
+    if region and re.search(r"\b(?:rfps?|requests? for proposals?|mandates?|opportunities|manager searches?|investment searches?|open searches?|active searches?)\b", clean):
+        return True
+    if entity and theme and investment_action and not region:
+        return True
+    return bool(region and entity and not investment_action)
+
+
 def search_record_key(row):
     source = str(row.get("source_url") or row.get("swfi_url") or row.get("url") or row.get("profile_url") or "").strip()
     if source:
@@ -1415,6 +1457,8 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
             params = urllib.parse.parse_qs(parsed.query)
             query = (params.get("q") or [""])[0].strip()
             category = (params.get("category") or [""])[0].strip().casefold()
+            if is_natural_language_intent_query(query):
+                return False
             # Category-specific "View all" pages are rendered by the Next search app,
             # which owns the category-aware data contracts. Keep this server-rendered
             # fallback only for the uncategorized search route.
