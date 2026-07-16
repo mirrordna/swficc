@@ -94,15 +94,25 @@ try {
   const intelligence = await context.newPage();
   intelligence.setDefaultTimeout(60_000);
   await intelligence.goto(`${ORIGIN}/swficc/intelligence/`, { waitUntil: "domcontentloaded", timeout: 120_000 });
-  await intelligence.getByRole("button", { name: "Records" }).click();
+  const recordsButton = intelligence.getByRole("button", { name: "Records" });
+  const visibleRecords = intelligence.locator("main tbody:visible");
+  for (let attempt = 0; attempt < 6 && await visibleRecords.count() === 0; attempt += 1) {
+    await recordsButton.click();
+    await visibleRecords.first().waitFor({ state: "visible", timeout: 5_000 }).catch(() => null);
+  }
+  await visibleRecords.first().waitFor({ state: "visible" });
   await intelligence.locator('main tbody:visible a', { hasText: "Newest source-backed story" }).first().waitFor({ state: "visible" });
   const intelligenceRows = intelligence.locator("main tbody:visible tr");
   const firstNewsRow = (await intelligenceRows.first().innerText()).replace(/\s+/g, " ").trim();
   const newsHeaders = await intelligence.locator("main thead th").allTextContents();
-  const newsHandoff = await intelligenceRows.first().locator('a[href*="/v1/news/109307"]').first().getAttribute("href");
+  const newsHandoff = await intelligenceRows.first().locator("a", { hasText: "Newest source-backed story" }).first().getAttribute("href");
   check("news_published_column", newsHeaders.some((value) => /Published/i.test(value)), JSON.stringify(newsHeaders));
   check("news_default_newest_first", /Newest source-backed story/.test(firstNewsRow) && /2026-07-16/.test(firstNewsRow), firstNewsRow);
-  check("news_authenticated_record_handoff", Boolean(newsHandoff?.includes("/v1/news/109307")), newsHandoff || "missing");
+  check(
+    "news_authenticated_record_handoff",
+    Boolean(newsHandoff?.includes("www.swfi.com/v1/signin/") && decodeURIComponent(newsHandoff).includes("/v1/news/109307")),
+    newsHandoff || "missing",
+  );
   await intelligence.screenshot({ path: "output/swfipn-news-freshness-latest.png", fullPage: true });
   await intelligence.close();
 
