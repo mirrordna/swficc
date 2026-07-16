@@ -18,6 +18,7 @@ import {
   hydrateComparisonPeer,
   MAX_COMPARISON_PEERS,
 } from "@/lib/competitionAnalysis";
+import { strategyEngineAnalysis, STRATEGY_ENGINE_VERSION } from "@/lib/strategyEngine";
 import { profileDetailHref } from "@/lib/detailRoutes";
 import {
   fetchPacket,
@@ -179,6 +180,7 @@ export default function CompetitionAnalysisWorkbench({ seedRecords }: { seedReco
   ]).slice(0, 24), [orderedSelection, searchClean.length, searchRows, seedRecords]);
   const hydratedPeers = orderedSelection.map((peer) => hydrateComparisonPeer(peer, profilePackets[comparisonPeerKey(peer)]));
   const evidence = competitionEvidenceQuestions(hydratedPeers, transactionPackets, buyerActivityPackets);
+  const strategyEngine = strategyEngineAnalysis(hydratedPeers, transactionPackets, buyerActivityPackets);
   const hydratedProfileCount = orderedSelection.filter((peer) => isFact(profilePackets[comparisonPeerKey(peer)])).length;
   const hydratedTransactionCount = orderedSelection.filter((peer) => isFact(transactionPackets[comparisonPeerKey(peer)])).length;
   const hydratedActivityCount = orderedSelection.filter((peer) => isFact(buyerActivityPackets[comparisonPeerKey(peer)])).length;
@@ -414,6 +416,91 @@ export default function CompetitionAnalysisWorkbench({ seedRecords }: { seedReco
         <div className="text-[10.5px] leading-relaxed text-[#7A8A9B]">
           Asset allocation values are reported on each SWFI institution profile. Their reporting period is not independently normalized, and disclosed ranges are shown as ranges rather than converted to midpoint estimates.
         </div>
+      ) : null}
+
+      {hydratedPeers.length >= 2 ? (
+        <section id="strategy-engine" data-testid="strategy-engine" className="scroll-mt-4 rounded border border-[#B8CEE2] bg-[#F3F8FC] p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#0A66C2]">Evidence-bounded decision support</div>
+              <h3 className="m-0 mt-1 text-[16px] font-bold text-[#11314F]">Strategy Engine</h3>
+              <p className="m-0 mt-1 max-w-[760px] text-[11.5px] leading-relaxed text-[#52687D]">
+                Positions {strategyEngine.anchor} against selected same-type peers, then separates usable observations, coverage gaps, and inputs that cannot yet support a conclusion.
+              </p>
+            </div>
+            <span data-testid="strategy-engine-version" className="rounded border border-[#B8CEE2] bg-white px-2 py-1 text-[10px] font-bold text-[#41566B]">{STRATEGY_ENGINE_VERSION}</span>
+          </div>
+
+          <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            {[
+              ["Same-type peers", strategyEngine.peerCount],
+              ["Allocation categories", strategyEngine.allocationCategoriesCompared],
+              ["Transaction totals", `${strategyEngine.transactionTotalsReady}/${strategyEngine.peerCount + 1}`],
+              ["Activity samples", `${strategyEngine.activitySamplesReady}/${strategyEngine.peerCount + 1}`],
+            ].map(([label, value]) => (
+              <div key={label} className="rounded border border-[#D7E3EE] bg-white px-3 py-2">
+                <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#7A8A9B]">{label}</div>
+                <div className="mt-1 text-[17px] font-bold text-[#11314F]">{value}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)]">
+            <div className="grid content-start gap-2">
+              <h4 className="m-0 text-[12px] font-bold text-[#11314F]">Strategic observations</h4>
+              {strategyEngine.signals.length ? strategyEngine.signals.map((signal) => (
+                <article key={signal.id} data-strategy-signal={signal.id} className="rounded border border-[#D7E3EE] bg-white px-3 py-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <strong className="text-[12px] text-[#11314F]">{signal.title}</strong>
+                    <span className={`rounded px-2 py-0.5 text-[9.5px] font-bold uppercase tracking-[0.08em] ${signal.state === "coverage-gap" ? "bg-[#FFF0D8] text-[#875C12]" : "bg-[#EAF3FB] text-[#16538C]"}`}>
+                      {signal.state === "coverage-gap" ? "Coverage gap" : "Observation"}
+                    </span>
+                  </div>
+                  <p className="m-0 mt-1 text-[11.5px] leading-relaxed text-[#41566B]">{signal.detail}</p>
+                  <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+                    {signal.evidence.map((item) => (
+                      <a key={`${signal.id}-${item.url}`} href={swfiAuthHandoffHref(item.url)} className="text-[10.5px] font-semibold text-[#16538C] underline">Source: {item.label}</a>
+                    ))}
+                  </div>
+                </article>
+              )) : (
+                <div className="rounded border border-[#D7E3EE] bg-white px-3 py-3 text-[11.5px] text-[#617386]">No evidence-backed strategic observation is available from the selected inputs.</div>
+              )}
+            </div>
+
+            <div className="grid content-start gap-3">
+              <div className="rounded border border-[#D7E3EE] bg-white p-3">
+                <h4 className="m-0 text-[12px] font-bold text-[#11314F]">Decision-input readiness</h4>
+                <div className="mt-2 grid gap-2">
+                  {strategyEngine.dimensions.map((dimension) => (
+                    <div key={dimension.id} data-strategy-dimension={dimension.id} className="border-t border-[#EDF1F5] pt-2 first:border-t-0 first:pt-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <strong className="text-[11px] text-[#41566B]">{dimension.label}</strong>
+                        <span className={`text-[9px] font-bold uppercase tracking-[0.08em] ${dimension.state === "ready" ? "text-[#14703C]" : dimension.state === "partial" ? "text-[#875C12]" : "text-[#A13D3D]"}`}>{dimension.state}</span>
+                      </div>
+                      <div className="mt-0.5 text-[10.5px] leading-relaxed text-[#7A8A9B]">{dimension.detail}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="rounded border border-[#D7E3EE] bg-white p-3">
+                <h4 className="m-0 text-[12px] font-bold text-[#11314F]">Next-best research actions</h4>
+                <ol className="m-0 mt-2 grid list-decimal gap-2 pl-4">
+                  {strategyEngine.researchActions.map((action) => (
+                    <li key={action.id} className="pl-1 text-[10.5px] leading-relaxed text-[#617386]"><strong className="text-[#41566B]">{action.label}.</strong> {action.reason}</li>
+                  ))}
+                </ol>
+              </div>
+            </div>
+          </div>
+
+          <div data-testid="strategy-engine-limitations" className="mt-4 rounded border border-[#E4D8C6] bg-[#FFFBF2] px-3 py-2.5">
+            <strong className="text-[11px] text-[#6E552C]">Cannot conclude from current inputs</strong>
+            <ul className="m-0 mt-1 grid gap-1 pl-4 text-[10.5px] leading-relaxed text-[#765F3B]">
+              {strategyEngine.limitations.map((limitation) => <li key={limitation}>{limitation}</li>)}
+            </ul>
+          </div>
+        </section>
       ) : null}
 
       {hydratedPeers.length >= 2 ? (

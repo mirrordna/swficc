@@ -75,6 +75,9 @@ const ENDPOINTS = {
 
 const LOADING = "Loading";
 const DASHBOARD_EMPTY = "No current items available";
+const NEWS_REFRESH_INTERVAL_MS = 5 * 60_000;
+const NEWS_REFRESH_MIN_GAP_MS = 60_000;
+const NEWS_REFRESH_EVENT = "swfi:refresh-news";
 const SEARCH_PREFETCH_CACHE_PREFIX = "swfipn.search.prefetch.v1:";
 const DASHBOARD_LOAD_ORDER: PacketKey[] = ["top20", "allocators30", "sectorFlows", "transactions30", "rfps", "mandates", "metrics", "institutionTypes", "allocators90", "entities", "people", "news"];
 const SEARCH_CATEGORY_LABELS = ["All", "Entities", "RFPs & Opportunities", "Transactions", "News & Articles", "People"] as const;
@@ -125,6 +128,7 @@ const navMain = [
 const navIntel = [
   ["Historical Performance", "/reports/#historical-performance-dashboard"],
   ["Peer Comparison", "/comparisons"],
+  ["Strategy Engine", "/comparisons/#strategy-engine"],
   ["Rankings", "/reports/#dynamic-rankings-engine"],
   ["Trend Analytics", "/reports/#investment-trend-analytics"],
   ["Co-Investment", "/reports/#co-investment-tracking"],
@@ -180,6 +184,40 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
+    let active = true;
+    let refreshing = false;
+    let lastRefreshAt = Date.now();
+    const refreshNews = async (force = false) => {
+      if (refreshing || (!force && Date.now() - lastRefreshAt < NEWS_REFRESH_MIN_GAP_MS)) return;
+      refreshing = true;
+      try {
+        const packet = await fetchPacket(ENDPOINTS.news, 30_000, { attempts: 2 });
+        if (!active) return;
+        setPackets((current) => ({
+          ...current,
+          news: shouldReplacePacket(current.news, packet) ? packet : current.news,
+        }));
+      } finally {
+        lastRefreshAt = Date.now();
+        refreshing = false;
+      }
+    };
+    const onRefreshNews = () => { void refreshNews(true); };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") void refreshNews();
+    };
+    const interval = window.setInterval(() => { void refreshNews(); }, NEWS_REFRESH_INTERVAL_MS);
+    window.addEventListener(NEWS_REFRESH_EVENT, onRefreshNews);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      window.removeEventListener(NEWS_REFRESH_EVENT, onRefreshNews);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, []);
+
+  useEffect(() => {
     function onKeyDown(event: globalThis.KeyboardEvent) {
       const key = event.key.toLowerCase();
       if ((event.metaKey || event.ctrlKey) && key === "k") {
@@ -209,7 +247,7 @@ export default function DashboardPage() {
   // missing"). Merged into the RFPs & Opportunities SEARCH group only (below); the RFP-specific
   // widgets keep the original rfpRows untouched so nothing that already works regresses.
   const mandateRows = factRows(packets.mandates).slice(0, 25);
-  const newsRows = factRows(packets.news).slice(0, 25);
+  const newsRows = useMemo(() => newestNewsRows(factRows(packets.news).slice(0, 25)), [packets.news]);
   const allocatorRows = factRows(packets.allocators30).slice(0, 25);
   const institutionTypeRows = institutionTypeFacetRows(packets.institutionTypes).slice(0, 8);
   const sectorRows = sectorFacetRows(packets.sectorFlows).slice(0, 10);
@@ -478,7 +516,7 @@ export default function DashboardPage() {
             controls={visualControls}
           />
           <main className="mx-auto grid max-w-[1440px] gap-x-6 gap-y-6 px-4 py-6 sm:px-5 xl:grid-cols-[minmax(0,1fr)_320px]">
-            <BrdNewsFeed rows={newsRows} tab={newsTab} onTabChange={setNewsTab} />
+            <BrdNewsFeed rows={newsRows} revision={brdText(packets.news?.generated_at, "initial")} tab={newsTab} onTabChange={setNewsTab} />
             <BrdRightRail sectorRows={sectorRows} />
             <BrdRecentActivity
               tab={recentTab}
@@ -858,8 +896,9 @@ function VisualExecutiveOverview({
   );
 }
 
-function BrdNewsFeed({ rows: sourceRows, tab, onTabChange }: {
+function BrdNewsFeed({ rows: sourceRows, revision, tab, onTabChange }: {
   rows: Record<string, unknown>[];
+  revision: string;
   tab: "latest" | "referenced" | "topics";
   onTabChange: (tab: "latest" | "referenced" | "topics") => void;
 }) {
@@ -882,18 +921,20 @@ function BrdNewsFeed({ rows: sourceRows, tab, onTabChange }: {
         Latest market intelligence appears first. Use the other views to browse frequently referenced items and topics.
       </DashboardSectionNote>
       {featured ? (
-        <div className="mt-8 grid gap-10 lg:grid-cols-[minmax(260px,340px)_minmax(320px,1fr)_minmax(220px,310px)]">
+        <div data-testid="featured-news-story" data-news-story-id={newsStoryKey(featured)} className="mt-8 grid gap-10 lg:grid-cols-[minmax(260px,340px)_minmax(320px,1fr)_minmax(220px,310px)]">
           <DataLink href={researchRecordHref(featured)} sourceHref={sourceHref(featured)} className="block text-inherit no-underline">
+            <div className="text-[10px] font-black uppercase tracking-[0.12em] text-[#A51C30]">{tab === "latest" ? "Top story now" : "Featured story"}</div>
             <h2 className="font-serif text-[34px] leading-[1.18] text-[#253047] sm:text-[40px]">{brdText(featured.title || featured.name)}</h2>
             <p className="mt-4 line-clamp-3 text-[14px] leading-5 text-[#24304B]">{brdExcerpt(featured)}</p>
             <div className="mt-4 flex items-center gap-4 text-[12px] text-[#5A6372]">
               <span>{brdReadTime(featured)}</span>
+              <span>{recordDate(featured)}</span>
               {brdPopularBadge(featured, sourceRows) ? <span className="bg-[#D8D9D5] px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.12em] text-[#41464F]">Popular</span> : null}
             </div>
           </DataLink>
           <DataLink href={researchRecordHref(featured)} sourceHref={sourceHref(featured)} className="block min-h-[200px] overflow-hidden bg-[#D8DDE6] text-inherit no-underline">
             <span className="sr-only">{brdText(featured.title || featured.name)}</span>
-            <img src={assetHref(`/swfi-assets/images/${brdImageForIndex(0)}`)} alt="" className="h-full min-h-[250px] w-full object-cover" />
+            <NewsPreviewImage key={`${newsStoryKey(featured)}-${revision}`} row={featured} featured />
           </DataLink>
           <div className="grid content-start gap-5">
             {sideList.map((row, index) => (
@@ -910,7 +951,7 @@ function BrdNewsFeed({ rows: sourceRows, tab, onTabChange }: {
       <div className="mt-10 grid gap-6 md:grid-cols-3">
         {secondary.map((row, index) => (
           <DataLink key={`${brdText(row.title || row.name)}-${index}`} href={researchRecordHref(row)} sourceHref={sourceHref(row)} className="grid grid-cols-[100px_minmax(0,1fr)] gap-4 text-inherit no-underline">
-            <img src={assetHref(`/swfi-assets/images/${brdImageForIndex(index + 1)}`)} alt="" className="h-[100px] w-[100px] object-cover" />
+            <NewsPreviewImage key={`${newsStoryKey(row)}-${revision}`} row={row} />
             <span className="min-w-0">
               <span className="block font-serif text-[18px] leading-[1.22] text-[#31384B]">{brdText(row.title || row.name)}</span>
               <span className="mt-2 block text-[12px] text-[#5D6676]">{brdReadTime(row)}</span>
@@ -1660,6 +1701,18 @@ function brdSectorTopRows(sectorRows: Record<string, unknown>[]): Cell[][] {
   ]);
 }
 
+function newestNewsRows(rowsToUse: Record<string, unknown>[]) {
+  return rowsToUse
+    .map((row, index) => ({ row, index, stamp: newsPublishedStamp(row), legacy: Number(brdText(row.legacy_post || row.legacy_post_id, "0")) || 0 }))
+    .sort((left, right) => right.stamp - left.stamp || right.legacy - left.legacy || left.index - right.index)
+    .map((entry) => entry.row);
+}
+
+function newsPublishedStamp(row: Record<string, unknown>) {
+  const parsed = Date.parse(brdText(row.published_at || row.updated_at || row.date, ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function brdNewsRowsForTab(rowsToUse: Record<string, unknown>[], tab: "latest" | "referenced" | "topics") {
   if (tab === "referenced") {
     return [...rowsToUse].sort((a, b) => brdNewsScore(b) - brdNewsScore(a));
@@ -1686,9 +1739,64 @@ function brdMarketFocusTags(sectorRows: Record<string, unknown>[]) {
   return sourceTags.length ? sourceTags : ["Active Equities", "Sovereign Wealth Funds", "Real Estate"];
 }
 
-function brdImageForIndex(index: number) {
-  const images = ["business_development.webp", "investor.webp", "fundraising.webp", "deal_trends.webp", "industry.webp"];
-  return images[index % images.length];
+function newsStoryKey(row: Record<string, unknown>) {
+  return brdText(row.legacy_post || row.legacy_post_id || row.id || row.source_url || row.title || row.name, "news-story");
+}
+
+function newsPreviewSource(row: Record<string, unknown>) {
+  const value = brdText(row.preview_image_url, "");
+  return /^\/api\/source-intelligence\/news\/preview-image\/v1\?legacy_id=\d{1,12}$/.test(value) ? value : "";
+}
+
+function newsFallbackSource(row: Record<string, unknown>) {
+  const title = brdText(row.title || row.name, "SWFI intelligence");
+  const key = `${newsStoryKey(row)}|${title}`;
+  let hash = 0;
+  for (let index = 0; index < key.length; index += 1) hash = ((hash << 5) - hash + key.charCodeAt(index)) | 0;
+  const palette = [
+    ["#071F48", "#2A6BA8"],
+    ["#3B173F", "#A33F68"],
+    ["#12372A", "#388C69"],
+    ["#49320C", "#BD7A1D"],
+    ["#4A1820", "#B83245"],
+  ][Math.abs(hash) % 5];
+  const initials = title.split(/\s+/).filter(Boolean).slice(0, 3).map((part) => part[0]).join("").toUpperCase();
+  const shortTitle = title.length > 54 ? `${title.slice(0, 53)}…` : title;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="720" height="420" viewBox="0 0 720 420"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="${palette[0]}"/><stop offset="1" stop-color="${palette[1]}"/></linearGradient></defs><rect width="720" height="420" fill="url(#g)"/><circle cx="622" cy="82" r="132" fill="white" fill-opacity=".08"/><text x="46" y="66" fill="white" fill-opacity=".72" font-family="Arial,sans-serif" font-size="18" font-weight="700" letter-spacing="3">SWFI INTELLIGENCE</text><text x="46" y="225" fill="white" font-family="Arial,sans-serif" font-size="82" font-weight="700">${xmlText(initials || "SWFI")}</text><text x="46" y="292" fill="white" fill-opacity=".9" font-family="Arial,sans-serif" font-size="22">${xmlText(shortTitle)}</text><text x="46" y="365" fill="white" fill-opacity=".62" font-family="Arial,sans-serif" font-size="15">Editorial image unavailable</text></svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
+function xmlText(value: string) {
+  return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character] || character);
+}
+
+function NewsPreviewImage({ row, featured = false }: { row: Record<string, unknown>; featured?: boolean }) {
+  const preview = newsPreviewSource(row);
+  const fallback = newsFallbackSource(row);
+  const [imageSource, setImageSource] = useState(preview || fallback);
+  const [sourceState, setSourceState] = useState(preview ? "editorial" : "story-fallback");
+  const storyKey = newsStoryKey(row);
+  return (
+    <img
+      data-testid={featured ? "featured-news-image" : "news-preview-image"}
+      data-news-story-id={storyKey}
+      data-news-image-source={sourceState}
+      src={imageSource}
+      onError={() => {
+        if (imageSource !== fallback) {
+          setImageSource(fallback);
+          setSourceState("story-fallback");
+        }
+      }}
+      alt={brdText(row.title || row.name, "SWFI news story")}
+      loading={featured ? "eager" : "lazy"}
+      fetchPriority={featured ? "high" : "auto"}
+      decoding="async"
+      width={featured ? 720 : 100}
+      height={featured ? 420 : 100}
+      className={featured ? "h-full min-h-[250px] w-full object-cover" : "h-[100px] w-[100px] object-cover"}
+    />
+  );
 }
 
 function brdExcerpt(row: Record<string, unknown>) {

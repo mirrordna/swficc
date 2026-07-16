@@ -122,6 +122,21 @@ try {
   const firstProfileHref = await restoredWorkbench.getByTestId("competition-profile-link").first().getAttribute("href");
   check("swfi_profile_handoff", /https:\/\/www\.swfi\.com\/v1\/signin\//.test(firstProfileHref || ""), firstProfileHref);
 
+  const strategyEngine = restoredWorkbench.getByTestId("strategy-engine");
+  await strategyEngine.waitFor({ state: "visible" });
+  const strategyText = (await strategyEngine.innerText()).replace(/\s+/g, " ").trim();
+  const strategyVersion = await strategyEngine.getByTestId("strategy-engine-version").innerText();
+  const dimensions = await strategyEngine.locator("[data-strategy-dimension]").count();
+  const sourceLinks = await strategyEngine.getByRole("link", { name: /^Source:/ }).count();
+  check("strategy_engine_versioned_and_evidence_linked", strategyVersion === "swfi.strategy-engine.v1" && dimensions === 9 && sourceLinks > 0, `version=${strategyVersion} dimensions=${dimensions} source_links=${sourceLinks}`);
+  check(
+    "strategy_engine_honest_decision_boundary",
+    /not investment advice or portfolio optimization/i.test(strategyText)
+      && /mandate, risk & liquidity constraints blocked/i.test(strategyText)
+      && /cannot conclude from current inputs/i.test(strategyText),
+    strategyText.slice(0, 600),
+  );
+
   mkdirSync("output", { recursive: true });
   await page.screenshot({ path: "output/swfipn-competition-analysis-desktop-latest.png", fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });

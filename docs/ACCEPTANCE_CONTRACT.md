@@ -94,6 +94,43 @@ product facts.
   four-peer cap, remove, anchor change, URL restoration, transaction-count API
   parity, allocation/profile parity, source handoff, and mobile containment.
 
+### Strategy Engine
+
+- Strategy Engine output is deterministic and versioned. It may position an
+  anchor only against the selected same-type peers and only from approved
+  profile, allocation, transaction-total, and recent buyer-activity packets.
+- The engine separates observations, coverage gaps, decision-input readiness,
+  and next-best research actions. Every observation retains one or more SWFI
+  record links.
+- It must explicitly block conclusions that require mandate objectives,
+  liabilities, liquidity needs, risk budget, return targets, time horizon,
+  governance constraints, thematic exposure, manager exposure, co-investor
+  exposure, sector/stage/ticket-size opportunity fit, multi-period trajectory,
+  or complete transaction history when those contracts are absent.
+- It is decision support, not investment advice, portfolio optimization,
+  expected-return forecasting, mandate-fit scoring, or inferred intent.
+- Browser acceptance must prove the engine version, all readiness dimensions,
+  source links, and the visible cannot-conclude boundary.
+
+## Homepage top-story preview and refresh
+
+- The Latest Intelligence lead is explicitly ordered newest-first by a valid
+  publication timestamp, with numeric WordPress legacy ID as the bounded
+  fallback when the timestamp is unavailable.
+- The lead image comes from the story's public SWFI CMS featured image through
+  a same-origin backend preview endpoint. The proxy accepts numeric post IDs,
+  follows only HTTPS redirects on an explicit SWFI CMS/CDN host allowlist,
+  permits bounded raster image types and sizes, and never accepts a caller URL.
+- Preview caching is an in-memory optimization only. Remote SWFI editorial
+  media remains the truth source, and a process restart safely re-fetches it.
+- Missing or rejected editorial media falls back to a stable story-derived
+  visual carrying the story identity; it does not leave a broken image or
+  reuse a fixed slot image.
+- The browser polls the news source every five minutes and performs a
+  rate-bounded refresh when a hidden tab becomes visible. Browser acceptance
+  must force the same refresh path and prove that a new lead story changes the
+  headline, story identity, link, and image together.
+
 ## Full Universe Parity
 
 Full universe parity is not the same as full universe mapping.

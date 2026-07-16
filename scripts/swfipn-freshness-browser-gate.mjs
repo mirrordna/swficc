@@ -120,6 +120,83 @@ try {
   check("reports_default_newest_first", /SWFI Quarterly 2024 Q1/.test(firstReportRow) && /2024-05-02/.test(firstReportRow), firstReportRow);
   await reports.screenshot({ path: "output/swfipn-reports-freshness-latest.png", fullPage: true });
   await reports.close();
+
+  const homeContext = await browser.newContext({ serviceWorkers: "block" });
+  let homepageNewsRequests = 0;
+  const leadStories = [
+    {
+      id: "news-lead-a",
+      legacy_post: "900001",
+      title: "Top story before refresh",
+      published_at: "2026-07-16T10:00:00Z",
+      excerpt: "First lead story.",
+      source_url: "https://www.swfi.com/v1/news/900001",
+      preview_image_url: "/api/source-intelligence/news/preview-image/v1?legacy_id=900001",
+    },
+    {
+      id: "news-lead-b",
+      legacy_post: "900002",
+      title: "Top story after refresh",
+      published_at: "2026-07-16T12:00:00Z",
+      excerpt: "Second lead story.",
+      source_url: "https://www.swfi.com/v1/news/900002",
+      preview_image_url: "/api/source-intelligence/news/preview-image/v1?legacy_id=900002",
+    },
+    {
+      id: "news-lead-c",
+      legacy_post: "900003",
+      title: "Top story with safe fallback",
+      published_at: "2026-07-16T13:00:00Z",
+      excerpt: "Lead story whose editorial image is unavailable.",
+      source_url: "https://www.swfi.com/v1/news/900003",
+      preview_image_url: "/api/source-intelligence/news/preview-image/v1?legacy_id=900003",
+    },
+  ];
+  const previewPng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
+  await homeContext.route("**/api/**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/api/source-intelligence/news/v1") {
+      const lead = leadStories[Math.min(homepageNewsRequests, leadStories.length - 1)];
+      homepageNewsRequests += 1;
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(packet([lead])) });
+      return;
+    }
+    if (url.pathname === "/api/source-intelligence/news/preview-image/v1") {
+      if (url.searchParams.get("legacy_id") === "900003") {
+        await route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
+        return;
+      }
+      await route.fulfill({ status: 200, contentType: "image/png", body: previewPng });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(packet([])) });
+  });
+  await homeContext.route("**/v1/swfi/top20**", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(packet([])) });
+  });
+  const homepage = await homeContext.newPage();
+  homepage.setDefaultTimeout(60_000);
+  await homepage.goto(`${ORIGIN}/swficc/`, { waitUntil: "domcontentloaded", timeout: 120_000 });
+  const featuredStory = homepage.getByTestId("featured-news-story");
+  const featuredImage = homepage.getByTestId("featured-news-image");
+  await featuredStory.getByRole("heading", { name: "Top story before refresh", exact: true }).waitFor({ state: "visible" });
+  const firstStoryId = await featuredStory.getAttribute("data-news-story-id");
+  const firstImageSource = await featuredImage.getAttribute("src");
+  await homepage.evaluate(() => window.dispatchEvent(new Event("swfi:refresh-news")));
+  await featuredStory.getByRole("heading", { name: "Top story after refresh", exact: true }).waitFor({ state: "visible" });
+  await homepage.waitForFunction(() => document.querySelector('[data-testid="featured-news-image"]')?.getAttribute("src")?.includes("legacy_id=900002"));
+  const secondStoryId = await featuredStory.getAttribute("data-news-story-id");
+  const secondImageSource = await featuredImage.getAttribute("src");
+  const secondImageMode = await featuredImage.getAttribute("data-news-image-source");
+  check("homepage_lead_story_auto_refresh", homepageNewsRequests >= 2 && firstStoryId === "900001" && secondStoryId === "900002", `requests=${homepageNewsRequests} ${firstStoryId}->${secondStoryId}`);
+  check("homepage_lead_image_follows_story", firstImageSource !== secondImageSource && secondImageSource?.includes("legacy_id=900002") && secondImageMode === "editorial", `${firstImageSource} -> ${secondImageSource} (${secondImageMode})`);
+  await homepage.evaluate(() => window.dispatchEvent(new Event("swfi:refresh-news")));
+  await featuredStory.getByRole("heading", { name: "Top story with safe fallback", exact: true }).waitFor({ state: "visible" });
+  await homepage.waitForFunction(() => document.querySelector('[data-testid="featured-news-image"]')?.getAttribute("data-news-image-source") === "story-fallback");
+  const fallbackImageSource = await featuredImage.getAttribute("src");
+  check("homepage_lead_image_safe_fallback", fallbackImageSource?.startsWith("data:image/svg+xml,") && await featuredImage.getAttribute("data-news-story-id") === "900003", `${await featuredImage.getAttribute("data-news-image-source")} ${String(fallbackImageSource).slice(0, 80)}`);
+  await homepage.screenshot({ path: "output/swfipn-homepage-live-lead-story-latest.png", fullPage: true });
+  await homeContext.close();
 } finally {
   await browser.close();
 }

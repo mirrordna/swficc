@@ -95,7 +95,8 @@ Production API DNS cutover: `missing`
 
 - The production news API currently returns current stories with blank
   publication dates. The candidate backend normalizes active WordPress date
-  fields, but that change has not been deployed or probed against remote Atlas.
+  fields and adds the allowlisted same-origin editorial preview path, but those
+  changes have not been deployed or probed against remote Atlas.
 - The serving reports catalog contains 78 records and its latest record is
   dated May 2, 2024. The candidate labels this as a historical catalog; it does
   not claim that the underlying report inventory is fresh.
@@ -110,12 +111,14 @@ Production API DNS cutover: `missing`
 | Check | Result | Scope |
 | --- | --- | --- |
 | KP browser gate | `pass` | 13 checks covering Smart Search, AUM order, and Deals multi-select |
-| Competition Analysis gate | `pass` | 13 selector, parity, URL-state, and evidence-boundary checks |
-| Freshness browser gate | `pass` | 6 mocked-contract checks for news/report ordering, routing, and catalog disclosure |
+| Competition Analysis gate | `pass` | 15 remote-data selector, parity, URL-state, Strategy Engine, and evidence-boundary checks |
+| Strategy Engine logic test | `pass` | 10 deterministic checks across nine strategy dimensions, peer position, allocation, activity, sources, and research actions |
+| Freshness browser gate | `pass` | 9 browser checks for news/report ordering, routing, catalog disclosure, synchronized lead-story refresh, and safe story-derived image fallback |
+| Public CMS preview probe | `pass` | Current WordPress post `109307` resolved through the candidate allowlist to `image/png` (1,148,402 bytes) without a local data store |
 | Smart Search intent tests | `pass` | 12 deterministic intent cases |
 | No-local-Mongo policy and stack gate | `pass` | configuration, manifests, parity scripts, and runtime-policy checks |
 | TypeScript and production build | `pass` | local candidate only |
-| Backend test suite | `pass` | 208 tests against fixtures/mocks; no remote Atlas probe |
+| Backend test suite | `pass` | 210 tests against fixtures/mocks; no remote Atlas probe |
 
 ## Phase 2 / Change Requests
 

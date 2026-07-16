@@ -14,6 +14,7 @@
     "test:record-sort": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/swfipn-record-sort-defaults-test.mjs",
     "test:smart-search-intent": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/swfipn-smart-search-intent-test.mjs",
     "test:competition-analysis": "node scripts/swfipn-competition-analysis-gate.mjs",
+    "test:strategy-engine": "node scripts/swfipn-strategy-engine-test.mjs",
     "test:kp-feedback-browser": "node scripts/swfipn-kp-feedback-browser-gate.mjs",
     "test:freshness-browser": "node scripts/swfipn-freshness-browser-gate.mjs",
     "test:mongo-policy": "node scripts/swfipn-mongo-policy-test.mjs",
