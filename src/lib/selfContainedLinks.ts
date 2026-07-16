@@ -1,5 +1,5 @@
 const APP_BASE = "/swficc";
-const SWFI_RECORD_SECTIONS = new Set(["entities", "people", "transactions", "compass"]);
+const SWFI_RECORD_SECTIONS = new Set(["entities", "people", "transactions", "compass", "news"]);
 const SWFI_HOSTS = new Set(["swfi.com", "www.swfi.com", "cms.swfi.com"]);
 
 const ROUTE_BY_SECTION: Record<string, string> = {
@@ -150,11 +150,18 @@ export function swfiRecordPathFromHref(href: string | undefined): string {
     const section = v1Index >= 0 ? parts[v1Index + 1] : parts[0];
     const id = v1Index >= 0 ? parts[v1Index + 2] : parts[1];
     if (!SWFI_RECORD_SECTIONS.has(section || "")) return "";
-    if (!/^[a-f0-9]{24}$/i.test(id || "")) return "";
+    const validId = section === "news"
+      ? /^\d{1,12}$/.test(id || "")
+      : /^[a-f0-9]{24}$/i.test(id || "");
+    if (!validId) return "";
     return `/v1/${section}/${id}`;
   } catch {
-    const match = String(href || "").match(/^\/v1\/(entities|people|transactions|compass)\/([a-f0-9]{24})$/i);
-    return match ? `/v1/${match[1]}/${match[2]}` : "";
+    const match = String(href || "").match(/^\/v1\/(entities|people|transactions|compass|news)\/([^/?#]+)$/i);
+    if (!match) return "";
+    const validId = match[1].toLowerCase() === "news"
+      ? /^\d{1,12}$/.test(match[2])
+      : /^[a-f0-9]{24}$/i.test(match[2]);
+    return validId ? `/v1/${match[1]}/${match[2]}` : "";
   }
 }
 

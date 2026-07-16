@@ -114,6 +114,7 @@ function canonicalRecordKindFromPath(pathname) {
   if (/^\/v1\/people\/[a-f0-9]{24}\/?$/i.test(pathname)) return "people";
   if (/^\/v1\/transactions\/[a-f0-9]{24}\/?$/i.test(pathname)) return "transactions";
   if (/^\/v1\/compass\/[a-f0-9]{24}\/?$/i.test(pathname)) return "compass";
+  if (/^\/v1\/news\/\d{1,12}\/?$/i.test(pathname)) return "research";
   return "";
 }
 
@@ -320,6 +321,7 @@ async function inspectRoute(browser, route) {
           if (kind === "research") {
             return hrefs.some((anchor) => {
               if (/\/swficc\/research\/detail\/?\?/i.test(anchor.href) || /\/research\/detail\/?\?/i.test(anchor.href)) return true;
+              if (/https:\/\/www\.swfi\.com\/v1\/signin\/?\?/i.test(anchor.href) && decodeURIComponent(anchor.href).includes("/v1/news/")) return true;
               try {
                 const parsed = new URL(anchor.href);
                 return ["www.swfi.com", "swfi.com", "cms.swfi.com"].includes(parsed.hostname) && Boolean(parsed.searchParams.get("p"));

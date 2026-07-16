@@ -306,7 +306,8 @@ function swfiSigninRedirectPath(value) {
     if (!redirect || /^https?:\/\//i.test(redirect)) return "";
     const redirectUrl = new URL(redirect, "https://www.swfi.com");
     const pathname = redirectUrl.pathname.replace(/\/?$/, "/");
-    return /^\/v1\/(entities|people|transactions|compass)\/[a-f0-9]{24}\/$/i.test(pathname) ? pathname : "";
+    return (/^\/v1\/(entities|people|transactions|compass)\/[a-f0-9]{24}\/$/i.test(pathname)
+      || /^\/v1\/news\/\d{1,12}\/$/i.test(pathname)) ? pathname : "";
   } catch {
     return "";
   }
@@ -318,6 +319,7 @@ function swfiRecordHandoffKind(value) {
   if (/^\/v1\/transactions\/[a-f0-9]{24}\/$/i.test(pathname)) return "transaction";
   if (/^\/v1\/compass\/[a-f0-9]{24}\/$/i.test(pathname)) return "mandate";
   if (/^\/v1\/people\/[a-f0-9]{24}\/$/i.test(pathname)) return "person";
+  if (/^\/v1\/news\/\d{1,12}\/$/i.test(pathname)) return "legacy";
   return "";
 }
 

@@ -14,6 +14,11 @@ import {
   previewPageCount,
   PREVIEW_PAGE_CAP,
 } from "../src/lib/sectionDashboards.ts";
+import {
+  isSwfiPlatformRecordHref,
+  swfiAuthHandoffHref,
+  swfiRecordPathFromHref,
+} from "../src/lib/selfContainedLinks.ts";
 
 const NOW = Date.parse("2026-07-08T12:00:00Z");
 const DAY = 86_400_000;
@@ -170,6 +175,16 @@ check("preview cap bounds a universe-sized pager", previewPageCount(23805), PREV
 check("preview cap passes small pagers through", previewPageCount(3), 3);
 check("preview cap floors at one page", previewPageCount(0), 1);
 check("preview cap truncates fractional page counts", previewPageCount(2.9), 2);
+
+// Canonical SWFI record handoffs, including numeric CMS news records.
+check("news record path is canonical", swfiRecordPathFromHref("https://www.swfi.com/v1/news/109307"), "/v1/news/109307");
+check("news record is a platform record", isSwfiPlatformRecordHref("https://www.swfi.com/v1/news/109307"), true);
+check(
+  "news record uses authenticated handoff",
+  swfiAuthHandoffHref("https://www.swfi.com/v1/news/109307"),
+  "https://www.swfi.com/v1/signin/?msg=auth&redirect=%2Fv1%2Fnews%2F109307",
+);
+check("non-numeric news id fails closed", swfiRecordPathFromHref("https://www.swfi.com/v1/news/not-a-post"), "");
 
 // Dashboard 2.0 E2E contract gate helpers (same module the browser gate runs)
 const { vagueLabelIssue, staleDataIssue, elementContractIssues, ctaDestinationIssue } = await import("./swfipn-dashboard20-e2e-contract-gate.mjs");

@@ -31,7 +31,7 @@ const listRoutes = [
   { id: "transactions", route: "/transactions/", api: "/api/transactions/v1", totalAtLeast: 180_000, kind: "transaction", pattern: /\/swficc\/transactions\/detail\/\?(?=[^#]*(?:title|id)=)/i },
   { id: "deals", route: "/deals/", api: "/api/transactions/v1", totalAtLeast: 180_000, kind: "transaction", pattern: /\/swficc\/transactions\/detail\/\?(?=[^#]*(?:title|id)=)/i },
   { id: "mandates", route: "/mandates/", api: "/api/live-opportunities/v1", totalAtLeast: 30, kind: "compass", pattern: /\/swficc\/mandates\/detail\/\?(?=[^#]*(?:title|id)=)/i },
-  { id: "intelligence", route: "/intelligence/", api: "/api/source-intelligence/news/v1", totalAtLeast: 10, kind: "legacy", pattern: /\/swficc\/research\/detail\/\?(?:[^#]*&)?legacy=\d+/i },
+  { id: "intelligence", route: "/intelligence/", api: "/api/source-intelligence/news/v1", totalAtLeast: 10, kind: "legacy", pattern: /(?:\/swficc\/research\/detail\/\?(?:[^#]*&)?legacy=\d+|\/v1\/news\/\d{1,12})/i },
 ];
 
 const forbiddenText = [
@@ -171,6 +171,7 @@ function swfiRecordKind(href) {
       if (/\/v1\/transactions\/[^/]+\/?$/i.test(target.pathname)) return "transaction";
       if (/\/v1\/compass\/[^/]+\/?$/i.test(target.pathname)) return "compass";
       if (/\/v1\/people\/[^/]+\/?$/i.test(target.pathname)) return "person";
+      if (/\/v1\/news\/\d{1,12}\/?$/i.test(target.pathname)) return "legacy";
       return "";
     }
     const parts = parsed.pathname.split("/").filter(Boolean);
@@ -181,6 +182,7 @@ function swfiRecordKind(href) {
     if (section === "transactions" && id) return "transaction";
     if (section === "compass" && id) return "compass";
     if ((section === "people" || section === "person") && id) return "person";
+    if (section === "news" && /^\d{1,12}$/.test(id || "")) return "legacy";
     if (parsed.searchParams.get("p")) return "legacy";
   } catch {
     return "";

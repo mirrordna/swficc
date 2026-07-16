@@ -102,7 +102,8 @@ function parseCanonicalSwfiSignin(href) {
     if (parsed.pathname.replace(/\/?$/, "/") !== "/v1/signin/") return null;
     if (parsed.searchParams.get("msg") !== "auth") return null;
     const redirect = parsed.searchParams.get("redirect") || "";
-    if (!/^\/v1\/(?:entities|people|transactions|compass)\/[a-f0-9]{24}\/?$/i.test(redirect)) return null;
+    if (!(/^\/v1\/(?:entities|people|transactions|compass)\/[a-f0-9]{24}\/?$/i.test(redirect)
+      || /^\/v1\/news\/\d{1,12}\/?$/i.test(redirect))) return null;
     return { href: parsed.href, redirect };
   } catch {
     return null;
@@ -118,7 +119,8 @@ function swfiRecordPathFromHref(href) {
     const parsed = new URL(href, origin);
     if (parsed.hostname !== "www.swfi.com") return "";
     if (parsed.pathname.replace(/\/?$/, "/") === "/v1/signin/") return parseCanonicalSwfiSignin(parsed.href)?.redirect || "";
-    if (/^\/v1\/(?:entities|people|transactions|compass)\/[a-f0-9]{24}\/?$/i.test(parsed.pathname)) {
+    if (/^\/v1\/(?:entities|people|transactions|compass)\/[a-f0-9]{24}\/?$/i.test(parsed.pathname)
+      || /^\/v1\/news\/\d{1,12}\/?$/i.test(parsed.pathname)) {
       return parsed.pathname.replace(/\/$/, "");
     }
   } catch {

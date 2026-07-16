@@ -150,7 +150,8 @@ function researchDetailUrl(row: Row, options: DashboardDetailOptions): string {
   const source = text(options.sourceUrl || row.source_url || row.swfi_url || row.url, "");
   if (/^https?:\/\//i.test(source) && isAllowedSwfiUrl(source)) {
     const sourceRecord = parseSwfiRecordSource(source);
-    return sourceRecord.id ? swfiAuthHandoffHref(source) : source;
+    const handoff = swfiAuthHandoffHref(source);
+    return sourceRecord.id || handoff !== source ? handoff : source;
   }
   const legacy = legacyPostId(options.sourceUrl) || text(row.legacy_post || row.legacy_post_id || row.post_id || row.wordpress_id, "");
   if (legacy) return `https://www.swfi.com/?p=${encodeURIComponent(legacy)}`;
