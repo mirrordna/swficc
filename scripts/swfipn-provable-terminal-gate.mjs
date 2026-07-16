@@ -209,7 +209,8 @@ function isAllowedExternalRecordUrl(href) {
     const parsed = new URL(String(href || ""));
     if (!["www.swfi.com", "swfi.com", "cms.swfi.com"].includes(parsed.hostname)) return false;
     if (parsed.searchParams.get("p")) return true;
-    return /^\/v1\/(entities|people|transactions|compass|news)\/[a-f0-9]{24}\/?$/i.test(parsed.pathname);
+    return /^\/v1\/(entities|people|transactions|compass)\/[a-f0-9]{24}\/?$/i.test(parsed.pathname)
+      || /^\/v1\/news\/\d{1,12}\/?$/i.test(parsed.pathname);
   } catch {
     return false;
   }

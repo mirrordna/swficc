@@ -147,7 +147,8 @@ function isApprovedSwfiRecordHandoff(href) {
     if (!redirect || /^https?:\/\//i.test(redirect)) return false;
     const redirectUrl = new URL(redirect, "https://www.swfi.com");
     const pathname = redirectUrl.pathname.replace(/\/?$/, "/");
-    return /^\/v1\/(entities|people|transactions|compass)\/[a-f0-9]{24}\/$/i.test(pathname);
+    return /^\/v1\/(entities|people|transactions|compass)\/[a-f0-9]{24}\/$/i.test(pathname)
+      || /^\/v1\/news\/\d{1,12}\/$/i.test(pathname);
   } catch {
     return false;
   }

@@ -106,7 +106,8 @@ function isCanonicalSwfiHandoffUrl(value) {
         return redirect.startsWith(basePath || "/");
       }
     }
-    return /^\/v1\/(entities|people|transactions|compass|news)\/[a-f0-9]{24}\/?$/i.test(parsed.pathname);
+    return /^\/v1\/(entities|people|transactions|compass)\/[a-f0-9]{24}\/?$/i.test(parsed.pathname)
+      || /^\/v1\/news\/\d{1,12}\/?$/i.test(parsed.pathname);
   } catch {
     return false;
   }

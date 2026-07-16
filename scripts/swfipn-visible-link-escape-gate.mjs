@@ -97,7 +97,8 @@ function withTimeout(promise, ms, label) {
 function isRawSwfiRecordUrl(value) {
   // Bare auth entry (law 2026-07-06) is not a record URL.
   if (isSwfiAuthEntryHref(value)) return false;
-  return /https?:\/\/(?:www\.|cms\.)?swfi\.com\/v1\/(?:entities|people|transactions|compass)\/[a-f0-9]{24}/i.test(String(value || ""));
+  return (/https?:\/\/(?:www\.|cms\.)?swfi\.com\/v1\/(?:entities|people|transactions|compass)\/[a-f0-9]{24}/i.test(String(value || ""))
+    || /https?:\/\/(?:www\.|cms\.)?swfi\.com\/v1\/news\/\d{1,12}/i.test(String(value || "")));
 }
 
 // The bare SWFI sign-in page (no redirect param) is the platform's auth
@@ -133,7 +134,8 @@ function isCanonicalSwfiHandoffUrl(value) {
       const redirect = parsed.searchParams.get("redirect") || "";
       if (!redirect || !redirect.startsWith("/") || /^https?:\/\//i.test(redirect)) return false;
       const redirectUrl = new URL(redirect, "https://www.swfi.com");
-      return /^\/v1\/(entities|people|transactions|compass)\/[a-f0-9]{24}\/?$/i.test(redirectUrl.pathname);
+      return /^\/v1\/(entities|people|transactions|compass)\/[a-f0-9]{24}\/?$/i.test(redirectUrl.pathname)
+        || /^\/v1\/news\/\d{1,12}\/?$/i.test(redirectUrl.pathname);
     }
   } catch {
     return false;
