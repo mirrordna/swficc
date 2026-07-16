@@ -47,7 +47,20 @@ try {
       const resultSummary = body.match(/All categories · Showing ([\d,]+) of ([\d,]+)/)?.[0] || "";
       const resultRows = await page.locator("main tbody tr").count();
       const sourceHandoffs = await page.locator('main tbody a[href*="www.swfi.com/v1/signin/"]').count();
-      return { query, explanation, resultSummary, resultRows, sourceHandoffs, pass: resultRows > 0 && sourceHandoffs > 0 };
+      const detailCells = (await page.locator("main tbody tr td:nth-child(4)").allTextContents()).map((value) => value.trim());
+      const requiresMatchedBuyer = query === "Sovereign Wealth Funds investing in AI";
+      const minimumRows = query === "Pension Funds in Europe" ? 10 : 1;
+      return {
+        query,
+        explanation,
+        resultSummary,
+        resultRows,
+        sourceHandoffs,
+        matchingBuyerEvidence: detailCells.filter((value) => value.startsWith("Matched buyer:")),
+        pass: resultRows >= minimumRows
+          && sourceHandoffs > 0
+          && (!requiresMatchedBuyer || detailCells.every((value) => value.startsWith("Matched buyer:"))),
+      };
     } finally {
       await page.close();
     }

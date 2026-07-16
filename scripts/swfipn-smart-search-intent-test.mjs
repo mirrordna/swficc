@@ -12,8 +12,8 @@ const cases = [
   ["RFPs from the Middle East", "regional-opportunities", "opportunities", "live-opportunities/v1"],
   ["Sovereign Wealth Funds investing in AI", "institutional-theme-investments", "transactions", "buyer_type=Sovereign+Wealth+Fund"],
   ["Pension Funds in Europe", "regional-institutions", "entities", "collection=entities"],
-  ["Family offices in MENA", "regional-institutions", "entities", "q=Family%20Office"],
-  ["Central banks in APAC", "regional-institutions", "entities", "q=Central%20Bank"],
+  ["Family offices in MENA", "regional-institutions", "entities", "entity_type=Family%20Office"],
+  ["Central banks in APAC", "regional-institutions", "entities", "entity_type=Central%20Bank"],
   ["Most active sovereign investors in the GCC", "active-investors", "entities", "allocator-activity/v1"],
   ["Open manager searches in EMEA", "regional-opportunities", "opportunities", "live-opportunities/v1"],
   ["Pension plans investing in healthcare in the last 90 days", "institutional-theme-investments", "transactions", "value=Healthcare"],
@@ -41,6 +41,9 @@ assert.equal(
 
 const pensionIntent = smartSearchIntentForQuery("Pension Funds in Europe");
 assert.ok(pensionIntent);
+assert.ok(pensionIntent.requests.every((request) => request.endpoint.includes("entity_type=Pension")));
+assert.ok(pensionIntent.requests.every((request) => request.endpoint.includes("region=Europe")));
+assert.ok(pensionIntent.requests.every((request) => !request.endpoint.includes("q=")));
 assert.deepEqual(
   filterSmartSearchIntentRows(pensionIntent, [
     { name: "European Pension", type: "Public Pension", region: "Europe", source_url: "https://www.swfi.com/v1/entities/1" },
@@ -53,6 +56,9 @@ assert.deepEqual(
 
 const apacCentralBankIntent = smartSearchIntentForQuery("Central banks in APAC");
 assert.ok(apacCentralBankIntent);
+assert.equal(apacCentralBankIntent.requests.length, 2);
+assert.ok(apacCentralBankIntent.requests.some((request) => request.endpoint.includes("region=Asia")));
+assert.ok(apacCentralBankIntent.requests.some((request) => request.endpoint.includes("region=Australia%20and%20Pacific")));
 assert.deepEqual(
   filterSmartSearchIntentRows(apacCentralBankIntent, [
     { name: "Asian central bank", type: "Central Bank", region: "Asia", source_url: "https://www.swfi.com/v1/entities/4" },
@@ -64,11 +70,13 @@ assert.deepEqual(
 
 const swfAiIntent = smartSearchIntentForQuery("Sovereign Wealth Funds investing in AI");
 assert.ok(swfAiIntent);
-assert.equal(filterSmartSearchIntentRows(swfAiIntent, [{
+const swfAiRows = filterSmartSearchIntentRows(swfAiIntent, [{
   title: "AI deal",
   source_url: "https://www.swfi.com/v1/transactions/1",
-  buyer_entities: [{ type: "Sovereign Wealth Fund" }],
-}]).length, 1);
+  buyer_entities: [{ name: "Qatar Investment Authority", type: "Sovereign Wealth Fund" }, { name: "Co-investor", type: "Asset Manager" }],
+}]);
+assert.equal(swfAiRows.length, 1);
+assert.deepEqual(swfAiRows[0].__smartSearchMatchedBuyers, ["Qatar Investment Authority"]);
 
 const pensionHealthcareIntent = smartSearchIntentForQuery("Pension plans investing in healthcare in the last 90 days");
 assert.ok(pensionHealthcareIntent);

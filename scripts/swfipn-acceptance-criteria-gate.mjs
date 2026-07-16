@@ -523,7 +523,8 @@ async function lookAndFeelCheck(browser) {
       { name: "desktop", width: 1440, height: 1000 },
       { name: "mobile", width: 390, height: 980 },
     ]) {
-      const page = await context.newPage({ viewport: { width: viewport.width, height: viewport.height } });
+      const page = await context.newPage();
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
       const response = await page.goto(appUrl("/"), { waitUntil: "domcontentloaded", timeout: 90_000 });
       if (!response || response.status() >= 400) result.failures.push(`${viewport.name}:http_${response?.status() || "missing"}`);
       const body = await hydratedBody(page, requiredDashboardText, 90_000);

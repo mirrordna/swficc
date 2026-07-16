@@ -240,10 +240,10 @@ export function smartSearchIntentForQuery(query: string): SmartSearchIntent | nu
       entityTypes: entity.sourceTypes,
       label: `${entity.label} in ${region.label}`,
       explanation: `${entity.label} with a sourced region in ${region.label}`,
-      requests: [{
-        key: "regional-institutions",
-        endpoint: `/api/source-data/search/v1?collection=entities&q=${encodeURIComponent(entity.sourceQuery)}&limit=100&page=1`,
-      }],
+      requests: region.sourceValues.map((sourceRegion, index) => ({
+        key: `regional-institutions-${index}`,
+        endpoint: `/api/source-data/search/v1?collection=entities&entity_type=${encodeURIComponent(entity.sourceTypes[0])}&region=${encodeURIComponent(sourceRegion)}&limit=100&page=1`,
+      })),
     };
   }
 
@@ -251,18 +251,25 @@ export function smartSearchIntentForQuery(query: string): SmartSearchIntent | nu
 }
 
 export function filterSmartSearchIntentRows(intent: SmartSearchIntent, sourceRows: Record<string, unknown>[]): Record<string, unknown>[] {
-  return sourceRows.filter((row) => {
+  return sourceRows.flatMap((row) => {
     if (intent.regions?.length) {
       const rowRegion = normalizedField(row.region);
-      if (!intent.regions.some((region) => normalizedField(region) === rowRegion)) return false;
+      if (!intent.regions.some((region) => normalizedField(region) === rowRegion)) return [];
     }
     if (intent.entityTypes?.length) {
       const typeMatch = intent.category === "transactions"
         ? transactionHasBuyerType(row, intent.entityTypes)
         : valueMatchesSourceTypes(row.type || row.entity_type, intent.entityTypes);
-      if (!typeMatch) return false;
+      if (!typeMatch) return [];
     }
-    return Boolean(String(row.source_url || row.swfi_url || row.url || "").trim());
+    if (!String(row.source_url || row.swfi_url || row.url || "").trim()) return [];
+    if (intent.category !== "transactions" || !intent.entityTypes?.length) return [row];
+    const matchedBuyers = transactionBuyersOfTypes(row, intent.entityTypes);
+    return [{
+      ...row,
+      __smartSearchMatchedBuyers: matchedBuyers.map((buyer) => String(buyer.name || "").trim()).filter(Boolean),
+      __smartSearchMatchedBuyerTypes: matchedBuyers.map((buyer) => String(buyer.type || buyer.entity_type || buyer.entityType || "").trim()).filter(Boolean),
+    }];
   });
 }
 
@@ -298,12 +305,16 @@ function intentDays(clean: string): number {
 }
 
 function transactionHasBuyerType(row: Record<string, unknown>, entityTypes: string[]): boolean {
+  return transactionBuyersOfTypes(row, entityTypes).length > 0;
+}
+
+function transactionBuyersOfTypes(row: Record<string, unknown>, entityTypes: string[]): Record<string, unknown>[] {
   const buyers = Array.isArray(row.buyer_entities)
     ? row.buyer_entities
     : Array.isArray(row.buyerEntities)
       ? row.buyerEntities
       : [];
-  return buyers.some((buyer) => {
+  return buyers.filter((buyer): buyer is Record<string, unknown> => {
     if (!buyer || typeof buyer !== "object") return false;
     const candidate = buyer as Record<string, unknown>;
     return valueMatchesSourceTypes(candidate.type || candidate.entity_type || candidate.entityType, entityTypes);

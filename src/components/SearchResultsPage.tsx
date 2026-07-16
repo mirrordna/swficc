@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import SwfiBrandHeader from "@/components/SwfiBrandHeader";
 import type { Packet } from "@/lib/sourcePackets";
-import { fetchPacket, isFact, money, rows, text } from "@/lib/sourcePackets";
+import { fetchPacket, isFact, money, packetReason, rows, text } from "@/lib/sourcePackets";
 import { appHref, isSwfiPlatformRecordHref, selfContainedHref, swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
 import { businessSearchQueryVariants, dedupeSearchRecords, mergeSearchRecordsPreferPrimary, rankSearchRecords } from "@/lib/searchRelevance";
 import { filterSmartSearchIntentRows, smartSearchIntentForQuery } from "@/lib/smartSearchIntent";
@@ -53,6 +53,8 @@ export default function SearchResultsPage() {
   const [newsPacket, setNewsPacket] = useState<Packet | null>(null);
   const [intentPackets, setIntentPackets] = useState<Packet[]>([]);
   const [loading, setLoading] = useState(false);
+  const [searchIssue, setSearchIssue] = useState("");
+  const [retryKey, setRetryKey] = useState(0);
   const [rowLimit, setRowLimit] = useState(25);
   const [sortKey, setSortKey] = useState<"relevance" | "type" | "result" | "source" | "detail">("relevance");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -68,6 +70,8 @@ export default function SearchResultsPage() {
       if (!active) return;
       setQuery(currentQuery);
       setCategory(currentCategory);
+      setSearchIssue("");
+      setIntentPackets([]);
       if (cached) setPacket(cached);
       setLoading(Boolean(currentQuery) && !cached);
     }, 0);
@@ -160,13 +164,26 @@ export default function SearchResultsPage() {
 
     const intentSearch = currentIntent
       ? Promise.all(currentIntent.requests.map((request) => (
-          fetchPacket(request.endpoint, 25_000, { signal: controller.signal, attempts: 2 })
+          fetchPacket(request.endpoint, 25_000, { signal: controller.signal, attempts: 4 })
         ))).then((nextPackets) => {
           const factPackets = nextPackets.filter(isFact);
-          if (active) setIntentPackets(factPackets);
+          if (active) {
+            setIntentPackets(factPackets);
+            const transportFailures = nextPackets
+              .map(packetReason)
+              .filter((reason) => /^(?:backend_fetch_|backend_http_5|frontend_fetch_)/.test(reason));
+            if (transportFailures.length && !factPackets.length) {
+              setSearchIssue("The search connection was interrupted before results arrived.");
+            } else if (transportFailures.length) {
+              setSearchIssue("Some search sources were interrupted; the visible results may be partial.");
+            }
+          }
           return factPackets;
         }).catch(() => {
-          if (active) setIntentPackets([]);
+          if (active) {
+            setIntentPackets([]);
+            setSearchIssue("The search connection was interrupted before results arrived.");
+          }
           return [] as Packet[];
         })
       : Promise.resolve([] as Packet[]);
@@ -179,7 +196,7 @@ export default function SearchResultsPage() {
       window.clearTimeout(resetTimer);
       controller.abort();
     };
-  }, []);
+  }, [retryKey]);
 
   const resultRows = useMemo(() => {
     const interpretedIntent = smartSearchIntentForQuery(query);
@@ -319,7 +336,20 @@ export default function SearchResultsPage() {
                 );
               }) : (
                 <tr>
-                  <td colSpan={5} className="px-3 py-8 text-center text-[#6B7A89]">{loading ? "Loading…" : "No matching SWFI records."}</td>
+                  <td colSpan={5} className="px-3 py-8 text-center text-[#6B7A89]">
+                    {loading ? "Loading…" : searchIssue ? (
+                      <span className="inline-flex flex-col items-center gap-2">
+                        <span>{searchIssue}</span>
+                        <button
+                          type="button"
+                          onClick={() => setRetryKey((value) => value + 1)}
+                          className="rounded border border-[#16538C] bg-white px-3 py-1 font-semibold text-[#16538C]"
+                        >
+                          Retry search
+                        </button>
+                      </span>
+                    ) : "No matching SWFI records."}
+                  </td>
                 </tr>
               )}
             </tbody>
@@ -422,6 +452,10 @@ function searchResultDetail(row: CategorizedSearchRow): string {
 }
 
 function transactionBuyer(row: Record<string, unknown>): string {
+  const matchedBuyers = Array.isArray(row.__smartSearchMatchedBuyers)
+    ? row.__smartSearchMatchedBuyers.map((value) => meaningfulText(value)).filter(Boolean).slice(0, 3).join(", ")
+    : "";
+  if (matchedBuyers) return `Matched buyer: ${matchedBuyers}`;
   const direct = meaningfulText(row.buyer_entity || row.institution);
   if (direct) return direct;
   const buyers = Array.isArray(row.buyer_entities) ? row.buyer_entities : [];
