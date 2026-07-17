@@ -24,6 +24,7 @@ import AlertsRuleManager from "@/components/AlertsRuleManager";
 import SavedSearchManager from "@/components/SavedSearchManager";
 import CompetitionAnalysisWorkbench from "@/components/CompetitionAnalysisWorkbench";
 import { defaultSortColumn, defaultSortDir, type Kind } from "@/lib/recordSort";
+import { entityLifecycleIntent } from "@/lib/entityLifecycle";
 
 type Row = Record<string, unknown>;
 type CellLink = { label: string; href?: string; sourceHref?: string };
@@ -73,7 +74,7 @@ const CONFIG: Record<Kind, { title: string; endpoint: string; columns: string[];
   profiles: {
     title: "Institutions",
     endpoint: "/api/source-data/search/v1?collection=entities&limit=100",
-    columns: ["Entity Name", "Type", "Country", "AUM"],
+    columns: ["Entity Name", "Type", "Country", "AUM", "Status"],
   },
   people: {
     // Columns follow the SOURCE schema (keys-only probe, Paul-authorized
@@ -106,7 +107,7 @@ const CONFIG: Record<Kind, { title: string; endpoint: string; columns: string[];
   comparisons: {
     title: "Peer Comparisons",
     endpoint: "/api/source-data/search/v1?collection=entities&limit=100",
-    columns: ["Institution", "Entity Type", "Country / Region", "AUM", "Peer Group"],
+    columns: ["Institution", "Entity Type", "Country / Region", "AUM", "Peer Group", "Status"],
   },
   mandates: {
     // Amount added 2026-07-06 (unleveraged-fields probe: amount_display is
@@ -143,8 +144,8 @@ const CONFIG: Record<Kind, { title: string; endpoint: string; columns: string[];
 
 function rowCells(kind: Kind, row: Row): Cell[] {
   const href = sourceHref(row);
-  if (kind === "profiles") return [profileCell(row), businessText(row.type), businessText(row.country || row.region), disclosedMoney(row.aum || row.assets)];
-  if (kind === "comparisons") return [profileCell(row), businessText(row.type || row.entity_type), compactParts([row.country, row.region]), disclosedMoney(row.aum || row.assets), businessText(row.type || row.entity_type)];
+  if (kind === "profiles") return [profileCell(row), businessText(row.type), businessText(row.country || row.region), disclosedMoney(row.aum || row.assets), businessText(row.entity_status || (row.defunct === true ? "defunct" : "active"))];
+  if (kind === "comparisons") return [profileCell(row), businessText(row.type || row.entity_type), compactParts([row.country, row.region]), disclosedMoney(row.aum || row.assets), businessText(row.type || row.entity_type), businessText(row.entity_status || (row.defunct === true ? "defunct" : "active"))];
   if (kind === "allocators") {
     return [
       allocatorProfileCell(row),
@@ -382,6 +383,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
   const [selectedDealEntityTypes, setSelectedDealEntityTypes] = useState<string[]>([]);
   const [selectedDealIndustries, setSelectedDealIndustries] = useState<string[]>([]);
   const [selectedDealSectors, setSelectedDealSectors] = useState<string[]>([]);
+  const [includeDefunct, setIncludeDefunct] = useState(false);
   const [sectionView, setSectionView] = useState<"data" | "visualization">(() => supportsSectionVisualization(kind) ? "visualization" : "data");
   // Client fix (7-Jul): Active Allocators is restricted to the 10 most recent.
   // Other list kinds keep the 25-row default preview.
@@ -395,14 +397,19 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
   // string, so deciding at hydration time would mismatch — React #418.)
   useEffect(() => {
     try {
-      if (new URLSearchParams(window.location.search).has("filter")) {
+      const params = new URLSearchParams(window.location.search);
+      if (params.has("filter")) {
         // eslint-disable-next-line react-hooks/set-state-in-effect -- must set before paint (probe-pinned: filter arrivals land on Data view); a deferred update would flash the Visualization view first
+        setSectionView("data");
+      }
+      if ((kind === "profiles" || kind === "comparisons") && params.get("include_defunct") === "true") {
+        setIncludeDefunct(true);
         setSectionView("data");
       }
     } catch {
       /* no window or malformed query: keep the default view */
     }
-  }, []);
+  }, [kind]);
   const [pageIndex, setPageIndex] = useState(0);
   const serverPageIndex = isServerPagedKind(kind) ? pageIndex : 0;
   const serverRowLimit = isServerPagedKind(kind) ? rowLimit : 0;
@@ -420,7 +427,8 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
     if (kind !== "search") {
       if (kind === "profiles" || kind === "comparisons") {
         const entityQuery = serverFilterTerm ? `&q=${encodeURIComponent(serverFilterTerm)}` : "";
-        return { main: `/api/source-data/search/v1?collection=entities${entityQuery}&limit=${serverRowLimit}&page=${serverPageIndex + 1}` };
+        const lifecycleQuery = includeDefunct ? "&include_defunct=true" : "";
+        return { main: `/api/source-data/search/v1?collection=entities${entityQuery}${lifecycleQuery}&limit=${serverRowLimit}&page=${serverPageIndex + 1}` };
       }
       if (kind === "people") {
         const peopleQuery = serverFilterTerm ? `&q=${encodeURIComponent(serverFilterTerm)}` : "";
@@ -463,10 +471,15 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
     const clean = submittedQuery.trim();
     if (!clean) return {};
     const encoded = encodeURIComponent(clean);
+    const lifecycleIntent = entityLifecycleIntent(clean);
+    if (lifecycleIntent.explicitDefunctRequest) {
+      const sourceQuery = lifecycleIntent.sourceQuery ? `&q=${encodeURIComponent(lifecycleIntent.sourceQuery)}` : "";
+      return { institutions: `/api/source-data/search/v1?collection=entities${sourceQuery}&entity_status=defunct&limit=${rowLimit}` };
+    }
     return {
       institutions: `/api/v1/public/search?q=${encoded}&limit=${rowLimit}`,
     };
-  }, [allocatorSort, config.endpoint, config.sources, dealFieldFilters, kind, rowLimit, serverFilterTerm, serverPageIndex, serverRowLimit, serverSortDir, submittedQuery]);
+  }, [allocatorSort, config.endpoint, config.sources, dealFieldFilters, includeDefunct, kind, rowLimit, serverFilterTerm, serverPageIndex, serverRowLimit, serverSortDir, submittedQuery]);
 
   useEffect(() => {
     let active = true;
@@ -510,6 +523,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
     if (kind !== "search") return;
     const clean = submittedQuery.trim();
     if (!clean || !packets.institutions || packets.people || packets.strategy) return;
+    if (entityLifecycleIntent(clean).explicitDefunctRequest) return;
     let active = true;
     const controller = new AbortController();
     const encoded = encodeURIComponent(clean);
@@ -574,7 +588,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
       })
       : packetRows;
     return scopedRows.map((row) => rowCells(kind, row));
-  }, [dealFieldFilters.length, allSourcesReady, isLoading, kind, packet, packets, selectedDealEntityTypes]);
+  }, [dealFieldFilters.length, isLoading, kind, packet, packets, selectedDealEntityTypes]);
   const dealFieldFilterTotal = useMemo(() => {
     if (kind !== "deals" || !dealFieldFilters.length) return null;
     if (dealFieldFilters.length > 1) return sourceRows.length;
@@ -741,7 +755,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
 
         <section data-gsap-reveal className={`rounded border border-[#DCE3EA] bg-white px-4 py-3 text-sm text-[#41566B] ${showRecordData ? "" : "hidden"}`}>
 		          <strong className="text-[#11314F]">Data view — a limited preview, not the database.</strong>
-		          <span className="mt-1 block text-[#7A8A9B]">Reached from a chart, ranking, or filter, this table shows the matching records; unfiltered, it shows the first preview pages only. Every row links to its SWFI platform page, where the full record lives.</span>
+		          <span className="mt-1 block text-[#7A8A9B]">{kind === "profiles" || kind === "comparisons" ? (includeDefunct ? "Explicit lifecycle view: active and defunct entities are included and labeled by the source API." : "Active entities only by default. Defunct=true records are excluded from results, counts, rankings, and visualizations.") : "Reached from a chart, ranking, or filter, this table shows the matching records; unfiltered, it shows the first preview pages only. Every row links to its SWFI platform page, where the full record lives."}</span>
         </section>
 
         <section data-gsap-reveal className={`grid grid-cols-1 gap-2 rounded border border-[#DCE3EA] bg-white px-4 py-3 text-sm sm:items-center ${showRecordData ? "" : "hidden"} ${kind === "allocators" ? "sm:grid-cols-[minmax(0,1fr)_180px_150px_190px]" : kind === "deals" ? "sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_160px_120px_180px_180px_180px]" : "sm:grid-cols-[minmax(0,1fr)_180px_150px]"}`}>
@@ -778,6 +792,24 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
               {(kind === "allocators" ? [5, 10] : [5, 10, 25, 50, 100]).map((value) => <option key={value} value={value}>{value}</option>)}
             </select>
 	          </label>
+	          {kind === "profiles" || kind === "comparisons" ? (
+	            <label className="flex min-h-9 items-center gap-2 self-end rounded border border-[#C7D2DD] bg-white px-2">
+	              <input
+	                type="checkbox"
+	                checked={includeDefunct}
+	                onChange={(event) => {
+	                  const checked = event.target.checked;
+	                  setIncludeDefunct(checked);
+	                  setPageIndex(0);
+	                  const url = new URL(window.location.href);
+	                  if (checked) url.searchParams.set("include_defunct", "true");
+	                  else url.searchParams.delete("include_defunct");
+	                  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+	                }}
+	              />
+	              <span className="font-semibold text-[#41566B]">Include defunct entities</span>
+	            </label>
+	          ) : null}
 	          {kind === "deals" ? (
               <MultiSelectField
                 label="Entity Type"
@@ -1211,7 +1243,6 @@ function transactionCell(row: Row, label = text(row.title || row.name)): Cell {
 function dealProfileCell(row: Row): Cell {
   const label = text(row.investor || row.name, "");
   if (!label) return NOT_DISCLOSED;
-  const slug = text(row.slug || row.profile_slug, "");
   const source = sourceHref(row);
   if (source) return { label, href: source, sourceHref: source, citationText: "SWFI profile on file" };
   return { label, href: `/profiles/?filter=${encodeURIComponent(label)}`, citationText: "SWFI profile lookup" };

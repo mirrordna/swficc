@@ -41,6 +41,9 @@ const VERIFIED_QUERY_ALIASES: Readonly<Record<string, readonly string[]>> = {
   aimco: ["Alberta Investment Management Corporation"],
   icd: ["Investment Corporation of Dubai"],
   kic: ["Korea Investment Corporation"],
+  "sovereign wealth funds": ["Sovereign Wealth Fund"],
+  "pension funds": ["Public Pension"],
+  "family offices": ["Family Office"],
 };
 
 export function businessSearchQueryVariants(query: string, sourceRows: Record<string, unknown>[] = []): string[] {

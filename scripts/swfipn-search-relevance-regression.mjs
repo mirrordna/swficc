@@ -60,6 +60,24 @@ const checks = [
     actual: businessSearchQueryVariants("PIF"),
     expected: ["PIF", "Public Investment Fund"],
   },
+  {
+    id: "query_variant_sovereign_wealth_funds",
+    query: "sovereign wealth funds",
+    actual: businessSearchQueryVariants("sovereign wealth funds"),
+    expected: ["sovereign wealth funds", "Sovereign Wealth Fund"],
+  },
+  {
+    id: "query_variant_pension_funds",
+    query: "pension funds",
+    actual: businessSearchQueryVariants("pension funds"),
+    expected: ["pension funds", "Public Pension"],
+  },
+  {
+    id: "query_variant_family_offices",
+    query: "family offices",
+    actual: businessSearchQueryVariants("family offices"),
+    expected: ["family offices", "Family Office"],
+  },
 ];
 
 const serverChecks = await runServerRenderedChecks();

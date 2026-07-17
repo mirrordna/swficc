@@ -7,6 +7,7 @@ import { fetchPacket, isFact, money, packetReason, rows, text } from "@/lib/sour
 import { appHref, isSwfiPlatformRecordHref, selfContainedHref, swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
 import { businessSearchQueryVariants, dedupeSearchRecords, mergeSearchRecordsPreferPrimary, rankSearchRecords } from "@/lib/searchRelevance";
 import { filterSmartSearchIntentRows, smartSearchIntentForQuery } from "@/lib/smartSearchIntent";
+import { entityLifecycleIntent } from "@/lib/entityLifecycle";
 
 const SEARCH_PREFETCH_CACHE_PREFIX = "swfipn.search.prefetch.v1:";
 const SEARCH_CATEGORIES = ["all", "entities", "opportunities", "transactions", "news", "people"] as const;
@@ -61,9 +62,10 @@ export default function SearchResultsPage() {
 
   useEffect(() => {
     const currentQuery = queryFromUrl();
+    const lifecycleIntent = entityLifecycleIntent(currentQuery);
     const currentCategory = categoryFromUrl();
-    const currentIntent = smartSearchIntentForQuery(currentQuery);
-    const cached = currentIntent ? null : cachedPacket(currentQuery);
+    const currentIntent = lifecycleIntent.explicitDefunctRequest ? null : smartSearchIntentForQuery(currentQuery);
+    const cached = currentIntent || lifecycleIntent.explicitDefunctRequest ? null : cachedPacket(currentQuery);
     let active = true;
     const controller = new AbortController();
     const resetTimer = window.setTimeout(() => {
@@ -82,7 +84,7 @@ export default function SearchResultsPage() {
         controller.abort();
       };
     }
-    const publicSearch: Promise<Packet | null> = currentIntent
+    const publicSearch: Promise<Packet | null> = currentIntent || lifecycleIntent.explicitDefunctRequest
       ? Promise.resolve(null)
       : fetchPacket(`/api/v1/public/search?q=${encodeURIComponent(currentQuery)}&limit=100`, 20_000, {
         signal: controller.signal,
@@ -92,10 +94,12 @@ export default function SearchResultsPage() {
         if (isFact(nextPacket)) setPacket(nextPacket);
         return nextPacket;
       });
+    const sourceVariants = lifecycleIntent.sourceQuery ? businessSearchQueryVariants(lifecycleIntent.sourceQuery) : [""];
+    const lifecycleQuery = lifecycleIntent.explicitDefunctRequest ? "&entity_status=defunct" : "";
     const entitySearch = currentIntent
       ? Promise.resolve([] as Packet[])
-      : Promise.all(businessSearchQueryVariants(currentQuery).map((variant) => (
-        fetchPacket(`/api/source-data/search/v1?collection=entities&q=${encodeURIComponent(variant)}&limit=100`, 25_000, {
+      : Promise.all(sourceVariants.map((variant) => (
+        fetchPacket(`/api/source-data/search/v1?collection=entities${variant ? `&q=${encodeURIComponent(variant)}` : ""}${lifecycleQuery}&limit=100`, 25_000, {
           signal: controller.signal,
           attempts: 2,
         })
@@ -108,7 +112,7 @@ export default function SearchResultsPage() {
       return [] as Packet[];
     });
 
-    const peopleSearch = !currentIntent && (currentCategory === "all" || currentCategory === "people")
+    const peopleSearch = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "people")
       ? fetchPacket(`/api/people/search/v1?q=${encodeURIComponent(currentQuery)}&limit=100`, 25_000, {
           signal: controller.signal,
           attempts: 2,
@@ -118,7 +122,7 @@ export default function SearchResultsPage() {
         }).catch(() => null)
       : Promise.resolve(null);
 
-    const opportunitySearch = !currentIntent && (currentCategory === "all" || currentCategory === "opportunities")
+    const opportunitySearch = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "opportunities")
       ? Promise.all([
           fetchPacket("/api/live-opportunities/v1?limit=100&page=1", 25_000, {
             signal: controller.signal,
@@ -138,7 +142,7 @@ export default function SearchResultsPage() {
         })
       : Promise.resolve([] as Packet[]);
 
-    const newsSearch = !currentIntent && (currentCategory === "all" || currentCategory === "news")
+    const newsSearch = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "news")
       ? fetchPacket("/api/source-intelligence/news/v1?limit=100", 25_000, {
           signal: controller.signal,
           attempts: 2,
@@ -148,7 +152,7 @@ export default function SearchResultsPage() {
         }).catch(() => null)
       : Promise.resolve(null);
 
-    const transactionSearch = !currentIntent && (currentCategory === "all" || currentCategory === "transactions")
+    const transactionSearch = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "transactions")
       ? Promise.all([publicSearch, entitySearch]).then(async ([publicPacket, nextEntityPackets]) => {
           if (!active) return null;
           const entityName = resolvedEntityName(currentQuery, publicPacket, nextEntityPackets);
@@ -199,7 +203,9 @@ export default function SearchResultsPage() {
   }, [retryKey]);
 
   const resultRows = useMemo(() => {
-    const interpretedIntent = smartSearchIntentForQuery(query);
+    const lifecycleIntent = entityLifecycleIntent(query);
+    const relevanceQuery = lifecycleIntent.sourceQuery || query;
+    const interpretedIntent = lifecycleIntent.explicitDefunctRequest ? null : smartSearchIntentForQuery(query);
     const intentRows = interpretedIntent
       ? filterSmartSearchIntentRows(interpretedIntent, intentPackets.flatMap((intentPacket) => packetRows(intentPacket)))
         .map((row) => categorizedSearchRow(row, interpretedIntent.category))
@@ -214,7 +220,7 @@ export default function SearchResultsPage() {
       .map((row) => categorizedSearchRow(row, "entities"));
     const entities = dedupeSearchRecords([
       ...intentEntities,
-      ...mergeSearchRecordsPreferPrimary(publicEntities, entityRows, query, "entity"),
+      ...mergeSearchRecordsPreferPrimary(publicEntities, entityRows, relevanceQuery, "entity"),
     ]);
     const matchedEntityName = transactionPacketEntityName(transactionPacket);
     const joinedTransactions = packetRows(transactionPacket).map((row) => ({
@@ -251,10 +257,14 @@ export default function SearchResultsPage() {
     if (category === "news") return news;
     return dedupeSearchRecords([...entities, ...transactions, ...opportunities, ...news, ...people]);
   }, [category, entityPackets, intentPackets, newsPacket, opportunityPackets, packet, peoplePacket, query, transactionPacket]);
-  const interpretedIntent = useMemo(() => smartSearchIntentForQuery(query), [query]);
+  const interpretedIntent = useMemo(() => {
+    const lifecycle = entityLifecycleIntent(query);
+    return lifecycle.explicitDefunctRequest ? null : smartSearchIntentForQuery(query);
+  }, [query]);
   const sortedRows = useMemo(() => sortSearchRows(resultRows, sortKey, sortDir), [resultRows, sortDir, sortKey]);
   const visibleRows = sortedRows.slice(0, rowLimit);
   const count = resultRows.length;
+  const lifecycleIntent = entityLifecycleIntent(query);
   const showingText = query
     ? `Showing ${visibleRows.length.toLocaleString("en-US")} of ${count.toLocaleString("en-US")}`
     : "Awaiting search";
@@ -275,7 +285,7 @@ export default function SearchResultsPage() {
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h1 className="m-0 text-[19px] font-bold text-[#11314F]">Smart Search</h1>
-              <p className="m-0 mt-1 text-[12px] text-[#7A8A9B]">{searchCategoryLabel(category)} results for {query ? `“${query}”` : "your search"}. Select any row to continue.</p>
+              <p className="m-0 mt-1 text-[12px] text-[#7A8A9B]">{searchCategoryLabel(category)} results for {query ? `“${query}”` : "your search"}. {lifecycleIntent.explicitDefunctRequest ? "Explicit defunct-only entity scope." : "Entity results are active-only by default."} Select any row to continue.</p>
               {interpretedIntent ? (
                 <p className="m-0 mt-2 text-[12px] text-[#234968]" data-testid="smart-search-results-interpretation">
                   <span className="font-semibold">Interpreted as:</span> {interpretedIntent.explanation}
