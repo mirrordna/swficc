@@ -49,7 +49,9 @@ services:
       SWFI2_HOST: 0.0.0.0
       SWFI2_PORT: 8362
       SWFI2_ALLOW_UNAUTH_LOCAL: "0"
-      SWFI2_STRICT_BOOT: ${SWFI2_STRICT_BOOT:-0}
+      # Production must fail closed if the approved remote source is missing,
+      # local, unreachable, or cannot warm the active-default SWF paths.
+      SWFI2_STRICT_BOOT: "1"
       SWFI2_PRODUCT_API_KEY_STORE_PATH: /app/product-state/api-product-keys.json
       SWFI2_PRODUCT_API_DOCS_ENABLED: "1"
       SWFI_MONGO_TIMEOUT_MS: "12000"
