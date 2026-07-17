@@ -9,7 +9,18 @@ services:
   swfipn-redis:
     image: redis:7.4-alpine
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1000"]
+    # Derived response cache only. Canonical SWFI facts remain in the approved
+    # remote source; Redis is bounded and may evict/rebuild any key safely.
+    command:
+      - redis-server
+      - --appendonly
+      - "no"
+      - --save
+      - ""
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - allkeys-lfu
     expose:
       - "6379"
     volumes:
@@ -57,7 +68,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 20s
+      start_period: 60s
 
   swfipn-web:
     build:
