@@ -1,0 +1,93 @@
+{
+  "schema_version": "swfipn.key_enhancements_part1.rerun.v1",
+  "generated_at": "2026-07-18T16:41:57Z",
+  "verdict": "GO_WITH_CAVEAT",
+  "rerun_kind": "fresh_verification_of_unchanged_deployed_bytes",
+  "redeployed": false,
+  "public_url": "https://dashboard.swfi.com/swficc/",
+  "runtime": {
+    "release": "/opt/swfipn-acceptance/releases/20260718T160531Z",
+    "asset_version": "20260718T160531Z",
+    "frontend_git_sha": "5c3beae5b99e87f201e7a28412ad0025b8509945",
+    "backend_git_sha": "e2df348021568fabf355fb3cddd409730745096f",
+    "frontend_image_id": "sha256:f03e3306c691bf5e82c59e4c3bde7be09ebdec3e36e64454f6f5fd855b511b6a",
+    "backend_image_id": "sha256:7e80eccaf9bbf1aece781c8d0069f77deece51bd7ca5c310507927fb47ffcf4a",
+    "containers_healthy": true,
+    "freshness_timer_active": true
+  },
+  "freshness": {
+    "status": "pass",
+    "mode": "read_only_verification",
+    "source_refresh_claimed": false,
+    "receipt": "/var/lib/swfipn/freshness/swfipn-freshness-audit-20260718T162925Z.json",
+    "sha256": "ac6a5a3527422844b0e6c6cc110cd87c2c3dd599fb8cc1e2d55cac7a3724f22e",
+    "previous_latest": "/var/lib/swfipn/freshness/swfipn-freshness-audit-20260718T160825Z.json",
+    "systemd_result": "success",
+    "systemd_exit_status": 0
+  },
+  "checks": [
+    {
+      "id": "part1_real_public_browser",
+      "status": "PASS_19_OF_19",
+      "receipt": "output/swfipn-key-enhancements-part1-rerun-20260718T162925Z.json",
+      "sha256": "68284d1016a3f5b3cddd09e0856d8d09c23a58ff1b83a99ec2b906f52fe0c531"
+    },
+    {
+      "id": "broad_acceptance",
+      "status": "PASS_10_OF_10",
+      "receipt": "output/swfipn-acceptance-criteria-gate-latest.json",
+      "sha256": "06dc8dff856996beb55a6c3abe933edb8141f93be8294f989b2a28c4301f7361"
+    },
+    {
+      "id": "runtime_staleness",
+      "status": "PASS_2_OF_2",
+      "receipt": "output/swfipn-runtime-staleness-gate-latest.json",
+      "sha256": "363dbec7efa53f4214d5de60abc49964aa70efd74a9e55e96a3cfd11254cf612"
+    },
+    {
+      "id": "visual_acceptance",
+      "status": "PASS_4_OF_4_THREE_VIEWPORTS",
+      "receipt": "output/swfipn-visual-gate-latest.json",
+      "sha256": "6c207b5c7ae6132aa94e3d1fee2933efb4aee16a76419d938963c7aaffde4e95"
+    },
+    {
+      "id": "latest_feedback_forensics",
+      "status": "PASS_WITH_DIRECT_MONGO_SHELL_BLOCKED",
+      "receipt": "output/swfipn-latest-feedback-forensic-gate-latest.json",
+      "sha256": "20aa36ff16a9327b01adf90a7919df36c663f3c13c93312a32dbadcce8df2fa8"
+    },
+    {
+      "id": "backend_live_health",
+      "status": "PASS_11_OF_11"
+    },
+    {
+      "id": "backend_schema_drift",
+      "status": "PASS_40_OF_40",
+      "backend_receipt": "output/schema-drift-latest.json",
+      "sha256": "8a16c5c05734e6b28d60d43a00b7837da981537a42a74538b5858616865a00c3"
+    },
+    {
+      "id": "canonical_source_reconciliation",
+      "status": "PASS",
+      "active": 168,
+      "defunct": 18,
+      "total": 186,
+      "total_assets": 16630797798116,
+      "row_differences": 0,
+      "credential_route": "approved_keychain_selector"
+    }
+  ],
+  "bad_news": [
+    "The frontend feedback gate still cannot receive the production Mongo URI directly in its shell; independent canonical reconciliation passed through the approved Keychain-scoped route.",
+    "This rerun verifies freshness and behavior but does not refresh or mutate canonical SWFI data.",
+    "No new product bytes were deployed because the live release identity matched the accepted candidate before testing."
+  ],
+  "unchecked_scope": [
+    "The complete external client query spreadsheet and final category-specific filter wishlist remain unavailable in the repository.",
+    "No client-approved latency SLA was supplied."
+  ],
+  "remaining_risk": [
+    "External acceptance scope may expand when SWFI supplies the complete corpus and filter specification.",
+    "A source-side refresh SLA and separately approved writer are required before claiming scheduled source refresh."
+  ]
+}
