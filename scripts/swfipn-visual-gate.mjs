@@ -28,7 +28,7 @@ const REQUIRED_TEXT = [
   // The map section's rendered assertion is "Global Capital Map" above.
   "Capital Flows",
   "SWFI Discovery Pathways",
-  "Top Institutional Relationships",
+  "Latest Institutional Activity",
   "Research & Analytics Hub",
   "Market Intelligence",
   "Activity Feed",
@@ -40,7 +40,7 @@ const REQUIRED_VISUAL_SECTIONS = [
   "Global Capital Map",
   "Capital Flows & Allocation Trends",
   "SWFI Discovery Pathways",
-  "Top Institutional Relationships",
+  "Latest Institutional Activity",
   "Research & Analytics Hub",
   "Market Intelligence",
   "Deal Intelligence",
