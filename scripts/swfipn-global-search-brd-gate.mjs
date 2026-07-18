@@ -42,7 +42,31 @@ async function main() {
   });
   const input = page.locator("[aria-label=\"Search query\"]");
   const autofocus = await input.evaluate((node) => document.activeElement === node).catch(() => false);
-  const autocompleteStarted = Date.now();
+  await page.evaluate(({ expected, queryValue }) => {
+    const dialog = document.querySelector("[role='dialog']");
+    const searchInput = document.querySelector("[aria-label='Search query']");
+    const timing = { started_at: null, completed_at: null };
+    window.__swfipnAutocompleteTiming = timing;
+    if (!dialog || !searchInput) return;
+    const normalizedQuery = String(queryValue || "").trim().toLowerCase();
+    const check = () => {
+      if (timing.started_at === null || timing.completed_at !== null) return;
+      const committedQuery = dialog.getAttribute("data-search-query") || "";
+      const hasExpectedResult = !expected || (dialog.textContent || "").includes(String(expected));
+      if (committedQuery === normalizedQuery && hasExpectedResult) {
+        timing.completed_at = performance.now();
+        observer.disconnect();
+      }
+    };
+    const observer = new MutationObserver(check);
+    observer.observe(dialog, { attributes: true, attributeFilter: ["data-search-query"], childList: true, subtree: true });
+    searchInput.addEventListener("input", () => {
+      timing.started_at = performance.now();
+      queueMicrotask(check);
+      requestAnimationFrame(check);
+    }, { once: true });
+  }, { expected: expectedResult, queryValue: query });
+  const autocompleteRunnerStarted = Date.now();
   await input.fill(query);
   await page.waitForFunction(() => {
     const dialog = document.querySelector("[role='dialog']");
@@ -51,13 +75,20 @@ async function main() {
     return text.includes("Entities") || text.includes("No visible dashboard matches.");
   }, null, { timeout: 10_000 });
   if (expectedResult) {
-    await page.waitForFunction((expected) => {
+    await page.waitForFunction(({ expected, queryValue }) => {
       const dialog = document.querySelector("[role='dialog']");
       if (!dialog) return false;
-      return (dialog.textContent || "").includes(String(expected));
-    }, expectedResult, { timeout: Math.max(10_000, autocompleteTargetMs) }).catch(() => {});
+      return (dialog.getAttribute("data-search-query") || "") === String(queryValue).trim().toLowerCase()
+        && (dialog.textContent || "").includes(String(expected));
+    }, { expected: expectedResult, queryValue: query }, { timeout: Math.max(10_000, autocompleteTargetMs) }).catch(() => {});
   }
-  const autocompleteMs = Date.now() - autocompleteStarted;
+  const autocompleteRunnerMs = Date.now() - autocompleteRunnerStarted;
+  const autocompleteMs = await page.evaluate(() => {
+    const timing = window.__swfipnAutocompleteTiming;
+    return timing && Number.isFinite(timing.started_at) && Number.isFinite(timing.completed_at)
+      ? Math.ceil(timing.completed_at - timing.started_at)
+      : null;
+  }).then((value) => Number.isFinite(value) ? value : autocompleteRunnerMs);
   await page.screenshot({ path: screenshotPath, fullPage: true });
 
   const modalText = await page.locator("[role=\"dialog\"]").innerText();
@@ -117,6 +148,8 @@ async function main() {
     summary: {
       dashboard_ready_ms: dashboardReadyMs,
       autocomplete_ms: autocompleteMs,
+      autocomplete_runner_ms: autocompleteRunnerMs,
+      autocomplete_measurement: "browser_input_to_react_committed_query_dom",
       autocomplete_p95_ms: autocompleteMs,
       autocomplete_target_ms: autocompleteTargetMs,
       results_page_ms: resultsPageMs,
