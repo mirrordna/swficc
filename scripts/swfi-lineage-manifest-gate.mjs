@@ -32,22 +32,22 @@ function run() {
   const dashboard = addNode(nodes, "surface", "dashboard.swfi.com/swficc");
   const mcpSurface = addNode(nodes, "surface", "swfi-mcp");
 
-  for (const module of modules) {
-    const moduleNode = addNode(nodes, "dashboard_module", module.id || "unknown", {
-      route: module.frontend_routes,
-      endpoint: module.endpoint,
-      freshness: module.freshness,
+  for (const validationModule of modules) {
+    const moduleNode = addNode(nodes, "dashboard_module", validationModule.id || "unknown", {
+      route: validationModule.frontend_routes,
+      endpoint: validationModule.endpoint,
+      freshness: validationModule.freshness,
     });
     addEdge(edges, moduleNode, dashboard, "renders_on");
 
-    if (!module.endpoint) failures.push(`${module.id || "unknown_module"}:missing_endpoint`);
-    if (!Array.isArray(module.source_collections) || module.source_collections.length === 0) {
-      failures.push(`${module.id || "unknown_module"}:missing_source_collections`);
+    if (!validationModule.endpoint) failures.push(`${validationModule.id || "unknown_module"}:missing_endpoint`);
+    if (!Array.isArray(validationModule.source_collections) || validationModule.source_collections.length === 0) {
+      failures.push(`${validationModule.id || "unknown_module"}:missing_source_collections`);
     }
 
-    const endpointNode = addNode(nodes, "endpoint", module.endpoint || "missing");
+    const endpointNode = addNode(nodes, "endpoint", validationModule.endpoint || "missing");
     addEdge(edges, endpointNode, moduleNode, "feeds");
-    for (const source of module.source_collections || []) {
+    for (const source of validationModule.source_collections || []) {
       const sourceNode = addNode(nodes, "source_collection", source);
       addEdge(edges, sourceNode, endpointNode, "serves");
     }

@@ -168,7 +168,6 @@ function localResult(ok, failures, backendRequests) {
 async function targetRuntimeProbe() {
   const failures = [];
   const blockers = [];
-  const root = new URL(targetOrigin);
   const loginUrl = new URL("login/?next=/swficc/profiles/detail/%3Fid%3D5e5713b876fb1e43b1bb71eb", targetOrigin).href;
   const bridgeUrl = new URL("auth/bridge/?next=/swficc/&assertion=invalid", targetOrigin).href;
 

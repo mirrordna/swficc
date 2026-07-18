@@ -23,7 +23,6 @@ const DETAIL_LINK_TIMEOUT_MS = Number(process.env.SWFIPN_ROUTE_PARITY_LINK_TIMEO
 const OVERALL_TIMEOUT_MS = Number(process.env.SWFIPN_ROUTE_PARITY_OVERALL_TIMEOUT_MS || 20 * 60 * 1000);
 const VIEWPORT_DESKTOP = { width: 1440, height: 960 };
 const VIEWPORT_MOBILE = { width: 375, height: 812 };
-const BROWSER_RESTART_EVERY = 40;
 
 const GENERIC_HEADINGS = new Set([
   "person detail", "profile detail", "transaction detail",
@@ -422,7 +421,7 @@ function deduplicateRootCauses(findings) {
   return Object.fromEntries(roots);
 }
 
-async function exerciseInteractions(page, route) {
+async function exerciseInteractions(page) {
   const extra = [];
   try {
     const filterInput = page.locator('input[placeholder*="Filter"]').first();

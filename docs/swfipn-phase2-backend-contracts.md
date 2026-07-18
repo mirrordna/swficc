@@ -37,7 +37,7 @@ Backend origin used by the public surface: `https://swfipn.activemirror.ai`
 
 Dashboard metric formulas are defined in `docs/SWFIPN_DASHBOARD_METRIC_DEFINITIONS.md`. If a metric is not defined there, it should not be introduced into the public dashboard.
 
-| Module | Endpoint | Source Collection(s) | Sort | Pagination | Required Freshness Receipt |
+| Module | Endpoint | Source Collection(s) | Sort | Pagination / Filters | Required Freshness Receipt |
 | --- | --- | --- | --- | --- | --- |
 | Dashboard Metrics | `/api/swfi/dashboard-metrics/v1` | `swfi.entities`, `swfi.transactions`, `swfi.compass` | None | None | Packet `generated_at`; card values must be factual. |
 | Institution Type Coverage | `/api/institution-types/v1?limit=8` | `swfi.entities` | count desc | None | Packet `generated_at`, grouped type counts, total source entity count. |
@@ -45,7 +45,7 @@ Dashboard metric formulas are defined in `docs/SWFIPN_DASHBOARD_METRIC_DEFINITIO
 | Active Allocators Count | `/api/allocator-activity/v1?days=90&limit=1&count_only=1` | `swfi.transactions`, `swfi.entities`, `swfi.entitiesAUM` | count only | None | Packet `generated_at`, 90-day count basis. |
 | Newest Transactions | `/api/recent-transactions/v1?days=90&limit=25&page=1` | `swfi.transactions` | transaction activity date descending | `limit`, `page` | Packet `generated_at`, transaction source URL. |
 | Recent Deals | `/api/recent-transactions/v1?days=30&limit=25&page=1` | `swfi.transactions` | transaction activity date descending | `limit`, `page` | Packet `generated_at`, transaction source URL. |
-| RFP Opportunities | `/api/live-opportunities/v1?limit=25&page=1` | `swfi.compass` | `deadline asc`, then `posted_at desc` | `limit`, `page` | Packet `generated_at`, Compass source URL. |
+| RFP Opportunities | `/api/live-opportunities/v1?limit=25&page=1` | `swfi.compass` | `deadline asc`, then `posted_at desc` | `limit`, `page`, `investment_type`, `ticket_min`, `ticket_max`, `ticket_currency` | Packet `generated_at`, Compass source URL. |
 | Market Activity | `/api/sector-flows/v1?days=365` | `swfi.transactions` | `count desc`, then disclosed capital | None | Packet `generated_at`, transaction facet basis. |
 | Institution List | `/api/source-data/search/v1?collection=entities&limit=25&page=1` | `swfi.entities`, `swfi.entitiesAUM` | name/AUM/country/region/type where supported | `limit`, `page` | Packet `generated_at`, entity source URL. |
 | People List | `/api/source-data/search/v1?collection=people&limit=25&page=1` | `swfi.people` | name/institution/country/region where supported | `limit`, `page` | Packet `generated_at`, people source URL. |

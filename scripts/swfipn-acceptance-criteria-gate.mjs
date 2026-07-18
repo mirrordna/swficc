@@ -9,10 +9,6 @@ const receiptPath = path.join(outputDir, "swfipn-acceptance-criteria-gate-latest
 const origin = normalizeOrigin(process.env.SWFIPN_ORIGIN || "http://127.0.0.1:8353/swficc/");
 const resolveIp = process.env.SWFIPN_RESOLVE_IP || "";
 const originHost = new URL(origin).hostname;
-const username = process.env.SWFIPN_AUTH_TEST_USERNAME || "";
-const password = process.env.SWFIPN_AUTH_TEST_PASSWORD || "";
-const allowAuthSkip = process.env.SWFIPN_ACCEPTANCE_ALLOW_AUTH_SKIP === "1";
-const expectedPacketSource = process.env.SWFIPN_EXPECTED_PACKET_SOURCE || "swfi_api";
 const checkTimeoutMs = Number(process.env.SWFIPN_ACCEPTANCE_CRITERIA_CHECK_TIMEOUT_MS || 120_000);
 const apiFetchTimeoutMs = Number(process.env.SWFIPN_API_FETCH_TIMEOUT_MS || 60_000);
 const routeParityTargetLimit = Number(process.env.SWFIPN_ACCEPTANCE_ROUTE_TARGET_LIMIT || 25);
@@ -240,24 +236,6 @@ function swfiSigninRecordKind(value) {
   return "";
 }
 
-function swfiSigninHandoff(value, expectedTarget = "") {
-  try {
-    const parsed = new URL(String(value || ""), origin);
-    if (!["www.swfi.com", "swfi.com"].includes(parsed.hostname)) return false;
-    if (parsed.pathname.replace(/\/?$/, "/") !== "/v1/signin/") return false;
-    if (!expectedTarget) return true;
-    const redirect = parsed.searchParams.get("redirect") || "";
-    if (!redirect) return false;
-    if (/^\/v1\/(entities|people|transactions|compass)\/[a-f0-9]{24}\/?$/i.test(expectedTarget)) {
-      return swfiSigninRecordPath(value) === expectedTarget.replace(/\/?$/, "/");
-    }
-    if (swfiSigninRecordPath(value)) return false;
-    const redirectUrl = new URL(redirect, new URL(origin).origin);
-    return `${redirectUrl.pathname.replace(/\/?$/, "/")}${redirectUrl.search}${redirectUrl.hash}` === appTarget(expectedTarget);
-  } catch {
-    return false;
-  }
-}
 
 function swfiSigninBridgeHandoff(value, expectedTarget = "") {
   try {
@@ -278,19 +256,6 @@ function swfiSigninBridgeHandoff(value, expectedTarget = "") {
   }
 }
 
-function swfiSigninRedirectTarget(value) {
-  try {
-    const parsed = new URL(String(value || ""), origin);
-    if (!["www.swfi.com", "swfi.com"].includes(parsed.hostname)) return "";
-    if (parsed.pathname.replace(/\/?$/, "/") !== "/v1/signin/") return "";
-    const redirect = parsed.searchParams.get("redirect") || "";
-    if (!redirect) return "";
-    const redirectUrl = new URL(redirect, new URL(origin).origin);
-    return `${redirectUrl.pathname.replace(/\/?$/, "/")}${redirectUrl.search}${redirectUrl.hash}`;
-  } catch {
-    return "";
-  }
-}
 
 async function requestLoginBridge(context, targetPath) {
   const response = await context.request.get(appUrl(`/login/?next=${encodeURIComponent(targetPath)}`), {
@@ -484,11 +449,6 @@ function formatInteger(value) {
   return numeric == null ? "" : numeric.toLocaleString("en-US");
 }
 
-function formatAum(row) {
-  const numeric = numberValue(row?.aum);
-  const currency = cleanText(row?.aum_currency);
-  return numeric == null || !currency ? "" : `${currency} ${numeric.toLocaleString("en-US")}`;
-}
 
 function addApprovedBusinessLabels(approvedLabels, row) {
   for (const key of [
@@ -860,7 +820,7 @@ async function stalenessCheck() {
   return result;
 }
 
-async function routeParityCheck(browser) {
+async function routeParityCheck() {
   const { chromium } = loadPlaywright();
   const isolatedBrowser = await chromium.launch({ channel: "chrome",
     headless: true,
@@ -905,7 +865,7 @@ async function routeParityCheck(browser) {
   return result;
 }
 
-async function directProtectedRoutesCheck(browser) {
+async function directProtectedRoutesCheck() {
   // Contract change per meeting minutes 2026-07-03 decision J (Paul-directed
   // 2026-07-05): detailed records do NOT live inside the dashboard — detail
   // routes must FORWARD to the SWFI platform record via the login handoff.

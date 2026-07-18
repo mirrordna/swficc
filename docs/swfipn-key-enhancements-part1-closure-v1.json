@@ -1,0 +1,177 @@
+{
+  "schema_version": "swfipn.key_enhancements_part1.closure.v1",
+  "generated_at": "2026-07-18T14:17:57Z",
+  "candidate": {
+    "repo": "/private/tmp/swfi-defunct-release",
+    "git_head": "e4bea9920bba066959a1a13ab29632540b98abd6",
+    "asset_version": "20260718T140453Z",
+    "release": "/opt/swfipn-acceptance/releases/20260718T141629Z",
+    "release_marker_sha256": "fe26ce7b79b5a7c47228b57f06c6d7252ba28af2b8f37b3d8588f8cacc475d4f",
+    "deployment_authority": true,
+    "release_authority": true,
+    "candidate_acceptance": "PASS_SCOPED_WITH_OPEN_EXTERNAL_REQUIREMENTS",
+    "public_acceptance": "PASS_SCOPED_WITH_OPEN_EXTERNAL_REQUIREMENTS"
+  },
+  "source_artifacts": [
+    {
+      "id": "key_enhancements_pdf",
+      "path": "/Users/mirror-pro/Downloads/Key Enhancements (High Impact) (PN) (2).pdf",
+      "sha256": "bf0cd43271d9ec7a244c6eb61b4490b21c3410211ed603ddf0330e67f87ed5ca"
+    },
+    {
+      "id": "meeting_summary",
+      "path": "/Users/mirror-pro/Library/Containers/net.whatsapp.WhatsApp/Data/tmp/documents/9757C2E2-BE73-4D74-A403-B7DAFC2762AE/Meeting Summary.docx",
+      "sha256": "f8fd95a04e81947b097cb8298b70ad43e5527d14ec7cb43c5b50e7075fa338e6"
+    },
+    {
+      "id": "meeting_transcript",
+      "path": "/Users/mirror-pro/Downloads/Meeting Transcript.docx",
+      "sha256": "e092a7db32932833fcf2b35638d0072dae0292121f67f8316151eadb660d739b"
+    },
+    {
+      "id": "testing_feedback_email",
+      "provenance": "verbatim user-supplied email body dated 2026-07-16",
+      "status": "BOUND_FROM_CONVERSATION_NOT_MAIL_API"
+    }
+  ],
+  "evidence_policy": {
+    "acceptance_requires": [
+      "real candidate build",
+      "real SWFI-backed API responses",
+      "independent browser observation",
+      "receipt binding to exact candidate source and asset version"
+    ],
+    "acceptance_excludes": [
+      "synthetic fixtures",
+      "network response substitution",
+      "hardcoded test rows",
+      "mocked packets",
+      "source-regex assertions"
+    ],
+    "unit_tests": "NOT_ACCEPTANCE"
+  },
+  "criteria": [
+    {
+      "id": "P1_LOADING_TRUTH",
+      "status": "PASS_PUBLIC_REAL_BROWSER",
+      "evidence": "No premature no-result state across observed pending requests."
+    },
+    {
+      "id": "P1_BOUNDED_NL",
+      "status": "PASS_PUBLIC_7_OF_7",
+      "evidence": "All seven bounded client queries returned source-linked rows with required classification or buyer evidence."
+    },
+    {
+      "id": "P1_ENTITY_CLASSIFICATION",
+      "status": "PASS_PUBLIC_REAL_BROWSER",
+      "evidence": "Pension and Central Bank cases displayed exact source entity types; no generic Entities label passed."
+    },
+    {
+      "id": "P1_COMPASS_CLASSIFICATION",
+      "status": "PASS_PUBLIC_REAL_BROWSER",
+      "evidence": "RFP and manager-search cases displayed exact source RFP or Opportunity classifications."
+    },
+    {
+      "id": "P1_TOP_AUM_ENTITY_CONTEXT",
+      "status": "PASS_PUBLIC_REAL_BROWSER",
+      "evidence": "Sovereign Wealth Fund context survived data and visualization paths with no cross-type or defunct rows."
+    },
+    {
+      "id": "P1_THREE_CHARACTER_MINIMUM",
+      "status": "PASS_PUBLIC_REAL_BROWSER",
+      "evidence": "The two-character probe emitted zero API requests; the three-character probe emitted real requests."
+    },
+    {
+      "id": "P1_TWO_SCREEN_STRUCTURE",
+      "status": "PASS_PUBLIC_REAL_BROWSER",
+      "evidence": "Initial Smart Search remained uncluttered and the detailed screen exposed category refinement plus source-derived filters."
+    },
+    {
+      "id": "P1_ALL_CATEGORY_BALANCE",
+      "status": "PASS_PUBLIC_REAL_BROWSER",
+      "evidence": "All Results defaulted to five rows per represented category."
+    },
+    {
+      "id": "P1_TRANSACTION_DEFAULT",
+      "status": "PASS_PUBLIC_REAL_BROWSER",
+      "evidence": "Detailed transaction results defaulted to exactly ten visible rows."
+    },
+    {
+      "id": "P1_DEFUNCT_DEFAULT",
+      "status": "PASS_PUBLIC_REAL_BROWSER",
+      "evidence": "Default source request omitted include_defunct and observed zero defunct rows."
+    },
+    {
+      "id": "P1_SUPPORTED_FILTERS",
+      "status": "PASS_PUBLIC_5_OF_5",
+      "evidence": "Entities, Transactions, RFPs/Opportunities, News, and People displayed only filter options observed in current SWFI responses. Entities, Transactions, and RFPs/Opportunities passed simultaneous two-filter checks; News and People passed every applicable disclosed dimension, with zero source-value mismatches.",
+      "supported_dimensions": {
+        "entities": ["entity type", "geography"],
+        "transactions": ["transaction type", "buyer when disclosed", "seller when disclosed", "sector or industry when disclosed", "geography"],
+        "rfps_and_opportunities": ["RFP or Opportunity type", "strategy or investment type", "geography"],
+        "news": ["source"],
+        "people": ["institution when disclosed", "role when disclosed", "geography"]
+      }
+    },
+    {
+      "id": "P1_PERFORMANCE",
+      "status": "PASS_PUBLIC_MEASURED_NO_APPROVED_SLA",
+      "evidence": "Post-deploy allocator API checks returned count 901 in 1.636 seconds for 30 days and count 2396 in 3.296 seconds for 90 days.",
+      "bad_news": "No client-approved latency SLA was supplied, so this proves measured improvement and correctness, not SLA compliance."
+    },
+    {
+      "id": "P1_EXTERNAL_QUERY_CORPUS",
+      "status": "BLOCKED_EXTERNAL",
+      "blocker": "The complete client-query spreadsheet, two presentations, and email attachment were not found; no examples were invented."
+    },
+    {
+      "id": "P1_COMPLETE_FILTER_WISHLIST",
+      "status": "BLOCKED_EXTERNAL",
+      "blocker": "SWFI committed to reshare the category-specific filter list. Period semantics and approved CALA/Southeast Asia country membership remain undefined."
+    },
+    {
+      "id": "P1_FREE_FORM_NL",
+      "status": "BLOCKED_FUTURE",
+      "blocker": "The meeting explicitly deferred comprehensive free-form language; the external corpus and approved model contract are missing."
+    }
+  ],
+  "receipts": [
+    {
+      "path": "output/swfipn-key-enhancements-part1-public-final.json",
+      "sha256": "1958a64699cfa4810070309e967194b1383223349c3ac0a12621e85c8d809660",
+      "status": "PASS_19_OF_19"
+    },
+    {
+      "path": "output/swfipn-acceptance-criteria-gate-latest.json",
+      "sha256": "a3a1900cb14792924ef7d5497696d1a5c6553ee2182e1a846c7e93c38240ea08",
+      "status": "PASS_10_OF_10"
+    },
+    {
+      "path": "output/swfipn-runtime-staleness-gate-latest.json",
+      "sha256": "dcf24ec2c9a4d89b55e16687b065338e7c17e3680279726981bc704623aecaac",
+      "status": "PASS"
+    },
+    {
+      "path": "output/swfipn-public-visual-postflight-latest.json",
+      "sha256": "7e785553bb6478deafb3ac0e413cda3db516c9b4a5ea55992b48d5e1aeb12df5",
+      "status": "PASS"
+    },
+    {
+      "path": "output/swfipn-latest-feedback-forensic-gate-latest.json",
+      "sha256": "d1d8548909af3c317e01ae7a0384fb683e8e9c48352254fd58670521fc499562",
+      "status": "PASS_WITH_LOCAL_SHELL_MONGO_BLOCKED_AND_PRODUCTION_CONTAINER_VERIFIED"
+    },
+    {
+      "path": "output/swfipn-strict-acceptance-deploy-latest.json",
+      "sha256": "698186fb419a66f06845c9bb139126cf9ab0d56f159bbf07247cdef1f7bb1307",
+      "status": "PASS"
+    }
+  ],
+  "remaining_risk": [
+    "The frontend and canonical backend worktrees contain pre-existing WIP and remain unstaged; the deployed backend patch is still isolated from the canonical backend Git worktree.",
+    "The 20260718T132622Z release source directory was modified through a superseded symlink alias; rollback must use the recorded prior image IDs rather than rebuilding that directory.",
+    "The complete client query corpus and filter specification are still external blockers.",
+    "No approved latency SLA exists, so measured response times cannot be labeled SLA-compliant.",
+    "A daily source-refresh schedule and freshness receipt were not proved by this acceptance run."
+  ]
+}

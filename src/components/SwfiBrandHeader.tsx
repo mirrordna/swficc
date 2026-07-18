@@ -1,6 +1,8 @@
 "use client";
 
+import Image from "next/image";
 import { appHref, assetHref } from "@/lib/selfContainedLinks";
+import { isTextQueryReady, MIN_TEXT_QUERY_CHARACTERS } from "@/lib/textQueryPolicy";
 
 // Sign-in belongs to swfi.com (source-of-truth rule; minutes C/G). There is
 // no /login route in this app — the old link 404'd once the route vanished
@@ -48,7 +50,7 @@ export default function SwfiBrandHeader({
     <header data-gsap-reveal className="relative z-50 shrink-0 border-b border-[#7E1417] bg-[#A61C20] text-white">
       <div className="mx-auto flex min-h-[80px] max-w-[1296px] flex-wrap items-center gap-5 px-4 py-3 lg:flex-nowrap lg:px-[72px]">
         <a href={appHref("/")} className="flex min-w-[150px] items-center text-white no-underline" aria-label="SWFI home">
-          <img src={assetHref("/swfi-assets/logo.svg")} alt="SWFI" className="h-12 w-[130px] object-contain" />
+          <Image src={assetHref("/swfi-assets/logo.svg")} alt="SWFI" width={161} height={59} className="h-12 w-[130px] object-contain" />
         </a>
         <nav aria-label="SWFI brand navigation" className="ml-auto flex flex-wrap items-center gap-6 text-[16px] font-bold lg:gap-12">
           {brandLinks.map(([label, href]) => {
@@ -65,7 +67,7 @@ export default function SwfiBrandHeader({
                 >
                   <span>{label}</span>
                   {dropdown.length ? (
-                    <img src={assetHref("/swfi-assets/arrowcircledown.svg")} alt="" className="h-4 w-4" />
+                    <Image src={assetHref("/swfi-assets/arrowcircledown.svg")} alt="" width={24} height={24} className="h-4 w-4" />
                   ) : null}
                 </a>
                 {dropdown.length ? (
@@ -94,6 +96,13 @@ export default function SwfiBrandHeader({
         <form
           action="/swficc/search/"
           method="get"
+          onSubmit={(event) => {
+            const input = event.currentTarget.elements.namedItem("q");
+            const value = input instanceof HTMLInputElement ? input.value : "";
+            if (isTextQueryReady(value)) return;
+            event.preventDefault();
+            if (input instanceof HTMLInputElement) input.focus();
+          }}
           className="mx-auto flex h-9 max-w-[1296px] items-center overflow-hidden border border-[#C8D1E5] bg-[#F8F9FA] px-3 text-[13px] text-[#444D5F]"
         >
           <label htmlFor={searchId} className="shrink-0 font-semibold text-[#22272F]">Smart Search</label>
@@ -103,8 +112,9 @@ export default function SwfiBrandHeader({
             name="q"
             type="search"
             defaultValue={searchDefaultValue}
+            minLength={MIN_TEXT_QUERY_CHARACTERS}
             className="min-w-0 flex-1 bg-transparent text-[#41566B] outline-none placeholder:text-[#7A8A9B]"
-            placeholder="Institution, Person, Strategy"
+            placeholder={`Institution, Person, Strategy (${MIN_TEXT_QUERY_CHARACTERS}+ characters)`}
           />
         </form>
       </div> : null}

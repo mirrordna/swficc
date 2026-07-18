@@ -178,10 +178,10 @@ export function smartSearchIntentForQuery(query: string): SmartSearchIntent | nu
       regions: region?.sourceValues,
       entityTypes: entity?.sourceTypes,
       label: `Top active ${entityLabel}${regionLabel}`,
-      explanation: `${entity ? `${entity.label} ranked` : "Transaction-buyer entities ranked"} by sourced 90-day activity count${regionLabel}`,
+      explanation: `${entity ? `${entity.label} ranked` : "Transaction-buyer entities ranked"} by sourced 30-day activity count${regionLabel}`,
       requests: [{
         key: "active-investors",
-        endpoint: "/api/allocator-activity/v1?days=90&limit=100&page=1&sort=activity_count&direction=desc",
+        endpoint: "/api/allocator-activity/v1?days=30&limit=10&page=1&sort=activity_count&direction=desc",
       }],
     };
   }

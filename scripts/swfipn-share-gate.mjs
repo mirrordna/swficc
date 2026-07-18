@@ -249,7 +249,6 @@ async function waitForLinkAudit(page, timeout) {
       dashboardTarget: a.getAttribute("data-dashboard-target") || "",
     }))).catch(() => lastAudit);
     const sourceLinks = lastAudit.filter((link) => link.sourceState === "on-file" || link.sourcePath).length;
-    const detailLinks = lastAudit.filter((link) => /\/swficc\/(profiles|transactions|mandates|people|research)\/detail\//.test(link.href) || /\/(profiles|transactions|mandates|people|research)\/detail\//.test(link.dashboardTarget)).length;
     const approvedSwfiPlatformLinks = lastAudit.filter((link) => isApprovedSwfiPlatformLink(link.href) || isApprovedSwfiPlatformLink(link.raw)).length;
     // Early-return only once BOTH counts the gate actually asserts (source_links >= 8 AND
     // approved_swfi_platform_links >= 8, lines 198-199) are satisfied, so the audit never returns

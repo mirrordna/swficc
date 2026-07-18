@@ -26,7 +26,7 @@ const browser = await chromium.launch({ channel: "chrome" });
 
 try {
   const smartSearchCases = [
-    ["Top Active Investors", "Transaction-buyer entities ranked by sourced 90-day activity count"],
+    ["Top Active Investors", "Transaction-buyer entities ranked by sourced 30-day activity count"],
     ["RFPs from the Middle East", "Current RFP, mandate, and opportunity records with sourced region Middle East"],
     ["Sovereign Wealth Funds investing in AI", "AI transactions in the last 365 days with a sourced Sovereign Wealth Fund buyer"],
     ["Pension Funds in Europe", "Pension funds with a sourced region in Europe"],

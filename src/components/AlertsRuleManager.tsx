@@ -53,9 +53,8 @@ const alertTypes = [
 const frequencies = ["Immediate", "Daily Digest", "Weekly Digest"] as const;
 
 export default function AlertsRuleManager() {
-  const [token, setToken] = useState("");
   const [userId, setUserId] = useState("swfi-validation@swfi.test");
-  const [status, setStatus] = useState("Enter access details to load saved alert rules.");
+  const [status, setStatus] = useState("Use your SWFI session to load saved alert rules.");
   const [items, setItems] = useState<AlertItem[]>([]);
   const [historyText, setHistoryText] = useState("");
   const [alertName, setAlertName] = useState("Infrastructure transaction alert");
@@ -174,10 +173,6 @@ export default function AlertsRuleManager() {
   }
 
   async function apiRequest(path: string, init: RequestInit = {}): Promise<AlertEnvelope | null> {
-    if (!token.trim()) {
-      setStatus("Access token required.");
-      return null;
-    }
     if (!userId.trim()) {
       setStatus("Subscriber identity required.");
       return null;
@@ -189,7 +184,6 @@ export default function AlertsRuleManager() {
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token.trim()}`,
           "X-SWFI-User-Id": userId.trim(),
           "X-SWFIPN-Internal": "1",
           ...(init.headers || {}),
@@ -219,18 +213,7 @@ export default function AlertsRuleManager() {
         </div>
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] lg:items-end">
-        <label className="grid gap-1 text-sm">
-          <span className="font-semibold text-[#41566B]">API access token</span>
-          <input
-            data-testid="alerts-access-token"
-            type="password"
-            value={token}
-            onChange={(event) => setToken(event.target.value)}
-            className="min-h-10 rounded border border-[#C7D2DD] px-3 outline-none"
-            autoComplete="off"
-          />
-        </label>
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
         <label className="grid gap-1 text-sm">
           <span className="font-semibold text-[#41566B]">Subscriber identity</span>
           <input

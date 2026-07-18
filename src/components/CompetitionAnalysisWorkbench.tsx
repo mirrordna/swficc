@@ -29,6 +29,7 @@ import {
   type Row,
 } from "@/lib/sourcePackets";
 import { swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
+import { isShortTextQuery, isTextQueryReady, MIN_TEXT_QUERY_CHARACTERS } from "@/lib/textQueryPolicy";
 
 const NOT_DISCLOSED = "Not disclosed";
 const LOADING = "Loading";
@@ -75,7 +76,7 @@ export default function CompetitionAnalysisWorkbench({ seedRecords }: { seedReco
 
   useEffect(() => {
     const clean = query.trim();
-    if (clean.length < 2) return;
+    if (!isTextQueryReady(clean)) return;
     const controller = new AbortController();
     const timer = globalThis.setTimeout(() => {
       void fetchPacket(
@@ -167,17 +168,19 @@ export default function CompetitionAnalysisWorkbench({ seedRecords }: { seedReco
   }, [orderedSelection, selectionKey, selectionTouched]);
 
   const searchClean = query.trim();
-  const searchLoading = searchClean.length >= 2 && searchResult.query !== searchClean;
+  const searchReady = isTextQueryReady(searchClean);
+  const searchShort = isShortTextQuery(searchClean);
+  const searchLoading = searchReady && searchResult.query !== searchClean;
   const searchRows = useMemo(
-    () => searchClean.length >= 2 && searchResult.query === searchClean && isFact(searchResult.packet)
+    () => searchReady && searchResult.query === searchClean && isFact(searchResult.packet)
       ? rows(searchResult.packet)
       : [],
-    [searchClean, searchResult],
+    [searchClean, searchReady, searchResult],
   );
   const candidates = useMemo(() => dedupeComparisonRows([
     ...orderedSelection,
-    ...(searchClean.length >= 2 ? searchRows : seedRecords.slice(0, 12)),
-  ]).slice(0, 24), [orderedSelection, searchClean.length, searchRows, seedRecords]);
+    ...(searchReady ? searchRows : searchShort ? [] : seedRecords.slice(0, 12)),
+  ]).slice(0, 24), [orderedSelection, searchReady, searchRows, searchShort, seedRecords]);
   const hydratedPeers = orderedSelection.map((peer) => hydrateComparisonPeer(peer, profilePackets[comparisonPeerKey(peer)]));
   const evidence = competitionEvidenceQuestions(hydratedPeers, transactionPackets, buyerActivityPackets);
   const strategyEngine = strategyEngineAnalysis(hydratedPeers, transactionPackets, buyerActivityPackets);
@@ -290,14 +293,18 @@ export default function CompetitionAnalysisWorkbench({ seedRecords }: { seedReco
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
+            minLength={MIN_TEXT_QUERY_CHARACTERS}
+            aria-describedby="competition-peer-search-minimum"
             placeholder="Search ADIA, GIC, CPP, Ontario Teachers…"
             className="min-h-11 min-w-0 rounded border border-[#C7D2DD] bg-white px-3 text-base outline-none focus:border-[#0A66C2]"
           />
-          <div className="text-[11px] text-[#7A8A9B]" aria-live="polite">
+          <div id="competition-peer-search-minimum" className="text-[11px] text-[#7A8A9B]" aria-live="polite">
             {searchLoading
               ? "Searching SWFI institutions…"
-              : searchClean.length >= 2
+              : searchReady
                 ? `${searchRows.length.toLocaleString("en-US")} matching source records`
+                : searchShort
+                  ? `Enter at least ${MIN_TEXT_QUERY_CHARACTERS} characters; no query has run.`
                 : `${candidates.length.toLocaleString("en-US")} loaded candidates`}
           </div>
           {peerTypeKey ? (

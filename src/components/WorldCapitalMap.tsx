@@ -77,13 +77,11 @@ function flowTip(pair: WorldFlowPair): string {
 }
 
 export default function WorldCapitalMap({ rows, flows = [] }: { rows: WorldCapitalRow[]; flows?: WorldFlowPair[] }) {
-  const [geoReady, setGeoReady] = useState(false);
+  const [geoIndex, setGeoIndex] = useState<{ names: Map<string, string>; centroids: Map<string, [number, number]> } | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [mode, setMode] = useState<"institutions" | "flows">("institutions");
   const hostRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
-  const centroidsRef = useRef<Map<string, [number, number]>>(new Map());
-  const geoNamesRef = useRef<Map<string, string>>(new Map());
 
   useEffect(() => {
     const controller = new AbortController();
@@ -92,18 +90,20 @@ export default function WorldCapitalMap({ rows, flows = [] }: { rows: WorldCapit
       .then((topology: Topology<{ countries: GeometryCollection<{ name?: string }> }>) => {
         const collection = feature(topology, topology.objects.countries);
         const features = collection.features as CountryFeature[];
+        const names = new Map<string, string>();
+        const centroids = new Map<string, [number, number]>();
         for (const countryFeature of features) {
           const rawName = countryFeature.properties?.name || "";
           const key = normalizeName(rawName);
           if (!key) continue;
-          geoNamesRef.current.set(key, rawName);
+          names.set(key, rawName);
           const centroid = geoCentroid(countryFeature);
           if (Number.isFinite(centroid[0]) && Number.isFinite(centroid[1])) {
-            centroidsRef.current.set(key, [centroid[0], centroid[1]]);
+            centroids.set(key, [centroid[0], centroid[1]]);
           }
         }
         echarts.registerMap("world", collection as unknown as Parameters<typeof echarts.registerMap>[1]);
-        setGeoReady(true);
+        setGeoIndex({ names, centroids });
       })
       .catch(() => {
         if (!controller.signal.aborted) setLoadFailed(true);
@@ -115,12 +115,12 @@ export default function WorldCapitalMap({ rows, flows = [] }: { rows: WorldCapit
     const lookup = (country: string) => {
       const key = normalizeName(country);
       const alias = NAME_ALIASES[key] || key;
-      return geoNamesRef.current.has(alias) ? alias : geoNamesRef.current.has(key) ? key : null;
+      return geoIndex?.names.has(alias) ? alias : geoIndex?.names.has(key) ? key : null;
     };
     const matched: { row: WorldCapitalRow; geoKey: string }[] = [];
     const unmatched: WorldCapitalRow[] = [];
     for (const row of rows) {
-      const geoKey = geoReady ? lookup(row.country) : null;
+      const geoKey = geoIndex ? lookup(row.country) : null;
       if (geoKey) matched.push({ row, geoKey });
       else unmatched.push(row);
     }
@@ -128,19 +128,19 @@ export default function WorldCapitalMap({ rows, flows = [] }: { rows: WorldCapit
     const domesticFlows: { pair: WorldFlowPair; at: [number, number] }[] = [];
     const unmappableFlows: WorldFlowPair[] = [];
     for (const pair of flows) {
-      const sourceKey = geoReady ? lookup(pair.source) : null;
-      const targetKey = geoReady ? lookup(pair.target) : null;
-      const from = sourceKey ? centroidsRef.current.get(sourceKey) : undefined;
-      const to = targetKey ? centroidsRef.current.get(targetKey) : undefined;
+      const sourceKey = geoIndex ? lookup(pair.source) : null;
+      const targetKey = geoIndex ? lookup(pair.target) : null;
+      const from = sourceKey ? geoIndex?.centroids.get(sourceKey) : undefined;
+      const to = targetKey ? geoIndex?.centroids.get(targetKey) : undefined;
       if (!from || !to) unmappableFlows.push(pair);
       else if (pair.source === pair.target) domesticFlows.push({ pair, at: from });
       else crossFlows.push({ pair, from, to });
     }
     return { matched, unmatched, crossFlows, domesticFlows, unmappableFlows };
-  }, [rows, flows, geoReady]);
+  }, [rows, flows, geoIndex]);
 
   useEffect(() => {
-    if (!geoReady || !hostRef.current) return;
+    if (!geoIndex || !hostRef.current) return;
     if (!chartRef.current) {
       chartRef.current = echarts.init(hostRef.current);
       chartRef.current.on("click", (event: { seriesName?: string; name?: string }) => {
@@ -174,7 +174,7 @@ export default function WorldCapitalMap({ rows, flows = [] }: { rows: WorldCapit
             regions: matched.map(({ row, geoKey }) => {
               const intensity = Math.sqrt(row.count / maxCount);
               return {
-                name: geoNamesRef.current.get(geoKey) || row.country,
+                name: geoIndex.names.get(geoKey) || row.country,
                 itemStyle: { areaColor: intensity > 0.66 ? "#3D86CB" : intensity > 0.33 ? "#7FAEDD" : "#BAD3EC" },
               };
             }),
@@ -201,7 +201,7 @@ export default function WorldCapitalMap({ rows, flows = [] }: { rows: WorldCapit
               },
               data: matched.map(({ row, geoKey }, index) => ({
                 name: row.country,
-                value: [...(centroidsRef.current.get(geoKey) || [0, 0]), row.count],
+                value: [...(geoIndex.centroids.get(geoKey) || [0, 0]), row.count],
                 labelAum: row.aum && row.aumCurrency ? aumLabel(row) : "",
                 tipAum: aumLabel(row),
                 tipTop: row.topName,
@@ -242,7 +242,7 @@ export default function WorldCapitalMap({ rows, flows = [] }: { rows: WorldCapit
             regions: [...involvement.keys()].map((country) => {
               const key = normalizeName(country);
               const alias = NAME_ALIASES[key] || key;
-              return { name: geoNamesRef.current.get(alias) || geoNamesRef.current.get(key) || country, itemStyle: { areaColor: "#CBDDEF" } };
+              return { name: geoIndex.names.get(alias) || geoIndex.names.get(key) || country, itemStyle: { areaColor: "#CBDDEF" } };
             }),
           },
           series: [
@@ -298,7 +298,7 @@ export default function WorldCapitalMap({ rows, flows = [] }: { rows: WorldCapit
         { replaceMerge: ["series", "geo"] },
       );
     }
-  }, [geoReady, mode, resolved]);
+  }, [geoIndex, mode, resolved]);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -353,7 +353,7 @@ export default function WorldCapitalMap({ rows, flows = [] }: { rows: WorldCapit
         aria-label={showFlows ? "World map of capital flows from buyer countries to deal locations" : "World map of SWFI top-ranked institutions by country"}
         className="h-[400px] w-full rounded-[6px] bg-[#F8FBFF]"
       >
-        {!geoReady ? <div className="grid h-full content-center text-center text-[12px] font-semibold text-[#526171]">Loading map…</div> : null}
+        {!geoIndex ? <div className="grid h-full content-center text-center text-[12px] font-semibold text-[#526171]">Loading map…</div> : null}
       </div>
       {showFlows ? (
         <div className="text-[10px] font-semibold text-[#7B8996]">

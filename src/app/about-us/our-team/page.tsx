@@ -1,3 +1,4 @@
+import Image from "next/image";
 import SwfiBrandHeader from "@/components/SwfiBrandHeader";
 import { SwfiFooter } from "@/components/SwfiMarketingPage";
 import { appHref, assetHref } from "@/lib/selfContainedLinks";
@@ -19,7 +20,7 @@ export default function OurTeamPage() {
         <div className="grid gap-10">
           {swfiTeamMembers.map((member) => (
             <article key={member.name} className="grid gap-5 md:grid-cols-[264px_minmax(0,1fr)] md:items-start">
-              <img src={assetHref(member.image)} alt={member.name} className="h-[264px] w-[264px] object-cover" />
+              <Image src={assetHref(member.image)} alt={member.name} width={1200} height={1200} className="h-[264px] w-[264px] object-cover" />
               <div className="grid gap-3">
                 <div>
                   <h2 className="m-0 text-[24px] font-bold text-[#22272F]">{member.name}</h2>

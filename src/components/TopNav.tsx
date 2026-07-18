@@ -3,6 +3,7 @@
 import { useState, FormEvent } from "react";
 import type { SmartSearch } from "@/lib/types";
 import { appHref } from "@/lib/selfContainedLinks";
+import { isTextQueryReady, MIN_TEXT_QUERY_CHARACTERS } from "@/lib/textQueryPolicy";
 
 interface TopNavProps {
   search?: SmartSearch;
@@ -14,18 +15,21 @@ export default function TopNav({ search, onSearch }: TopNavProps) {
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
 
   const navigateToSearch = (value: string) => {
+    if (!isTextQueryReady(value)) return;
     window.location.assign(appHref(`/search/?q=${encodeURIComponent(value.trim())}`));
   };
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (query.trim() && onSearch) onSearch(query.trim());
-    else if (query.trim()) navigateToSearch(query);
+    if (!isTextQueryReady(query)) return;
+    if (onSearch) onSearch(query.trim());
+    else navigateToSearch(query);
   };
 
   const handleSuggestion = (suggestion: string) => {
     setQuery(suggestion);
     setSuggestionsOpen(false);
+    if (!isTextQueryReady(suggestion)) return;
     if (onSearch) onSearch(suggestion);
     else navigateToSearch(suggestion);
   };
@@ -49,11 +53,12 @@ export default function TopNav({ search, onSearch }: TopNavProps) {
               onChange={(e) => setQuery(e.target.value)}
               onFocus={() => setSuggestionsOpen(true)}
               onBlur={() => window.setTimeout(() => setSuggestionsOpen(false), 120)}
+              minLength={MIN_TEXT_QUERY_CHARACTERS}
               placeholder={search?.placeholder || "Search: Institution, Person, Strategy..."}
               className="flex-1 h-9 border border-gray-300 bg-white px-2 text-sm outline-none"
             />
           </label>
-          <button type="submit" className="h-9 px-3 border border-gray-300 bg-white text-sm cursor-pointer">
+          <button type="submit" disabled={!isTextQueryReady(query)} className="h-9 px-3 border border-gray-300 bg-white text-sm cursor-pointer disabled:cursor-not-allowed disabled:text-gray-400">
             Search
           </button>
         </form>

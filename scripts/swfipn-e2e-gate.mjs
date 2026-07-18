@@ -246,53 +246,7 @@ function isAllowedSwfiCorePlatformPath(parsed) {
   return /^\/v1\/(?:entities|people|transactions|compass|news|reports)\//.test(parsed.pathname);
 }
 
-function swfiSigninHandoffUrl(value, expectedTarget) {
-  try {
-    const parsed = new URL(String(value || ""), new URL(origin).origin);
-    if (!["www.swfi.com", "swfi.com"].includes(parsed.hostname)) return false;
-    if (parsed.pathname.replace(/\/?$/, "/") !== "/v1/signin/") return false;
-    if ((parsed.searchParams.get("msg") || "") !== "auth") return false;
-    const redirect = parsed.searchParams.get("redirect") || "";
-    if (!redirect) return false;
-    const redirectUrl = new URL(redirect, new URL(origin).origin);
-    const expectedUrl = new URL(expectedTarget, new URL(origin).origin);
-    return redirectUrl.origin === expectedUrl.origin
-      && redirectUrl.pathname.replace(/\/?$/, "/") === expectedUrl.pathname.replace(/\/?$/, "/")
-      && redirectUrl.search === expectedUrl.search;
-  } catch {
-    return false;
-  }
-}
 
-function protectedSwficcDetailTarget(value) {
-  try {
-    const parsed = new URL(value, origin);
-    return [
-      "/profiles/detail/",
-      "/transactions/detail/",
-      "/mandates/detail/",
-      "/people/detail/",
-    ].some((route) => parsed.pathname.includes(route));
-  } catch {
-    return false;
-  }
-}
-
-async function handoffRequestOk(targetHref, timeoutMs = 20_000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(targetHref, { redirect: "manual", signal: controller.signal });
-    const location = response.headers.get("location") || "";
-    return {
-      ok: response.status >= 300 && response.status < 400 && swfiSigninHandoffUrl(location, targetHref),
-      status: response.status,
-      location,
-    };
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 function appRoute(href) {
   if (!sameAppUrl(href)) return "";

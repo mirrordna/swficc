@@ -1,0 +1,63 @@
+{
+  "schema_version": "swfipn.key_enhancements_part1.client_query_corpus.v1",
+  "status": "PARTIAL_EXTERNAL_CORPUS_BLOCKED",
+  "source_artifacts": [
+    {
+      "id": "meeting_transcript_2026_07_16",
+      "path": "/Users/mirror-pro/Downloads/Meeting Transcript.docx",
+      "sha256": "e092a7db32932833fcf2b35638d0072dae0292121f67f8316151eadb660d739b"
+    },
+    {
+      "id": "existing_real_source_regression",
+      "path": "scripts/swfipn-semantic-search-retest.mjs",
+      "provenance": "repo-local pre-existing query set; not represented as the missing client attachment"
+    }
+  ],
+  "meeting_examples": [
+    {
+      "query": "Top allocators",
+      "status": "BLOCKED",
+      "reason": "The ranking basis is ambiguous unless the user specifies activity or AUM."
+    },
+    {
+      "query": "Top active allocators",
+      "status": "CANDIDATE_REAL_BROWSER_REQUIRED",
+      "bounded_intent": "30-day source-backed allocator activity"
+    },
+    {
+      "query": "RFPs in the Middle East",
+      "status": "CANDIDATE_REAL_BROWSER_REQUIRED",
+      "bounded_intent": "current source-backed Compass records with region Middle East"
+    },
+    {
+      "query": "Give me information about XYZ",
+      "status": "BLOCKED",
+      "reason": "XYZ is a placeholder, not a source entity. Prefix parsing is non-acceptance support only."
+    },
+    {
+      "query": "Provide me with information about XYZ",
+      "status": "BLOCKED",
+      "reason": "XYZ is a placeholder, not a source entity. Prefix parsing is non-acceptance support only."
+    },
+    {
+      "query": "Retrieve information about XYZ",
+      "status": "BLOCKED",
+      "reason": "XYZ is a placeholder, not a source entity. Prefix parsing is non-acceptance support only."
+    }
+  ],
+  "repo_real_source_regression_queries": [
+    "Top Active Investors",
+    "RFPs from the Middle East",
+    "Sovereign Wealth Funds investing in AI",
+    "Pension Funds in Europe",
+    "Open manager searches in EMEA",
+    "Central banks in APAC",
+    "Family offices deploying capital into real estate"
+  ],
+  "missing_external_artifacts": [
+    "client-query spreadsheet",
+    "two client-query presentations",
+    "email attachment containing the complete client-query examples"
+  ],
+  "acceptance_rule": "No query closes from this corpus alone. PASS requires a real candidate build, real SWFI-backed API responses, and independent browser observation without network interception or mocked packets."
+}

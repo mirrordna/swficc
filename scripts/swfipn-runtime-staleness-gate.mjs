@@ -157,21 +157,6 @@ function readAssetReceipt() {
   }
 }
 
-function remoteSha(file) {
-  const result = spawnSync("ssh", [remoteHost, "sha256sum", file], {
-    cwd: repoRoot,
-    encoding: "utf8",
-    timeout: 20_000,
-  });
-  if (result.status !== 0) {
-    return {
-      ok: false,
-      file,
-      error: result.error?.message || result.stderr.trim() || `exit_${result.status}`,
-    };
-  }
-  return { ok: true, file, sha256: result.stdout.trim().split(/\s+/)[0] || "" };
-}
 
 function remoteContainerSha(file) {
   const result = spawnSync("ssh", [remoteHost, "docker", "exec", remoteWebContainer, "sha256sum", file], {
@@ -190,13 +175,6 @@ function remoteContainerSha(file) {
   return { ok: true, file, container: remoteWebContainer, sha256: result.stdout.trim().split(/\s+/)[0] || "" };
 }
 
-function localSha(file) {
-  try {
-    return { ok: true, file, sha256: sha256(fs.readFileSync(file, "utf8")) };
-  } catch (error) {
-    return { ok: false, file, error: error.message };
-  }
-}
 
 function chunkRefs(html) {
   const refs = [];

@@ -1,3 +1,4 @@
+import Image from "next/image";
 import SwfiBrandHeader from "@/components/SwfiBrandHeader";
 import { SwfiButton, SwfiFooter } from "@/components/SwfiMarketingPage";
 import { appHref, assetHref } from "@/lib/selfContainedLinks";
@@ -17,7 +18,7 @@ export default function SolutionsPage() {
         </nav>
         {swfiSolutionSections.map((section) => (
           <section key={section.id} id={section.id} className="grid gap-6">
-            <img src={assetHref(section.image)} alt="solution" className="h-auto w-full" />
+            <Image src={assetHref(section.image)} alt="solution" width={4960} height={1488} className="h-auto w-full" />
             <div className="grid gap-4">
               <h1 className="m-0 text-[32px] font-bold leading-tight text-[#22272F] sm:text-[42px]">{section.title}</h1>
               <p className="m-0 text-[16px] leading-7 text-[#505A69]">{section.description}</p>

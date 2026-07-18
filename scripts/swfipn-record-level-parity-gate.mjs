@@ -461,7 +461,7 @@ async function run() {
     };
   }
 
-  for (const [collection, live] of Object.entries(liveCollections)) delete live.sample_rows;
+  for (const live of Object.values(liveCollections)) delete live.sample_rows;
 
   const receipt = {
     status: failures.length ? "fail" : "pass",

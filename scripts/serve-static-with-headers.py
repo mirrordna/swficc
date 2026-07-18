@@ -449,13 +449,13 @@ def sanitized_public_packet(packet):
     }
 
 
-def public_api_body(path, body):
+def public_api_body(path, body, content_type="application/json"):
     normalized_path = path
     if normalized_path == "/swficc":
         normalized_path = "/"
     elif normalized_path.startswith("/swficc/"):
         normalized_path = normalized_path.removeprefix("/swficc")
-    if not normalized_path.startswith(PUBLIC_JSON_PATH_PREFIXES):
+    if not normalized_path.startswith(PUBLIC_JSON_PATH_PREFIXES) or "json" not in content_type.lower():
         return body
     try:
         packet = json.loads(body.decode("utf-8") or "null")
@@ -1353,7 +1353,11 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
                 request.add_header("Authorization", f"Bearer {self.server.backend_token}")
             with urllib.request.urlopen(request, timeout=self.server.backend_timeout) as response:
                 raw_body = b"" if head else response.read()
-                body = raw_body if internal_receipt_request or api_product_request else public_api_body(parsed.path, raw_body)
+                body = raw_body if internal_receipt_request or api_product_request else public_api_body(
+                    parsed.path,
+                    raw_body,
+                    response.headers.get("Content-Type", ""),
+                )
                 self.send_response(response.status)
                 self.copy_backend_headers(response.headers, len(body))
                 if cache_key and response.status == 200 and not internal_receipt_request and not api_product_request:
@@ -1365,7 +1369,11 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
         except urllib.error.HTTPError as exc:
             raw_body = b"" if head else exc.read()
             api_product_request = backend_path == "/docs" or backend_path.startswith("/v1/")
-            body = raw_body if api_product_request or str(self.headers.get("X-SWFIPN-Internal") or self.headers.get("X-SWFI-Internal") or "").lower() in {"1", "true", "yes"} else public_api_body(parsed.path, raw_body)
+            body = raw_body if api_product_request or str(self.headers.get("X-SWFIPN-Internal") or self.headers.get("X-SWFI-Internal") or "").lower() in {"1", "true", "yes"} else public_api_body(
+                parsed.path,
+                raw_body,
+                exc.headers.get("Content-Type", ""),
+            )
             self.send_response(exc.code)
             self.copy_backend_headers(exc.headers, len(body))
             self.end_headers()
@@ -1404,7 +1412,7 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
             body = json.dumps({
                 "status": "ok",
                 "fact": True,
-                "generated_at": datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
                 "data": {"results": [], "query": "", "count": 0},
             }, separators=(",", ":")).encode("utf-8")
         else:
@@ -1420,7 +1428,7 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
                 body = json.dumps({
                     "status": "ok",
                     "fact": True,
-                    "generated_at": datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                    "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
                     "data": {
                         "results": ranked,
                         "query": query,
@@ -1452,19 +1460,11 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
         return f"public-search:{query.casefold()}:{limit}"
 
     def is_search_results_path(self, parsed):
-        normalized = parsed.path
-        if normalized == "/swficc/search" or normalized == "/swficc/search/":
-            params = urllib.parse.parse_qs(parsed.query)
-            query = (params.get("q") or [""])[0].strip()
-            category = (params.get("category") or [""])[0].strip().casefold()
-            if is_natural_language_intent_query(query):
-                return False
-            # Category-specific "View all" pages are rendered by the Next search app,
-            # which owns the category-aware data contracts. Keep this server-rendered
-            # fallback only for the uncategorized search route.
-            if category in {"entities", "opportunities", "transactions", "news", "people"}:
-                return False
-            return bool(query)
+        # The Next search page is the single detailed-results surface. The legacy
+        # server-rendered fallback only queried institutions, so an uncategorized
+        # "View all results" request silently discarded transactions, people,
+        # opportunities, and news even when the initial search modal showed them.
+        # Keep every query/category on the category-aware page instead.
         return False
 
     def serve_search_results(self, parsed, head=False):

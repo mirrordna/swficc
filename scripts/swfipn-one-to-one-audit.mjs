@@ -62,7 +62,7 @@ try {
         if (!r.ok) return { status: r.status, rows: [] };
         const d = await r.json();
         return { status: r.status, rows: d?.data?.rows || d?.data || d?.data?.results || [] };
-      } catch (e) { return { status: "ERR", rows: [] }; }
+      } catch { return { status: "ERR", rows: [] }; }
     }, col.url);
     const sampled = shuffle([...rows]).slice(0, SAMPLE_PER_COLLECTION);
     const routed = sampled.map((row) => ({ label: String(row.name || row.title || "?").slice(0, 40), route: routeRecord(row, col.idCollection) }));

@@ -47,7 +47,7 @@ const VERIFIED_QUERY_ALIASES: Readonly<Record<string, readonly string[]>> = {
 };
 
 export function businessSearchQueryVariants(query: string, sourceRows: Record<string, unknown>[] = []): string[] {
-  const clean = query.trim();
+  const clean = searchSubjectQuery(query);
   if (!clean) return [];
   const variants = [clean, ...canonicalAliasTargets(clean)];
   for (const row of sourceRows) {
@@ -71,7 +71,7 @@ export function dedupeSearchRecords<T extends Record<string, unknown>>(sourceRow
 }
 
 export function rankSearchRecords<T extends Record<string, unknown>>(sourceRows: T[], query: string, kind: SearchKind = "entity"): T[] {
-  const clean = query.trim();
+  const clean = searchSubjectQuery(query);
   if (!clean) return sourceRows;
   return sourceRows
     .map((row, index) => ({
@@ -142,7 +142,7 @@ export function mergeSearchRecordsPreferPrimary<T extends Record<string, unknown
   query: string,
   kind: SearchKind = "entity",
 ): T[] {
-  const clean = query.trim();
+  const clean = searchSubjectQuery(query);
   const primary = dedupeSearchRecords(primaryRows);
   const seen = new Set(primary.map((row) => searchRecordKey(row)));
   const appended = rankSearchRecords(dedupeSearchRecords(appendRows), query, kind)
@@ -174,6 +174,16 @@ export function mergeSearchRecordsPreferPrimary<T extends Record<string, unknown
   });
   const suppressed = ordered.filter((item) => !(item.weak && strongCount > 0));
   return (suppressed.length ? suppressed : ordered).map((item) => item.row);
+}
+
+export function searchSubjectQuery(query: string): string {
+  const clean = query.trim();
+  if (!clean) return "";
+  const subject = clean.replace(
+    /^(?:please\s+)?(?:give|provide|show|retrieve)(?:\s+me)?(?:\s+with)?\s+(?:information|info|details|data)\s+(?:about|on|for)\s+/i,
+    "",
+  ).trim();
+  return subject || clean;
 }
 
 export function searchRelevanceScore(row: Record<string, unknown>, query: string, kind: SearchKind = "entity"): number {

@@ -13,10 +13,16 @@
     "contract:logic:test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/swfipn-section-dashboard-logic-test.mjs",
     "test:record-sort": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/swfipn-record-sort-defaults-test.mjs",
     "test:smart-search-intent": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/swfipn-smart-search-intent-test.mjs",
+    "test:smart-search-presentation": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/swfipn-smart-search-presentation-test.mjs",
+    "test:semantic-search-retest": "node scripts/swfipn-semantic-search-retest.mjs",
+    "test:semantic-search-retest:public": "SWFIPN_ORIGIN=https://dashboard.swfi.com node scripts/swfipn-semantic-search-retest.mjs",
+    "test:search-threshold": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/swfipn-search-threshold-test.mjs",
+    "test:search-threshold-browser": "node scripts/swfipn-search-threshold-browser-gate.mjs",
     "test:competition-analysis": "node scripts/swfipn-competition-analysis-gate.mjs",
     "test:strategy-engine": "node scripts/swfipn-strategy-engine-test.mjs",
     "test:kp-feedback-browser": "node scripts/swfipn-kp-feedback-browser-gate.mjs",
     "test:freshness-browser": "node scripts/swfipn-freshness-browser-gate.mjs",
+    "test:refresh-graph-frame": "node scripts/swfipn-refresh-graph-frame-gate.mjs",
     "test:mongo-policy": "node scripts/swfipn-mongo-policy-test.mjs",
     "mongo:policy:gate": "node scripts/swfipn-mongo-policy-gate.mjs",
     "test:entity-lifecycle": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/swfipn-entity-lifecycle-intent-test.mjs",
@@ -204,14 +210,14 @@
     "d3-geo": "^3.1.1",
     "echarts": "^6.1.0",
     "gsap": "^3.15.0",
-    "next": "16.2.7",
-    "react": "19.2.4",
-    "react-dom": "19.2.4",
+    "next": "^16.2.10",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
     "topojson-client": "^3.1.0"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.12.1",
-    "@tailwindcss/postcss": "^4",
+    "@tailwindcss/postcss": "^4.3.3",
     "@types/d3-geo": "^3.1.0",
     "@types/node": "^20",
     "@types/react": "^19",
@@ -219,10 +225,13 @@
     "@types/topojson-client": "^3.1.5",
     "@types/topojson-specification": "^1.0.5",
     "eslint": "^9",
-    "eslint-config-next": "16.2.7",
+    "eslint-config-next": "^16.2.10",
     "playwright": "^1.60.0",
-    "tailwindcss": "^4",
+    "tailwindcss": "^4.3.3",
     "typescript": "^5",
     "world-atlas": "^2.0.2"
+  },
+  "overrides": {
+    "postcss": "8.5.15"
   }
 }

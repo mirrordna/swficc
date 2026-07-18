@@ -2,6 +2,7 @@
 
 import type { AnchorHTMLAttributes, CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import type { Packet } from "@/lib/sourcePackets";
 import {
   count,
@@ -57,12 +58,13 @@ function worldFlowPairs(transactionRows: Record<string, unknown>[]): WorldFlowPa
 import { useDashboardSessionDisplayName } from "@/lib/dashboardAuth";
 import { businessSearchQueryVariants, dedupeSearchRecords, rankSearchRecords, searchRelevanceScore as businessSearchRelevanceScore, type SearchKind } from "@/lib/searchRelevance";
 import { filterSmartSearchIntentRows, smartSearchIntentForQuery, type SmartSearchIntent } from "@/lib/smartSearchIntent";
+import { isShortTextQuery, isTextQueryReady, MIN_TEXT_QUERY_CHARACTERS } from "@/lib/textQueryPolicy";
 
 const ENDPOINTS = {
   metrics: "/api/swfi/dashboard-metrics/v1",
   institutionTypes: "/api/institution-types/v1?limit=8",
   allocators30: "/api/allocator-activity/v1?days=30&limit=25&page=1&sort=latest_transaction_date&direction=desc",
-  allocators90: "/api/active-allocators/v1?days=90&limit=1",
+  allocators90: "/api/allocator-activity/v1?days=90&limit=1&page=1&sort=activity_count&direction=desc",
   rfps: "/api/live-opportunities/v1?limit=25&page=1",
   mandates: "/api/live-mandates/v1?limit=25&page=1",
   transactions30: "/api/recent-transactions/v1?days=30&limit=50&page=1",
@@ -114,27 +116,6 @@ type BrdSearchGroup = {
 };
 type SearchCategoryLabel = (typeof SEARCH_CATEGORY_LABELS)[number];
 
-const navMain = [
-  ["Dashboard", "/"],
-  ["News", "/intelligence"],
-  ["Institutions", "/profiles"],
-  ["People", "/people"],
-  ["Transactions", "/transactions"],
-  ["Compass", "/compass"],
-  ["RFPs", "/mandates"],
-  ["Reports", "/reports"],
-] as const;
-
-const navIntel = [
-  ["Historical Performance", "/reports/#historical-performance-dashboard"],
-  ["Peer Comparison", "/comparisons"],
-  ["Strategy Engine", "/comparisons/#strategy-engine"],
-  ["Rankings", "/reports/#dynamic-rankings-engine"],
-  ["Trend Analytics", "/reports/#investment-trend-analytics"],
-  ["Co-Investment", "/reports/#co-investment-tracking"],
-  ["Deal Intelligence", "/deals"],
-] as const;
-
 export default function DashboardPage() {
   const rootRef = useGsapReveal<HTMLDivElement>();
   const [packets, setPackets] = useState<Packets>({} as Packets);
@@ -148,7 +129,7 @@ export default function DashboardPage() {
   // (transactions reference entities by a reference id, not by their display name).
   const [searchTransactionPacket, setSearchTransactionPacket] = useState<Packet | undefined>();
   // People live search: the homepage otherwise ranks only the 25 pre-loaded peopleRows,
-  // so it can't find most people. When the query is >=2 chars we fetch the PII-safe
+  // so it can't find most people. Once the shared minimum is met we fetch the PII-safe
   // /api/people/search/v1 live and feed its matches into the People search category as
   // the primary source (same shape as the entity->transactions join above).
   const [searchPeoplePacket, setSearchPeoplePacket] = useState<Packet | undefined>();
@@ -160,7 +141,13 @@ export default function DashboardPage() {
   const [recentTab, setRecentTab] = useState<"transactions" | "rfps" | "opportunities" | "people">("transactions");
   const [topTab, setTopTab] = useState<"compass" | "sector">("compass");
   const [expandedPanel, setExpandedPanel] = useState("");
+  const [clientHydrated, setClientHydrated] = useState(false);
   const visualControls = useMemo<DashboardTableControls>(() => ({ rowLimit: 5, sortColumn: 0, sortDir: "asc" }), []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setClientHydrated(true), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -287,7 +274,10 @@ export default function DashboardPage() {
     ...searchEntityPackets.flatMap((packet) => [...rows(packet, "results"), ...rows(packet)]),
   ]), [dashboardEntitySearchRows, searchEntityPackets]);
   const liveSearchGroups = useMemo(() => brdPublicSearchGroups(searchQuery, searchPacket, searchEntityPackets), [searchQuery, searchPacket, searchEntityPackets]);
-  const searchIntent = useMemo(() => smartSearchIntentForQuery(searchQuery), [searchQuery]);
+  const searchIntent = useMemo(
+    () => isTextQueryReady(searchQuery) ? smartSearchIntentForQuery(searchQuery) : null,
+    [searchQuery],
+  );
   const intentSearchGroups = useMemo(
     () => smartSearchGroups(searchIntent, searchIntentPackets),
     [searchIntent, searchIntentPackets],
@@ -300,7 +290,7 @@ export default function DashboardPage() {
   // entity->transactions fetch. We keep the top few (not just #1) so the join can fall
   // through to the real fund when the #1 result is a short/side entity with no deals.
   const topSearchEntityNames = useMemo(() => {
-    if (searchQuery.trim().length < 2) return [] as string[];
+    if (!isTextQueryReady(searchQuery)) return [] as string[];
     const entities = baseSearchGroups.find((group) => group.label === "Entities");
     return entities ? entities.items.slice(0, 3).map((item) => item.label).filter(Boolean) : [];
   }, [baseSearchGroups, searchQuery]);
@@ -311,13 +301,14 @@ export default function DashboardPage() {
   const transactionCandidateKey = useMemo(() => {
     if (searchIntent) return "";
     const clean = searchQuery.trim();
-    if (clean.length < 2) return "";
+    if (!isTextQueryReady(clean)) return "";
     const aliasTargets = businessSearchQueryVariants(clean, sourceBackedSearchEntityRows).slice(1);
     return [...new Set([...aliasTargets, ...topSearchEntityNames])].join("|");
   }, [searchIntent, searchQuery, sourceBackedSearchEntityRows, topSearchEntityNames]);
   const searchGroups = useMemo(() => {
     const clean = searchQuery.trim();
-    if (clean.length >= 2) {
+    if (isShortTextQuery(clean)) return completeSearchGroups([]);
+    if (isTextQueryReady(clean)) {
       if (isShortBusinessQuery(clean) && (searchLoading || searchIntentLoading) && !hasAnySearchItems(liveSearchGroups) && !hasAnySearchItems(dashboardSearchGroups)) return completeSearchGroups([]);
       // Live groups are PRIMARY so a resolved entity's real transactions lead the
       // Transactions category (fills the "No matches" gap) and the live /api/people/search
@@ -340,7 +331,14 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!searchOpen) return;
     const clean = searchQuery.trim();
-    if (clean.length < 2) return;
+    if (!isTextQueryReady(clean)) {
+      const resetTimer = window.setTimeout(() => {
+        setSearchPacket(undefined);
+        setSearchEntityPackets([]);
+        setSearchLoading(false);
+      }, 0);
+      return () => window.clearTimeout(resetTimer);
+    }
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       if (smartSearchIntentForQuery(clean)) {
@@ -405,6 +403,13 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!searchOpen) return;
+    if (!isTextQueryReady(searchQuery)) {
+      const resetTimer = window.setTimeout(() => {
+        setSearchIntentPackets([]);
+        setSearchIntentLoading(false);
+      }, 0);
+      return () => window.clearTimeout(resetTimer);
+    }
     const intent = smartSearchIntentForQuery(searchQuery);
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
@@ -471,18 +476,17 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!searchOpen) return;
     const clean = searchQuery.trim();
-    if (smartSearchIntentForQuery(clean)) return;
+    if (!isTextQueryReady(clean) || smartSearchIntentForQuery(clean)) {
+      const resetTimer = window.setTimeout(() => setSearchPeoplePacket(undefined), 0);
+      return () => window.clearTimeout(resetTimer);
+    }
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      if (clean.length < 2) {
-        setSearchPeoplePacket(undefined);
-        return;
-      }
       void fetchPeopleSearch(clean, controller.signal).then((packet) => {
         if (controller.signal.aborted) return;
         setSearchPeoplePacket(packet && isFact(packet) ? packet : undefined);
       });
-    }, clean.length >= 2 ? 120 : 0);
+    }, 120);
     return () => {
       window.clearTimeout(timer);
       controller.abort();
@@ -494,7 +498,12 @@ export default function DashboardPage() {
   }
 
   return (
-    <div ref={rootRef} data-dashboard-ready={dashboardReady ? "true" : "false"} className="min-h-screen bg-[#F4F6F8] font-sans text-[#101827]">
+    <div
+      ref={rootRef}
+      data-client-hydrated={clientHydrated ? "true" : "false"}
+      data-dashboard-ready={dashboardReady ? "true" : "false"}
+      className="min-h-screen bg-[#F4F6F8] font-sans text-[#101827]"
+    >
       <div className="min-h-screen xl:grid xl:grid-cols-[238px_minmax(0,1fr)]">
         <BrdCommandCenterSidebar topRows={topAumRows} pending={packets.top20 === undefined} />
         <div className="min-w-0">
@@ -534,7 +543,13 @@ export default function DashboardPage() {
           query={searchQuery}
           groups={searchGroups}
           activeIndex={activeSearchIndex}
-          onQueryChange={setSearchQuery}
+          onQueryChange={(nextQuery) => {
+            const ready = isTextQueryReady(nextQuery);
+            const hasIntent = ready && Boolean(smartSearchIntentForQuery(nextQuery));
+            setSearchLoading(ready && !hasIntent);
+            setSearchIntentLoading(hasIntent);
+            setSearchQuery(nextQuery);
+          }}
           onActiveIndexChange={setActiveSearchIndex}
           onClose={() => setSearchOpen(false)}
           flatItems={searchItems}
@@ -572,7 +587,7 @@ function BrdCommandCenterSidebar({ topRows, pending = false }: { topRows: Record
   return (
     <aside className="border-b border-[#E5E8EF] bg-white xl:sticky xl:top-0 xl:h-screen xl:border-b-0 xl:border-r xl:border-[#E5E8EF]">
       <div className="flex h-[78px] items-center border-b border-[#E5E8EF] bg-[#B90D12] px-5 text-white">
-        <img src={assetHref("/swfi-assets/logo.svg")} alt="SWFI Sovereign Wealth Fund Institute" className="h-11 w-[132px] object-contain" />
+        <Image src={assetHref("/swfi-assets/logo.svg")} alt="SWFI Sovereign Wealth Fund Institute" width={161} height={59} className="h-11 w-[132px] object-contain" />
       </div>
       <div className="px-4 py-3">
         <div className="mb-2 text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#4A5665]">Dashboard Navigation</div>
@@ -637,7 +652,7 @@ function BrdTopNavigation({ onSearchOpen, dataAsOfLabel, displayName }: { onSear
               only "SWFI" was the data-dependent freshness label, so branding
               (and the acceptance gate) raced hydration. */}
           <DashboardLink href="/" className="shrink-0" aria-label="SWFI dashboard home">
-            <img src={assetHref("/swfi-assets/logo.svg")} alt="SWFI Sovereign Wealth Fund Institute" className="h-9 w-[104px] object-contain" />
+            <Image src={assetHref("/swfi-assets/logo.svg")} alt="SWFI Sovereign Wealth Fund Institute" width={161} height={59} className="h-9 w-[104px] object-contain" />
           </DashboardLink>
           <div className="min-w-0">
             <h1 className="text-[22px] font-extrabold leading-tight text-white sm:text-[24px]">{displayName ? `${greeting}, ${displayName}.` : `${greeting}.`}</h1>
@@ -755,8 +770,8 @@ function VisualExecutiveOverview({
           <MostRecentDisclosedDeals rows={disclosedDealRows} />
           <div className="grid gap-3 md:grid-cols-2">
             <DashboardLink href="/mandates" className="border border-[#C9D3DE] bg-white px-3 py-2.5 text-inherit no-underline shadow-[0_1px_2px_rgba(20,44,70,0.05)] hover:border-[#D51E29]/50">
-              <span className="block text-[10px] font-extrabold tracking-[0.08em] text-[#7B8996]">Recently Fundraising Institutions</span>
-              <span className="mt-1 block text-[13px] font-semibold text-[#304153]">RFPs and fundraising opportunities linked into Compass records.</span>
+              <span className="block text-[10px] font-extrabold tracking-[0.08em] text-[#7B8996]">Live RFPs &amp; Opportunities</span>
+              <span className="mt-1 block text-[13px] font-semibold text-[#304153]">Open Compass RFP and opportunity records. No fundraising lifecycle is inferred.</span>
             </DashboardLink>
             <DashboardLink href="/deals" className="border border-[#C9D3DE] bg-white px-3 py-2.5 text-inherit no-underline shadow-[0_1px_2px_rgba(20,44,70,0.05)] hover:border-[#D51E29]/50">
               <span className="block text-[10px] font-extrabold tracking-[0.08em] text-[#7B8996]">Investment Trends by Sector</span>
@@ -773,13 +788,19 @@ function VisualExecutiveOverview({
             <ExpandablePanel
               id="institution-overview"
               title="Global Capital Map"
-              href="/profiles/?filter=Sovereign%20Wealth%20Fund"
+              href="/profiles/?filter=Sovereign%20Wealth%20Fund&entity_type=Sovereign%20Wealth%20Fund"
               expanded={expandedPanel === "institution-overview"}
               onToggle={onTogglePanel}
               detail={<TotalAumInsightDetail topRows={topRows} institutionTypeRows={institutionTypeRows} transactionRows={transactionRows} rfpRows={rfpRows} sectorRows={sectorRows} />}
               explain="Real world map, two views: Institutions (where SWFI's top-ranked institutions are based; bubble = count) and Deal flows (arrows from buyer country to deal location, width = connecting deals; hover for values). AUM and USD figures show only when the source disclosed them. Click a country or row → that country's profiles."
             >
-              <CapitalByCountry topPacket={packets.top20} topRows={topRows} sectorRows={sectorRows} flows={worldFlowPairs(transactionRows)} />
+              <CapitalByCountry
+                topPacket={packets.top20}
+                topRows={topRows}
+                sectorRows={sectorRows}
+                flows={worldFlowPairs(transactionRows)}
+                sourcesPending={packets.top20 === undefined || packets.entities === undefined}
+              />
             </ExpandablePanel>
             <ExpandablePanel
               id="capital-flows"
@@ -799,7 +820,7 @@ function VisualExecutiveOverview({
               expanded={expandedPanel === "ai-insights"}
               onToggle={onTogglePanel}
               detail={<ExpandedUnifiedInsightRows rows={unifiedRows} controls={controls} />}
-              explain="Signals from the data already on this page: allocator activity, disclosed deals, fundraising, intelligence, and the Competition Analysis path. No generated values."
+              explain="Signals from the data already on this page: allocator activity, disclosed deals, Compass RFPs/opportunities, intelligence, and the Competition Analysis path. No generated values."
             >
               <AiInsightsPanel topInvestors={allocatorRows} marketRows={transactionRows} fundraisingRows={rfpRows} newsRows={newsRows} sectorRows={sectorRows} />
             </ExpandablePanel>
@@ -819,7 +840,7 @@ function VisualExecutiveOverview({
             <ExpandablePanel
               id="relationships"
               title="Latest Institutional Activity"
-              href="/allocators"
+              href="/allocators?days=30"
               expanded={expandedPanel === "relationships"}
               onToggle={onTogglePanel}
               detail={<ExpandedInvestorRows rows={allocatorRows} controls={controls} />}
@@ -882,7 +903,7 @@ function VisualExecutiveOverview({
               expanded={expandedPanel === "activity-feed"}
               onToggle={onTogglePanel}
               detail={<ExpandedDealRows rows={transactionRows} controls={controls} />}
-              explain="Latest recorded activity across deals, news, and fundraising, newest first. Each line links to its source record."
+              explain="Latest recorded activity across deals, news, and Compass RFPs/opportunities, newest first. Each line links to its source record."
             >
               <ActivityFeedPanel marketRows={transactionRows} newsRows={newsRows} fundraisingRows={rfpRows} />
             </ExpandablePanel>
@@ -1067,7 +1088,9 @@ function BrdSearchModal({
   const [filter, setFilter] = useState<SearchCategoryLabel>("All");
   const availableFilters = SEARCH_CATEGORY_LABELS;
   const selectedFilter = availableFilters.some((label) => label === filter) ? filter : "All";
-  const interpretedIntent = smartSearchIntentForQuery(query);
+  const queryReady = isTextQueryReady(query);
+  const queryShort = isShortTextQuery(query);
+  const interpretedIntent = queryReady ? smartSearchIntentForQuery(query) : null;
   const visibleGroups = selectedFilter === "All" ? groups : groups.filter((group) => group.label === selectedFilter);
   const visibleItems = visibleGroups.flatMap((group) => group.items);
   const activeItem = visibleItems[Math.min(activeIndex, Math.max(0, visibleItems.length - 1))];
@@ -1093,7 +1116,7 @@ function BrdSearchModal({
       window.location.assign(dashboardResolvedHref(activeItem.href));
       return;
     }
-    if (event.key === "Enter" && query.trim()) {
+    if (event.key === "Enter" && queryReady) {
       event.preventDefault();
       window.location.assign(dashboardResolvedHref(brdSearchResultsHref(query, selectedFilter)));
     }
@@ -1113,6 +1136,7 @@ function BrdSearchModal({
             placeholder="Search entities, people, transactions, RFPs, news..."
             className="min-h-11 min-w-0 flex-1 text-[17px] outline-none placeholder:text-[#8E95A3]"
             aria-label="Search query"
+            aria-describedby="smart-search-minimum"
           />
           {query ? (
             <button type="button" onClick={() => onQueryChange("")} className="border border-[#D8DDE5] px-3 py-2 text-[12px] font-bold text-[#394356]">
@@ -1120,6 +1144,9 @@ function BrdSearchModal({
             </button>
           ) : null}
           <button type="button" onClick={onClose} className="grid h-9 w-9 place-items-center text-[22px] text-[#394356]" aria-label="Close search">×</button>
+        </div>
+        <div id="smart-search-minimum" className="border-b border-[#E2E6ED] px-5 py-2 text-[11px] text-[#687385]" aria-live="polite">
+          {queryShort ? `Enter at least ${MIN_TEXT_QUERY_CHARACTERS} characters to search.` : `Search starts at ${MIN_TEXT_QUERY_CHARACTERS} characters.`}
         </div>
         <div className="flex gap-2 overflow-x-auto border-b border-[#E2E6ED] px-5 py-3">
           {availableFilters.map((label) => (
@@ -1161,18 +1188,24 @@ function BrdSearchModal({
                     </DataLink>
                   );
                 }) : (
-                  <div className="px-3 py-2 text-[12px] text-[#687385]">No matches in this category.</div>
+                  <div className="px-3 py-2 text-[12px] text-[#687385]" aria-live="polite">
+                    {loading && queryReady ? "Searching this category…" : "No matches in this category."}
+                  </div>
                 )}
               </div>
             </section>
           ))}
-          {!flatItems.length ? <div className="py-8 text-center text-[14px] text-[#687385]">{loading ? "Searching SWFI records..." : "No matching SWFI records."}</div> : null}
+          {!flatItems.length ? <div className="py-8 text-center text-[14px] text-[#687385]">{queryShort ? `Enter at least ${MIN_TEXT_QUERY_CHARACTERS} characters.` : loading ? "Searching SWFI records..." : "No matching SWFI records."}</div> : null}
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#E2E6ED] px-5 py-3 text-[12px] text-[#687385]">
           <span>Use ↑↓ to move, Enter to open, Escape to close.</span>
-          <DashboardLink href={brdSearchResultsHref(query, selectedFilter)} className="font-bold text-[#0B4A83] underline">
-            View all results
-          </DashboardLink>
+          {queryReady ? (
+            <DashboardLink href={brdSearchResultsHref(query, selectedFilter)} className="font-bold text-[#0B4A83] underline">
+              View all results
+            </DashboardLink>
+          ) : (
+            <span className="font-semibold text-[#7B8794]">View all results after {MIN_TEXT_QUERY_CHARACTERS} characters</span>
+          )}
         </div>
       </div>
     </div>
@@ -1324,7 +1357,7 @@ function smartSearchGroups(intent: SmartSearchIntent | null, packets: Packet[]):
 }
 
 function brdPublicSearchGroups(query: string, packet?: Packet, entityPackets: Packet[] = []): BrdSearchGroup[] {
-  if (query.trim().length < 2) return [];
+  if (!isTextQueryReady(query)) return [];
   const grouped = new Map<string, BrdSearchItem[]>();
   const candidates: { row: Record<string, unknown>; label: string; kind: SearchKind }[] = [];
   const entityRows = dedupeSearchRecords(entityPackets.flatMap((entityPacket) => [
@@ -1533,7 +1566,7 @@ function packetEntityName(packet: Packet): string {
 // pre-built with swfi.com transaction URLs (source_url/swfi_url), so links resolve to
 // the SWFI platform per the source-of-truth rule.
 function entityTransactionSearchGroups(packet: Packet | undefined, query: string): BrdSearchGroup[] {
-  if (!packet || !isFact(packet) || query.trim().length < 2) return [];
+  if (!packet || !isFact(packet) || !isTextQueryReady(query)) return [];
   const txnRows = rows(packet, "results").length ? rows(packet, "results") : rows(packet);
   const resolvedEntityName = packetEntityName(packet);
   const items = txnRows.slice(0, 5).map((row) => ({
@@ -1550,7 +1583,7 @@ function entityTransactionSearchGroups(packet: Packet | undefined, query: string
 // detail=title · institution, href=dashboardPersonHref, sourceHref=sourceHref) so the two
 // merge into one visually-consistent category, with these live matches leading.
 function peopleSearchGroups(packet: Packet | undefined, query: string): BrdSearchGroup[] {
-  if (!packet || !isFact(packet) || query.trim().length < 2) return [];
+  if (!packet || !isFact(packet) || !isTextQueryReady(query)) return [];
   const peopleResults = rows(packet, "results").length ? rows(packet, "results") : rows(packet);
   const items = peopleResults.slice(0, 8).map((row) => ({
     label: brdText(row.name),
@@ -1623,9 +1656,6 @@ function rankRecordsForQuery(rowsToUse: Record<string, unknown>[], query: string
   return rankSearchRecords(rowsToUse, query, kind);
 }
 
-function searchRelevanceScore(row: Record<string, unknown>, query: string, kind: "entity" | "person" | "transaction" | "rfp" | "news") {
-  return businessSearchRelevanceScore(row, query, kind);
-}
 
 function searchRowKey(row: Record<string, unknown>): string {
   return brdText(row.source_url || row.swfi_url || row.url || row.profile_url || row.slug || row.name || row.title, "");
@@ -1773,11 +1803,41 @@ function xmlText(value: string) {
 function NewsPreviewImage({ row, featured = false }: { row: Record<string, unknown>; featured?: boolean }) {
   const preview = newsPreviewSource(row);
   const fallback = newsFallbackSource(row);
-  const [imageSource, setImageSource] = useState(preview || fallback);
-  const [sourceState, setSourceState] = useState(preview ? "editorial" : "story-fallback");
+  const [imageSource, setImageSource] = useState(fallback);
+  const [sourceState, setSourceState] = useState("story-fallback");
   const storyKey = newsStoryKey(row);
+
+  useEffect(() => {
+    if (!preview) return;
+    let active = true;
+    let objectUrl = "";
+    void fetch(preview, {
+      headers: { Accept: "image/avif,image/webp,image/png,image/jpeg,image/gif" },
+    }).then(async (response) => {
+      const mediaType = response.headers.get("content-type") || "";
+      if (!response.ok || !mediaType.startsWith("image/")) {
+        await response.arrayBuffer();
+        return;
+      }
+      const blob = await response.blob();
+      if (!active) return;
+      objectUrl = URL.createObjectURL(blob);
+      setImageSource(objectUrl);
+      setSourceState("editorial");
+    }).catch(() => {
+      if (active) {
+        setImageSource(fallback);
+        setSourceState("story-fallback");
+      }
+    });
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [fallback, preview]);
+
   return (
-    <img
+    <Image
       data-testid={featured ? "featured-news-image" : "news-preview-image"}
       data-news-story-id={storyKey}
       data-news-image-source={sourceState}
@@ -1794,6 +1854,7 @@ function NewsPreviewImage({ row, featured = false }: { row: Record<string, unkno
       decoding="async"
       width={featured ? 720 : 100}
       height={featured ? 420 : 100}
+      unoptimized
       className={featured ? "h-full min-h-[250px] w-full object-cover" : "h-[100px] w-[100px] object-cover"}
     />
   );
@@ -1855,128 +1916,6 @@ function dashboardResolvedHref(href: string) {
   return appHref(href);
 }
 
-function ConceptSidebar({ topRows }: { topRows: Record<string, unknown>[] }) {
-  return (
-    <aside data-gsap-reveal className="order-2 min-w-0 border-r border-[#132A49] bg-[#071F48] text-white lg:order-none lg:overflow-y-auto">
-      <div className="flex min-h-[64px] items-center gap-3 border-b border-white/10 px-4">
-        <div className="grid h-10 w-[112px] place-items-center bg-[#B90D12] px-2">
-          <img src={assetHref("/swfi-assets/logo.svg")} alt="SWFI" className="h-8 w-[98px] shrink-0 object-contain" />
-        </div>
-        <div className="min-w-0">
-          <div className="text-[10px] font-extrabold uppercase leading-tight tracking-[0.14em] text-white">Terminal</div>
-          <div className="mt-1 text-[10px] font-semibold leading-tight text-white/55">Platform dashboard</div>
-        </div>
-      </div>
-      <nav className="px-3 py-3">
-        <div className="mb-2 px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-white/45">Institutional Intelligence</div>
-        {navMain.map(([label, href], index) => (
-          <DashboardLink
-            key={label}
-            href={href}
-            className={`mb-1 flex min-h-9 items-center gap-2 border-l-4 px-3 text-[12px] font-semibold no-underline ${index === 0 ? "border-[#D51E29] bg-white/12 text-white" : "border-transparent text-white/70 hover:border-[#D51E29]/70 hover:bg-white/8 hover:text-white"}`}
-          >
-            <MiniIcon index={index} />
-            <span>{label}</span>
-          </DashboardLink>
-        ))}
-        <div className="mb-2 mt-4 px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-white/45">Analytics</div>
-        {navIntel.map(([label, href], index) => (
-          <DashboardLink key={label} href={href} className="mb-1 flex min-h-8 items-center gap-2 border-l-4 border-transparent px-3 text-[11.5px] font-semibold text-white/55 no-underline hover:border-[#D51E29]/70 hover:bg-white/8 hover:text-white">
-            <MiniIcon index={index + 9} />
-            <span>{label}</span>
-          </DashboardLink>
-        ))}
-        <div className="mt-4 border border-white/10 bg-[#0A2B56] p-3">
-          <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-white/45">Market Focus</div>
-          {["SWF", "Pensions", "Real Estate"].map((label) => (
-            <DashboardLink key={label} href={`/profiles/?filter=${encodeURIComponent(label)}`} className="flex items-center justify-between border-t border-white/10 py-2 text-[11px] font-semibold text-white/70 no-underline first:border-t-0 hover:text-white">
-              <span>{label}</span>
-              <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-white/45">Open records</span>
-            </DashboardLink>
-          ))}
-        </div>
-      </nav>
-      <div className="mx-3 mb-4 border border-white/10 bg-[#0A2B56] p-3">
-        <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-white/45">TOP 5 BY AUM</div>
-        <div className="grid gap-2">
-          {topRows.slice(0, 5).map((row) => (
-            <div key={brdText(row.name)} className="border-t border-white/10 pt-2 first:border-t-0 first:pt-0">
-              <DataLink href={dashboardProfileHref(row)} sourceHref={sourceHref(row)} className="block truncate text-[11px] font-bold text-white underline">
-              {brdText(row.name)}
-              </DataLink>
-              <div className="mt-0.5 text-[10px] text-white/55">{entityTypeCell(row)}</div>
-              <div className="text-[10px] text-white/55">{brdText(row.country)}</div>
-              <div className="text-[10px] font-semibold text-white">{aumDisplay(row)}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-      <div className="mx-3 mb-4 border border-white/10 p-3 text-[10.5px] font-semibold text-white/55">
-        Public discovery dashboard. Protected pages continue through SWFI sign-in.
-      </div>
-    </aside>
-  );
-}
-
-function ConceptTopBar({ dataAsOfLabel, packets }: { dataAsOfLabel: string; packets: Packets }) {
-  const currentDateLabel = useCurrentDateLabel();
-  const exactCounts = [
-    ["Institutions", metricNumber(packets.metrics, "institutions")],
-    ["Active Allocators", numericSortValue(packetCount(packets.allocators90, "count")) || metricNumber(packets.metrics, "allocators")],
-    ["Transactions", metricNumber(packets.metrics, "transactions")],
-  ].filter(([, value]) => typeof value === "number" && Number.isFinite(value as number)) as [string, number][];
-  return (
-    <header data-gsap-reveal className="border-b border-[#8E090D] bg-[#B90D12] text-white">
-      <div className="flex min-h-[64px] flex-wrap items-center gap-3 px-3 py-2 sm:px-5">
-        <div className="min-w-[190px] flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[18px] font-extrabold leading-tight text-white">SWFI Intelligence Terminal</span>
-          </div>
-          <div className="text-[11px] text-white/80">Institutional intelligence, capital activity, mandates, and market signals.</div>
-          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10.5px] font-semibold text-white/85">
-            {exactCounts.map(([label, value]) => <span key={label}>{label} {value.toLocaleString("en-US")}</span>)}
-          </div>
-        </div>
-        <nav className="order-4 flex w-full flex-wrap gap-2 text-[11px] font-bold sm:order-none sm:w-auto">
-          <DashboardLink href="/about/" className="text-white/90 no-underline hover:text-white">About Us</DashboardLink>
-          <DashboardLink href="/solutions/" className="text-white/90 no-underline hover:text-white">Solutions</DashboardLink>
-          <DashboardLink href="/demo/" className="text-white/90 no-underline hover:text-white">Demo</DashboardLink>
-          <DashboardLink href="/contact/" className="text-white/90 no-underline hover:text-white">Contact Us</DashboardLink>
-          <a href="https://www.swfi.com/v1/signin/" className="text-white/90 no-underline hover:text-white">Sign In</a>
-        </nav>
-        <form action={appHref("/search/")} className="order-3 flex h-9 w-full items-center border border-white/30 bg-white px-2.5 text-[#444D5F] sm:order-none sm:w-[430px]">
-          <span className="mr-2 text-[10px] font-black uppercase tracking-[0.12em] text-[#7A8794]">Search</span>
-          <input id="dashboard-search" name="q" type="search" aria-label="Search entities, people, transactions, RFPs, and news" placeholder="Companies, investors, funds, people, reports" className="min-w-0 flex-1 bg-transparent text-[12.5px] outline-none placeholder:text-[#70798B]" />
-          <button aria-label="Search" className="ml-2 border border-[#C9D3DE] bg-white px-2 py-1 text-[10px] font-bold text-[#004483]" type="submit">Go</button>
-        </form>
-        <div className="flex items-center gap-2">
-          <div className="hidden border-l border-white/25 pl-3 text-right text-[10px] text-white/80 md:block">
-            <div className="font-bold text-white">{currentDateLabel}</div>
-            <div>{dataAsOfLabel}</div>
-          </div>
-          <DashboardLink href="/intelligence" className="bg-[#071F48] px-3 py-2 text-[11px] font-bold text-white no-underline">
-            Tools
-          </DashboardLink>
-        </div>
-      </div>
-      <div className="flex overflow-x-auto border-t border-[#E4E9EF] bg-white px-3 text-[11px] font-bold sm:px-5">
-        {[
-          ["Dashboard", "/"],
-          ["Screeners", "/search"],
-          ["Profiles", "/profiles"],
-          ["Deals", "/deals"],
-          ["RFPs", "/mandates"],
-          ["Research", "/intelligence"],
-        ].map(([label, href], index) => (
-          <DashboardLink key={label} href={href} className={`shrink-0 border-b-2 px-3 py-2 no-underline ${index === 0 ? "border-[#D51E29] text-[#071F48]" : "border-transparent text-[#5C6977] hover:border-[#AAB6C3] hover:text-[#071F48]"}`}>
-            {label}
-          </DashboardLink>
-        ))}
-      </div>
-    </header>
-  );
-}
-
 function ConceptKpiCard({ label, value, note, href, series, color, statusLabel = "", sourceLabel = "", explain = "" }: {
   label: string;
   value: string;
@@ -2034,7 +1973,7 @@ function ExpandablePanel({ id, title, href, expanded, onToggle, children, detail
   );
 }
 
-function CapitalByCountry({ topPacket, topRows, sectorRows, flows = [] }: { topPacket?: Packet; topRows: Record<string, unknown>[]; sectorRows: Record<string, unknown>[]; flows?: WorldFlowPair[] }) {
+function CapitalByCountry({ topPacket, topRows, sectorRows, flows = [], sourcesPending = false }: { topPacket?: Packet; topRows: Record<string, unknown>[]; sectorRows: Record<string, unknown>[]; flows?: WorldFlowPair[]; sourcesPending?: boolean }) {
   const totalAum = totalAumValue(topPacket, topRows);
   const sectorCapital = sumNumbers(sectorRows.map(sectorValue));
   // Ranked by institution count (always known, one unit) — never by a bar
@@ -2046,11 +1985,12 @@ function CapitalByCountry({ topPacket, topRows, sectorRows, flows = [] }: { topP
   const topCountry = display[0];
   const topCountryShare = topCountry?.aum && topCountry.aumCurrency === "USD" && totalAum ? Math.round((topCountry.aum / totalAum) * 100) : 0;
   const countries = knownDistinctCount(topRows.map((row) => row.country));
+  const mapPending = sourcesPending && display.length === 0;
   const stats = [
     { label: "Countries", value: countries ? compactNumber(countries) : "Not disclosed", href: "/profiles", note: "Profile locations" },
     { label: "Profiles", value: topRows.length ? compactNumber(topRows.length) : "Not disclosed", href: "/profiles", note: "Loaded ranking rows" },
     { label: "Top country", value: topCountry ? topCountry.country : "Not disclosed", href: topCountry ? `/profiles/?filter=${encodeURIComponent(topCountry.country)}` : "/profiles", note: topCountryShare ? `${topCountryShare}% of displayed AUM` : "By institutions in loaded rows" },
-    { label: "Ranking total", value: totalAum ? compactNumber(totalAum) : "Not disclosed", href: "/profiles/?filter=Sovereign%20Wealth%20Fund" },
+    { label: "Ranking total", value: totalAum ? compactNumber(totalAum) : "Not disclosed", href: "/profiles/?filter=Sovereign%20Wealth%20Fund&entity_type=Sovereign%20Wealth%20Fund" },
   ];
   return (
     <div className="grid gap-3">
@@ -2090,19 +2030,21 @@ function CapitalByCountry({ topPacket, topRows, sectorRows, flows = [] }: { topP
             ))}
           </div>
         ) : (
-          <CapitalSignalFallback sectorRows={sectorRows} pending={topPacket === undefined} />
+          <CapitalSignalFallback sectorRows={sectorRows} pending={mapPending} />
         )}
-        <div className="grid border-t border-[#D7E3EF] bg-white text-[11px] sm:grid-cols-4">
-          {stats.map((stat) => (
-            <DashboardLink key={stat.label} href={stat.href} className="min-w-0 border-r border-[#E1E8EF] px-3 py-2 text-inherit no-underline last:border-r-0">
-              <span className="block truncate text-[10px] font-bold text-[#7B8996]">{stat.label}</span>
-              {/* Values wrap rather than truncate — "United Arab Emirates"
-                  cut to "United ..." hides the answer the tile exists for. */}
-              <span className="mt-1 block text-[15px] font-extrabold leading-tight text-[#0A3A7A]">{stat.value}</span>
-              {"note" in stat && stat.note ? <span className="mt-0.5 block truncate text-[9.5px] font-semibold text-[#7B8996]">{stat.note}</span> : null}
-            </DashboardLink>
-          ))}
-        </div>
+        {!mapPending ? (
+          <div className="grid border-t border-[#D7E3EF] bg-white text-[11px] sm:grid-cols-4">
+            {stats.map((stat) => (
+              <DashboardLink key={stat.label} href={stat.href} className="min-w-0 border-r border-[#E1E8EF] px-3 py-2 text-inherit no-underline last:border-r-0">
+                <span className="block truncate text-[10px] font-bold text-[#7B8996]">{stat.label}</span>
+                {/* Values wrap rather than truncate — "United Arab Emirates"
+                    cut to "United ..." hides the answer the tile exists for. */}
+                <span className="mt-1 block text-[15px] font-extrabold leading-tight text-[#0A3A7A]">{stat.value}</span>
+                {"note" in stat && stat.note ? <span className="mt-0.5 block truncate text-[9.5px] font-semibold text-[#7B8996]">{stat.note}</span> : null}
+              </DashboardLink>
+            ))}
+          </div>
+        ) : null}
       </div>
       {sectorCapital ? (
         <div className="text-[10.5px] font-semibold text-[#7B8996]">Market activity total: {compactMoney(sectorCapital)}</div>
@@ -2112,13 +2054,33 @@ function CapitalByCountry({ topPacket, topRows, sectorRows, flows = [] }: { topP
 }
 
 function CapitalSignalFallback({ sectorRows, pending = false }: { sectorRows: Record<string, unknown>[]; pending?: boolean }) {
+  if (pending) {
+    return (
+      <div
+        data-map-loading-state="true"
+        className="grid min-h-[360px] content-center gap-5 overflow-hidden bg-[#F4F8FC] px-5 py-8"
+        role="status"
+        aria-label="Loading Global Capital Map"
+        aria-busy="true"
+      >
+        <div aria-hidden="true" className="mx-auto h-3 w-32 animate-pulse rounded-full bg-[#D6E2ED]" />
+        <div aria-hidden="true" className="relative mx-auto h-48 w-full max-w-[520px] overflow-hidden rounded-[8px] border border-[#D7E3EF] bg-white">
+          <span className="absolute left-[14%] top-[28%] h-14 w-20 animate-pulse rounded-[45%] bg-[#E3ECF4]" />
+          <span className="absolute left-[34%] top-[18%] h-20 w-28 animate-pulse rounded-[48%] bg-[#E3ECF4]" />
+          <span className="absolute right-[17%] top-[34%] h-16 w-24 animate-pulse rounded-[46%] bg-[#E3ECF4]" />
+          <span className="absolute bottom-[16%] right-[27%] h-10 w-16 animate-pulse rounded-[48%] bg-[#E3ECF4]" />
+        </div>
+      </div>
+    );
+  }
+
   const rowsToShow = sectorRows.slice(0, 6);
   const max = Math.max(1, ...rowsToShow.map(sectorValue));
   return (
-    <div className="absolute inset-0 grid content-center px-5 pb-16 pt-20" role="img" aria-label="Top SWF AUM locations by country">
+    <div className="grid min-h-[360px] content-center bg-[#071F48] px-5 py-8" role="img" aria-label="Top SWF AUM locations by country">
       <div className="grid gap-3 border border-white/16 bg-[#071F48]/78 p-4 shadow-[0_16px_38px_rgba(0,0,0,0.22)]">
         <div>
-          <div className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#B9D7F0]">{pending ? "Loading map…" : "Country distribution unavailable"}</div>
+          <div className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#B9D7F0]">Country distribution unavailable</div>
           <div className="mt-1 text-[16px] font-extrabold text-white">Showing disclosed market activity instead</div>
         </div>
         <div className="grid gap-2">
@@ -2145,120 +2107,6 @@ function CapitalSignalFallback({ sectorRows, pending = false }: { sectorRows: Re
   );
 }
 
-function InstitutionIntelligenceOverview({
-  packets,
-  topRows,
-  institutionTypeRows,
-  allocatorRows,
-  rfpRows,
-  sectorRows,
-}: {
-  packets: Packets;
-  topRows: Record<string, unknown>[];
-  institutionTypeRows: Record<string, unknown>[];
-  allocatorRows: Record<string, unknown>[];
-  rfpRows: Record<string, unknown>[];
-  sectorRows: Record<string, unknown>[];
-}) {
-  const totalInstitutions = metricNumber(packets.metrics, "institutions");
-  const typeMax = Math.max(1, ...institutionTypeRows.map((row) => numericSortValue(text(row.count, "")) ?? 0));
-  const investorRows = allocatorRows.slice(0, 5);
-  const investorMax = Math.max(1, ...investorRows.map(activityCountValue));
-  const fundraisingRows = [...rfpRows].sort((a, b) => deadlineTime(a) - deadlineTime(b)).slice(0, 4);
-  const trendRows = sectorRows.slice(0, 8);
-  const trendMax = Math.max(1, ...trendRows.map(sectorValue));
-  return (
-    <div className="grid gap-3">
-      <VisualPanel title="Top SWF AUM Locations" source={ENDPOINTS.top20} empty={DASHBOARD_EMPTY} hasRows={topRows.length > 0 || sectorRows.length > 0}>
-        {/* institutions view only here — this secondary panel's props don't
-            carry transactionRows; the main Global Capital Map panel has the
-            Deal-flows toggle. */}
-        <CapitalByCountry topPacket={packets.top20} topRows={topRows} sectorRows={sectorRows} />
-      </VisualPanel>
-      <div className="grid gap-3 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
-        <VisualPanel title="Total Institutions Tracked by Entity Type" source={ENDPOINTS.institutionTypes} empty={DASHBOARD_EMPTY} hasRows={institutionTypeRows.length > 0}>
-          <div className="mb-3 flex items-end justify-between gap-3">
-            <div className="swfi-numeral text-[28px] font-extrabold leading-none text-[#11314F]">{totalInstitutions ? compactNumber(totalInstitutions) : "Not disclosed"}</div>
-            <DashboardLink href="/profiles" className="text-[11px] font-extrabold text-[#0A3A7A] underline">View records</DashboardLink>
-          </div>
-          <div className="grid gap-2">
-            {institutionTypeRows.slice(0, 6).map((row) => {
-              const value = numericSortValue(text(row.count, "")) ?? 0;
-              const label = brdText(row.name || row.type);
-              return (
-                <DashboardLink key={label} href={`/profiles/?filter=${encodeURIComponent(label)}`} className="grid gap-1 text-inherit no-underline">
-                  <span className="flex items-center justify-between gap-2 text-[12px]">
-                    <span className="truncate font-bold text-[#203448]">{label}</span>
-                    <span className="font-extrabold text-[#0A3A7A]">{compactNumber(value)}</span>
-                  </span>
-                  <Bar value={value} max={typeMax} />
-                </DashboardLink>
-              );
-            })}
-          </div>
-        </VisualPanel>
-        <VisualPanel title="Latest Active Investors (Last 30 Days)" source={ENDPOINTS.allocators30} empty={DASHBOARD_EMPTY} hasRows={investorRows.length > 0}>
-          <div className="grid gap-2">
-            {investorRows.map((row, index) => {
-              const value = activityCountValue(row);
-              return (
-                <DataLink key={`${brdText(row.name)}-${index}`} href={dashboardProfileHref(row)} sourceHref={sourceHref(row)} className="grid gap-1 rounded-[5px] border border-[#E5EBF1] px-2 py-2 text-inherit no-underline">
-                  <span className="flex items-center justify-between gap-2 text-[12px]">
-                    <span className="truncate font-bold text-[#0A3A7A]">{index + 1}. {brdText(row.name)}</span>
-                    <span className="font-extrabold text-[#1A9A68]">{dealCountLabel(value)}</span>
-                  </span>
-                  <Bar value={value} max={investorMax} />
-                  <span className="truncate text-[10.5px] text-[#7B8996]">{allocatorMeta(row)} · {compactMoneyDisplay(row.total_deal_value_display || row.total_deal_value)}</span>
-                </DataLink>
-              );
-            })}
-          </div>
-        </VisualPanel>
-      </div>
-      <div className="grid gap-3 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
-        <VisualPanel title="Recently Fundraising Institutions" source={ENDPOINTS.rfps} empty={DASHBOARD_EMPTY} hasRows={fundraisingRows.length > 0}>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {fundraisingRows.map((row, index) => (
-              <DataLink key={`${brdText(row.title || row.name)}-${index}`} href={dashboardMandateHref(row)} sourceHref={sourceHref(row)} className="grid gap-1 rounded-[5px] border border-[#E5EBF1] bg-[#F8FAFC] px-2.5 py-2 text-inherit no-underline">
-                <span className="text-[10px] font-extrabold uppercase tracking-[0.1em] text-[#B90D12]">{timelineDate(row)}</span>
-                <span className="truncate text-[12px] font-bold text-[#0A3A7A]">{brdText(row.institution || row.name)}</span>
-                <span className="truncate text-[10.5px] text-[#7B8996]">{brdText(row.title || row.strategy || row.asset_class_or_strategy)}</span>
-              </DataLink>
-            ))}
-          </div>
-        </VisualPanel>
-        <VisualPanel title="Investment Trends by Sector" source={ENDPOINTS.sectorFlows} empty={DASHBOARD_EMPTY} hasRows={trendRows.length > 0}>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {trendRows.map((row, index) => {
-              const value = sectorValue(row);
-              const intensity = Math.max(0.16, Math.min(0.92, value / trendMax));
-              const label = brdText(row.name || row.value);
-              return (
-                <DashboardLink
-                  key={`${label}-${index}`}
-                  href={`/deals/?filter=${encodeURIComponent(label)}`}
-                  className="min-h-[78px] rounded-[5px] border border-[#DCE5EE] p-2 text-inherit no-underline"
-                  style={{ backgroundColor: `rgba(10, 102, 194, ${intensity})` }}
-                >
-                  <span className="block truncate text-[11px] font-extrabold text-white">{label}</span>
-                  <span className="mt-2 block text-[15px] font-extrabold text-white">{capitalOrCountDisplay(row)}</span>
-                  <span className="mt-1 block text-[10px] font-semibold text-white/85">{brdText(row.count)} deals</span>
-                </DashboardLink>
-              );
-            })}
-          </div>
-        </VisualPanel>
-      </div>
-    </div>
-  );
-}
-
-// Capital flows as a real Sankey (Paul 2026-07-06: "dont like the capital
-// flows chart"; amCharts flow language). Data truth checked live before
-// building: seller_region is "Not disclosed" on ALL loaded deals, so a
-// buyer→seller diagram would be a lie — buyer region → industry with
-// disclosed USD value IS real. One unit per view: USD bands when any
-// USD-disclosed value exists, otherwise deal-count bands, each labeled.
 type FlowLink = { source: string; target: string; value: number; deals: number };
 
 function CapitalFlowSankey({ rows: transactionRows }: { rows: Record<string, unknown>[] }) {
@@ -2431,7 +2279,7 @@ function AiInsightsPanel({ topInvestors, marketRows, fundraisingRows, newsRows, 
 }) {
   const curiosityRows = capitalCuriosityRows({ sectorRows, marketRows, fundraisingRows, newsRows }).slice(0, 3);
   const insights = [
-    { label: "Latest allocator activity", row: topInvestors[0], href: "/allocators", detail: topInvestors[0] ? `${brdText(topInvestors[0].name)} · ${recordDate(topInvestors[0])}` : DASHBOARD_EMPTY },
+    { label: "Latest allocator activity", row: topInvestors[0], href: "/allocators?days=30", detail: topInvestors[0] ? `${brdText(topInvestors[0].name)} · ${recordDate(topInvestors[0])}` : DASHBOARD_EMPTY },
     { label: "Largest recent deal", row: marketRows[0], href: "/deals", detail: marketRows[0] ? `${brdText(marketRows[0].title || marketRows[0].name)} · ${cleanMoney(marketRows[0].amount_display || marketRows[0].capital_display || marketRows[0].amount)}` : DASHBOARD_EMPTY },
     { label: "Open mandate deadline", row: fundraisingRows[0], href: "/mandates", detail: fundraisingRows[0] ? `${brdText(fundraisingRows[0].title || fundraisingRows[0].name)} · ${timelineDate(fundraisingRows[0])}` : DASHBOARD_EMPTY },
     { label: "Latest intelligence", row: newsRows[0], href: newsRows[0] ? researchRecordHref(newsRows[0]) : "/intelligence", detail: newsRows[0] ? brdText(newsRows[0].title || newsRows[0].name) : DASHBOARD_EMPTY },
@@ -2439,7 +2287,7 @@ function AiInsightsPanel({ topInvestors, marketRows, fundraisingRows, newsRows, 
   return (
     <div className="grid gap-2">
       <div className="grid grid-cols-2 gap-1 sm:grid-cols-4">
-        <DashboardLink key="Competition Analysis" href="/comparisons/?filter=Sovereign%20Wealth%20Fund" className="rounded-[5px] border border-[#E2E8EF] bg-[#F8FAFC] px-2 py-1.5 text-center text-[10.5px] font-extrabold text-[#0A3A7A] no-underline hover:bg-[#EEF4FA]">
+        <DashboardLink key="Competition Analysis" href="/comparisons/?filter=Sovereign%20Wealth%20Fund&entity_type=Sovereign%20Wealth%20Fund" className="rounded-[5px] border border-[#E2E8EF] bg-[#F8FAFC] px-2 py-1.5 text-center text-[10.5px] font-extrabold text-[#0A3A7A] no-underline hover:bg-[#EEF4FA]">
           Competition Analysis
         </DashboardLink>
         {insightNav.map(([label, href]) => (
@@ -2448,7 +2296,7 @@ function AiInsightsPanel({ topInvestors, marketRows, fundraisingRows, newsRows, 
           </DashboardLink>
         ))}
       </div>
-      <DashboardLink href="/comparisons/?filter=Sovereign%20Wealth%20Fund" className="rounded-[6px] border border-[#DCE5EE] bg-[#F8FAFC] px-2.5 py-2 text-inherit no-underline hover:bg-white">
+      <DashboardLink href="/comparisons/?filter=Sovereign%20Wealth%20Fund&entity_type=Sovereign%20Wealth%20Fund" className="rounded-[6px] border border-[#DCE5EE] bg-[#F8FAFC] px-2.5 py-2 text-inherit no-underline hover:bg-white">
         <span className="block text-[10px] font-extrabold uppercase tracking-[0.1em] text-[#B90D12]">What piqued your curiosity?</span>
         <span className="mt-1 block text-[12px] font-bold text-[#203448]">Compare institutions by AUM, region, transaction activity, and allocation signals.</span>
       </DashboardLink>
@@ -2503,13 +2351,12 @@ function PipelineFunnelPanel({ packets, topRows, marketRows, fundraisingRows }: 
   fundraisingRows: Record<string, unknown>[];
 }) {
   const stages = [
-    { label: "Institutions", value: metricNumber(packets.metrics, "institutions") || topRows.length, href: "/profiles/", color: "#0A66C2" },
-    { label: "Active Allocators", value: numericSortValue(packetCount(packets.allocators90, "count")) || topRows.length, href: "/allocators", color: "#16538C" },
-    { label: "Deals", value: metricNumber(packets.metrics, "transactions") || marketRows.length, href: "/deals", color: "#5C9BD6" },
-    { label: "Live RFPs", value: metricNumber(packets.metrics, "rfps") || fundraisingRows.length, href: "/mandates", color: "#7A8A9B" },
-    { label: "Top AUM", value: topRows.length, href: "/profiles/?filter=Sovereign%20Wealth%20Fund", color: "#B90D12" },
+    { label: "Institutions", value: metricNumber(packets.metrics, "institutions"), preview: topRows.length, href: "/profiles/", color: "#0A66C2" },
+    { label: "Active Allocators", value: numericSortValue(packetCount(packets.allocators90, "count")), preview: 0, href: "/allocators", color: "#16538C" },
+    { label: "Deals", value: metricNumber(packets.metrics, "transactions"), preview: marketRows.length, href: "/deals", color: "#5C9BD6" },
+    { label: "Live RFPs", value: metricNumber(packets.metrics, "rfps"), preview: fundraisingRows.length, href: "/mandates", color: "#7A8A9B" },
+    { label: "Top AUM ranking", value: null, preview: topRows.length, href: "/profiles/?filter=Sovereign%20Wealth%20Fund&entity_type=Sovereign%20Wealth%20Fund", color: "#B90D12" },
   ];
-  const max = Math.max(1, ...stages.map((stage) => stage.value));
   return (
     <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_132px]">
       <svg viewBox="0 0 380 218" className="h-[176px] w-full" role="img" aria-label="SWFI discovery pathways by record group">
@@ -2531,10 +2378,12 @@ function PipelineFunnelPanel({ packets, topRows, marketRows, fundraisingRows }: 
         {stages.map((stage) => (
           <DashboardLink key={stage.label} href={stage.href} className="flex items-center justify-between gap-2 rounded-[5px] px-2 py-1.5 text-[11px] text-[#405062] no-underline hover:bg-[#F5F8FB]">
             <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full" style={{ backgroundColor: stage.color }} />{stage.label}</span>
-            <span className="font-extrabold text-[#13283D]">{compactNumber(stage.value)}</span>
+            <span className="font-extrabold text-[#13283D]">
+              {typeof stage.value === "number" && stage.value > 0 ? compactNumber(stage.value) : stage.preview > 0 ? `Preview ${stage.preview}` : "Pending source"}
+            </span>
           </DashboardLink>
         ))}
-        <div className="text-[10px] font-semibold text-[#7B8996]">Funnel widths normalize against {compactNumber(max)} records.</div>
+        <div className="text-[10px] font-semibold text-[#7B8996]">Widths show the discovery sequence only. Preview counts are never presented as universe totals.</div>
       </div>
     </div>
   );
@@ -2579,7 +2428,7 @@ function ResearchHubPanel({ rows: sourceRows }: { rows: Record<string, unknown>[
     <div className="grid gap-2 sm:grid-cols-2">
       {sourceRows.slice(0, 4).map((row, index) => (
         <DataLink key={`${brdText(row.title || row.name)}-${index}`} href={researchRecordHref(row)} sourceHref={sourceHref(row)} className="overflow-hidden rounded-[6px] border border-[#E4EAF0] bg-[#F8FAFC] text-inherit no-underline">
-          <img src={assetHref(`/swfi-assets/images/${images[index % images.length]}`)} alt="" className="h-16 w-full object-cover" />
+          <Image src={assetHref(`/swfi-assets/images/${images[index % images.length]}`)} alt="" width={4960} height={1488} className="h-16 w-full object-cover" />
           <span className="block p-2">
             <span className="block truncate text-[11px] font-extrabold text-[#0A3A7A]">{brdText(row.title || row.name)}</span>
             <span className="mt-1 block text-[10px] text-[#7B8996]">{brdText(row.published_at || row.date, "SWFI record")}</span>
@@ -2596,7 +2445,7 @@ function EngagementCards({ rows: sourceRows }: { rows: Record<string, unknown>[]
     <div className="grid gap-2 sm:grid-cols-3">
       {sourceRows.slice(0, 3).map((row, index) => (
         <DataLink key={`${brdText(row.title || row.name)}-${index}`} href={dashboardMandateHref(row)} sourceHref={sourceHref(row)} className="overflow-hidden rounded-[6px] border border-[#E4EAF0] bg-[#F8FAFC] text-inherit no-underline">
-          <img src={assetHref(`/swfi-assets/images/${images[index % images.length]}`)} alt="" className="h-16 w-full object-cover" />
+          <Image src={assetHref(`/swfi-assets/images/${images[index % images.length]}`)} alt="" width={4960} height={1488} className="h-16 w-full object-cover" />
           <span className="block p-2">
             <span className="block truncate text-[11px] font-extrabold text-[#0A3A7A]">{brdText(row.title || row.name)}</span>
             <span className="mt-1 block text-[10px] text-[#7B8996]">{brdText(row.institution)} · {timelineDate(row)}</span>
@@ -2879,56 +2728,6 @@ function unifiedIntelligenceRows({
   return insights;
 }
 
-function UnifiedIntelligencePanel({ rows: insights }: { rows: UnifiedInsight[] }) {
-  const max = Math.max(1, ...insights.map((insight) => insight.value));
-  const visible = insights.slice(0, 5);
-  return (
-    <div className="grid gap-3">
-      <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-5" role="img" aria-label="Institutional activity heatmap">
-        {visible.map((insight, index) => {
-          const intensity = Math.max(16, Math.round((insight.value / max) * 100));
-          return (
-            <DataLink
-              key={insight.label}
-              href={insight.href}
-              sourceHref={insight.sourceHref}
-              className="min-h-[70px] rounded-[5px] border border-[#E1E8EF] p-2 text-inherit no-underline"
-              style={{
-                backgroundColor: `rgba(10, 58, 122, ${0.08 + (intensity / 100) * 0.22})`,
-              }}
-            >
-              <span className="block text-[9px] font-extrabold uppercase tracking-[0.08em] text-[#526171]">{insight.label}</span>
-              <span className="mt-1 block text-[15px] font-extrabold text-[#13283D]">{insight.metric}</span>
-              <span className="mt-1 block h-1.5 overflow-hidden rounded bg-white/70">
-                <span className="block h-full rounded bg-[#B90D12]" style={{ width: `${intensity}%` }} />
-              </span>
-              <span className="sr-only">{index + 1}. {insight.title}</span>
-            </DataLink>
-          );
-        })}
-      </div>
-      <div className="grid gap-2">
-        {visible.map((insight) => (
-          <DataLink
-            key={`${insight.label}-${insight.title}`}
-            href={insight.href}
-            sourceHref={insight.sourceHref}
-            className="grid grid-cols-[104px_minmax(0,1fr)] gap-2 rounded-[6px] border border-[#E5EBF1] px-2.5 py-2 text-inherit no-underline hover:bg-[#F5F8FB]"
-          >
-            <span className="text-[10px] font-extrabold uppercase tracking-[0.1em] text-[#7B8996]">{insight.label}</span>
-            <span className="min-w-0">
-              <span className="block truncate text-[12px] font-bold text-[#0A3A7A]">{insight.title}</span>
-              <span className="mt-0.5 block truncate text-[10.5px] text-[#657484]">{insight.detail}</span>
-            </span>
-          </DataLink>
-        ))}
-      </div>
-      {!visible.length ? <div className="text-[12px] text-[#405062]">{DASHBOARD_EMPTY}</div> : null}
-      <div className="text-[10px] font-semibold text-[#7B8996]">Combines allocator activity, deals, mandates, sectors, and intelligence.</div>
-    </div>
-  );
-}
-
 function NewsTicker({ rows: sourceRows }: { rows: Record<string, unknown>[] }) {
   const visible = sourceRows.slice(0, 6);
   return (
@@ -2947,7 +2746,7 @@ function NewsTicker({ rows: sourceRows }: { rows: Record<string, unknown>[] }) {
 
 function dashboardMetricCards(packets: Packets, topAumRows: Record<string, unknown>[], sectorRows: Record<string, unknown>[]) {
   const totalAum = totalAumValue(packets.top20, topAumRows);
-  const activeAllocators = numericSortValue(packetCount(packets.allocators90, "count")) || metricNumber(packets.metrics, "allocators") || 0;
+  const activeAllocators = numericSortValue(packetCount(packets.allocators90, "count")) || 0;
   const sectorCapital = sumNumbers(sectorRows.map(sectorValue));
   const rfps = metricNumber(packets.metrics, "rfps") || packetCountNumber(packets.rfps) || 0;
   const swfs = metricNumber(packets.metrics, "swfs") || 0;
@@ -2962,7 +2761,7 @@ function dashboardMetricCards(packets: Packets, topAumRows: Record<string, unkno
       label: "TOP-RANKED AUM TOTAL",
       value: settled(packets.top20, totalAumDisplay(packets.top20, topAumRows)),
       note: "Top AUM ranking",
-      href: "/profiles/?filter=Sovereign%20Wealth%20Fund",
+      href: "/profiles/?filter=Sovereign%20Wealth%20Fund&entity_type=Sovereign%20Wealth%20Fund",
       // Rank-order AUM values are a distribution, not a time series — drawn
       // as a line they read as a downtrend that never happened (minutes F).
       series: [],
@@ -2972,7 +2771,7 @@ function dashboardMetricCards(packets: Packets, topAumRows: Record<string, unkno
     },
     {
       label: "ACTIVE ALLOCATORS",
-      value: settled(packets.allocators90 ?? packets.metrics, activeAllocators ? compactNumber(activeAllocators) : packetCount(packets.allocators90, "count")),
+      value: settled(packets.allocators90, activeAllocators ? compactNumber(activeAllocators) : packetCount(packets.allocators90, "count")),
       note: "Last 90 days",
       href: "/allocators",
       series: seriesFromNumbers([activeAllocators]),
@@ -3002,7 +2801,7 @@ function dashboardMetricCards(packets: Packets, topAumRows: Record<string, unkno
       label: "SWF PROFILES",
       value: settled(packets.metrics, swfs ? compactNumber(swfs) : "Not disclosed"),
       note: "SWF profiles",
-      href: "/profiles/?filter=Sovereign%20Wealth%20Fund",
+      href: "/profiles/?filter=Sovereign%20Wealth%20Fund&entity_type=Sovereign%20Wealth%20Fund",
       series: seriesFromNumbers([swfs]),
       color: "#B90D12",
       explain: "Sovereign wealth fund profiles tracked on SWFI. Click → SWF-filtered institutions.",
@@ -3055,42 +2854,6 @@ function MiniSparkline({ series, color, large = false }: { series: number[]; col
   );
 }
 
-const sectorPalette = ["#0A3A7A", "#0A66C2", "#18A8A8", "#F2C94C", "#7A3FD1", "#596A7A"];
-
-function IndustryCategoryBars({ rows: sourceRows }: { rows: Record<string, unknown>[] }) {
-  const chartRows = sourceRows.slice(0, 6);
-  const max = Math.max(1, ...chartRows.map(sectorValue));
-  return (
-    <div className="grid content-start gap-2 rounded-[6px] bg-[#F5F8FB] p-3" role="img" aria-label="Capital flow by industry or category">
-      <div className="grid gap-2">
-        {chartRows.map((row, index) => (
-          <DashboardLink key={`${brdText(row.name || row.value)}-${index}`} href={`/deals/?filter=${encodeURIComponent(brdText(row.name || row.value, ""))}`} className="grid gap-1 rounded-[5px] bg-white/70 px-2 py-2 text-[#405062] no-underline hover:bg-white">
-            <span className="flex items-center justify-between gap-2 text-[11px]">
-              <span className="truncate font-bold text-[#0A3A7A]">{brdText(row.name || row.value)}</span>
-              <span className="shrink-0 font-extrabold text-[#13283D]">{capitalOrCountDisplay(row)}</span>
-            </span>
-            <span className="block h-2 overflow-hidden rounded bg-[#E3EAF0]" aria-hidden="true">
-              <span className="block h-full rounded bg-[#2C78D2]" style={{ width: `${Math.max(4, Math.min(100, (sectorValue(row) / max) * 100))}%` }} />
-            </span>
-          </DashboardLink>
-        ))}
-      </div>
-      {!chartRows.length ? <div className="text-[12px] text-[#405062]">{DASHBOARD_EMPTY}</div> : null}
-    </div>
-  );
-}
-
-function ExpandedEntityRows({ rows: sourceRows, controls }: { rows: Record<string, unknown>[]; controls: DashboardTableControls }) {
-  return (
-    <MiniRecordTable
-      headers={["Entity", "Type", "Country", "AUM"]}
-      rows={sourceRows.map((row) => [entityCell(row), entityTypeCell(row), brdText(row.country), aumDisplay(row)])}
-      empty={DASHBOARD_EMPTY}
-      controls={controls}
-    />
-  );
-}
-
 function TotalAumInsightDetail({ topRows, institutionTypeRows, transactionRows, rfpRows, sectorRows }: {
   topRows: Record<string, unknown>[];
   institutionTypeRows: Record<string, unknown>[];
@@ -3131,7 +2894,7 @@ function TotalAumInsightDetail({ topRows, institutionTypeRows, transactionRows, 
           ))}
         </div>
       </VisualPanel>
-      <VisualPanel title="Recently Fundraising Institutions" source={ENDPOINTS.rfps} empty={DASHBOARD_EMPTY} hasRows={fundraisingRows.length > 0}>
+      <VisualPanel title="Live RFPs & Opportunities" source={ENDPOINTS.rfps} empty={DASHBOARD_EMPTY} hasRows={fundraisingRows.length > 0}>
         <div className="grid gap-2">
           {fundraisingRows.map((row, index) => (
             <DataLink key={`${brdText(row.title || row.name)}-${index}`} href={dashboardMandateHref(row)} sourceHref={sourceHref(row)} className="grid grid-cols-[minmax(0,1fr)_78px] gap-2 rounded-[5px] border border-[#E5EBF1] px-2 py-2 text-inherit no-underline">
@@ -3206,7 +2969,7 @@ function PipelineInsightDetail({ transactionRows, rfpRows, sectorRows }: {
           })}
         </div>
       </VisualPanel>
-      <VisualPanel title="Recently Fundraising Institutions" source={ENDPOINTS.rfps} empty={DASHBOARD_EMPTY} hasRows={fundraisingRows.length > 0}>
+      <VisualPanel title="Live RFPs & Opportunities" source={ENDPOINTS.rfps} empty={DASHBOARD_EMPTY} hasRows={fundraisingRows.length > 0}>
         <div className="grid gap-2">
           {fundraisingRows.map((row, index) => (
             <DataLink key={`${brdText(row.title || row.name)}-${index}`} href={dashboardMandateHref(row)} sourceHref={sourceHref(row)} className="grid grid-cols-[minmax(0,1fr)_72px] gap-2 rounded-[5px] border border-[#E5EBF1] px-2 py-2 text-inherit no-underline">
@@ -3647,124 +3410,6 @@ function metricCard(packet: Packet | undefined, key: string) {
   return typeof value === "number" ? value.toLocaleString("en-US") : "Not disclosed";
 }
 
-function KpiCard({ label, value, note, source, href }: { label: string; value: string; note: string; source: string; href: string }) {
-  return (
-    <DashboardLink data-qa-min="150" href={href} className="min-w-0 rounded border border-[#DCE3EA] bg-white p-[13px_15px] text-inherit no-underline">
-      <div className="text-[10px] font-bold uppercase tracking-[0.07em] text-[#7A8A9B]">{label}</div>
-      <div className="mt-1 break-words text-[25px] font-bold text-[#11314F]">{value}</div>
-      <div className="mt-1 text-[11px] text-[#7A8A9B]">{note}</div>
-      <MetricRail value={value} />
-      <span hidden data-source-path={source} />
-    </DashboardLink>
-  );
-}
-
-function MetricRail({ value }: { value: string }) {
-  const numeric = numericSortValue(value);
-  const width = numeric && numeric > 0
-    ? Math.max(10, Math.min(100, 18 + Math.log10(numeric + 1) * 12))
-    : 0;
-  return (
-    <div className="mt-2 h-1.5 overflow-hidden rounded bg-[#E8EDF2]" aria-hidden="true">
-      <div className="h-full rounded bg-[#5C9BD6]" style={{ width: `${width}%` }} />
-    </div>
-  );
-}
-
-function AllocatorActivityVisual({ rows: sourceRows, ready }: { rows: Record<string, unknown>[]; ready: boolean }) {
-  const chartRows = [...sourceRows]
-    .sort((a, b) => recordDateValue(b) - recordDateValue(a) || activityCountValue(b) - activityCountValue(a))
-    .slice(0, 5);
-  const max = Math.max(1, ...chartRows.map(activityCountValue));
-  return (
-    <VisualPanel title="Latest Active Investor Activity" source={ENDPOINTS.allocators30} empty={DASHBOARD_EMPTY} hasRows={chartRows.length > 0}>
-      {chartRows.map((row, index) => {
-        const value = activityCountValue(row);
-        return (
-          <div key={`${brdText(row.name)}-${index}`} className="border-b border-[#F2F5F8] py-2 last:border-b-0">
-            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_76px] sm:items-start">
-              <div className="min-w-0 font-bold text-[#16538C]">{displayCell(entityCell(row))}</div>
-              <div className="text-right text-[12px] font-semibold text-[#41566B] sm:text-right">{dealCountLabel(value)}</div>
-            </div>
-            <Bar value={value} max={max} />
-            <div className="mt-1 text-[11px] text-[#7A8A9B]">{allocatorMeta(row)}</div>
-          </div>
-        );
-      })}
-    </VisualPanel>
-  );
-}
-
-function DealAmountVisual({ rows: sourceRows, ready }: { rows: Record<string, unknown>[]; ready: boolean }) {
-  const chartRows = [...sourceRows]
-    .sort((a, b) => amountValue(b) - amountValue(a))
-    .slice(0, 5);
-  const max = Math.max(1, ...chartRows.map(amountValue));
-  return (
-    <VisualPanel title="Largest Recent Deals" source={ENDPOINTS.transactions30} empty={DASHBOARD_EMPTY} hasRows={chartRows.length > 0}>
-      {chartRows.map((row, index) => {
-        const value = amountValue(row);
-        const amount = cleanMoney(row.amount_display || row.capital_display || row.amount);
-        return (
-          <div key={`${brdText(row.title || row.name)}-${index}`} className="border-b border-[#F2F5F8] py-2 last:border-b-0">
-            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_88px] sm:items-start">
-              <div className="min-w-0 font-bold text-[#16538C]">{displayCell(dealCell(row))}</div>
-              <div className="text-right text-[12px] font-semibold text-[#41566B]">{amount}</div>
-            </div>
-            <Bar value={value} max={max} />
-            <div className="mt-1 text-[11px] text-[#7A8A9B]">{brdText(row.institution)} · {brdText(row.sector)}</div>
-          </div>
-        );
-      })}
-    </VisualPanel>
-  );
-}
-
-function MandateTimelineVisual({ rows: sourceRows, ready }: { rows: Record<string, unknown>[]; ready: boolean }) {
-  const chartRows = [...sourceRows]
-    .sort((a, b) => deadlineTime(a) - deadlineTime(b))
-    .slice(0, 5);
-  return (
-    <VisualPanel title="RFP Deadline Timeline" source={ENDPOINTS.rfps} empty={DASHBOARD_EMPTY} hasRows={chartRows.length > 0}>
-      <div className="grid gap-2">
-        {chartRows.map((row, index) => (
-          <div key={`${brdText(row.title || row.name)}-${index}`} className="grid grid-cols-[88px_minmax(0,1fr)] gap-3 border-b border-[#F2F5F8] pb-2 last:border-b-0">
-            <div className="rounded border border-[#C7D2DD] bg-[#F7F9FA] px-2 py-1 text-center text-[11px] font-bold text-[#11314F]">
-              {timelineDate(row)}
-            </div>
-            <div className="min-w-0">
-              <div className="font-bold text-[#16538C]">{displayCell(mandateCell(row))}</div>
-              <div className="mt-1 text-[11px] text-[#7A8A9B]">{brdText(row.institution)} · {brdText(row.strategy || row.asset_class_or_strategy)}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </VisualPanel>
-  );
-}
-
-function SectorFlowVisual({ rows: sourceRows, ready }: { rows: Record<string, unknown>[]; ready: boolean }) {
-  const chartRows = sourceRows.slice(0, 5);
-  const max = Math.max(1, ...chartRows.map(sectorValue));
-  return (
-    <VisualPanel title="Sector Flow" source={ENDPOINTS.sectorFlows} empty={DASHBOARD_EMPTY} hasRows={chartRows.length > 0}>
-      {chartRows.map((row, index) => {
-        const value = sectorValue(row);
-        return (
-          <div key={`${brdText(row.name || row.value)}-${index}`} className="border-b border-[#F2F5F8] py-2 last:border-b-0">
-            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_88px] sm:items-start">
-              <div className="min-w-0 font-bold text-[#16538C]">{displayCell(sectorCell(row))}</div>
-              <div className="text-right text-[12px] font-semibold text-[#41566B]">{cleanMoney(row.capital_display || row.capital_deployed || row.capital)}</div>
-            </div>
-            <Bar value={value} max={max} />
-            <div className="mt-1 text-[11px] text-[#7A8A9B]">{brdText(row.count)} transactions</div>
-          </div>
-        );
-      })}
-    </VisualPanel>
-  );
-}
-
 function VisualPanel({ title, source, empty, hasRows, children }: { title: string; source: string; empty: string; hasRows: boolean; children: React.ReactNode }) {
   return (
     <div className="min-w-0 rounded border border-[#DCE3EA] bg-white p-3">
@@ -3861,14 +3506,6 @@ function aumDisplay(row: Record<string, unknown>) {
   // Sidebar/watchlist columns are ~76px: raw integers (NOK 2,048,995,080,000)
   // overflow and read as noise — compact to the native currency + magnitude.
   return `${currency} ${compactNumber(numeric)}`;
-}
-
-function ActionButton({ href, children }: { href: string; children: React.ReactNode }) {
-  return <DashboardLink href={href} className="rounded border border-[#C7D2DD] bg-white px-3 py-2 text-[13px] text-[#16538C] no-underline">{children}</DashboardLink>;
-}
-
-function RailLink({ href, label }: { href: string; label: string }) {
-  return <DashboardLink href={href} className="border-b border-[#F2F5F8] px-4 py-2 text-[13px] text-[#41566B] no-underline last:border-b-0">{label}</DashboardLink>;
 }
 
 function sourceHref(row: Record<string, unknown>): string | undefined {
@@ -4058,19 +3695,6 @@ function groupedCountRows(rows: Record<string, unknown>[], labelFor: (row: Recor
     const label = labelFor(row);
     if (!label || label === "Not disclosed") continue;
     groups.set(label, (groups.get(label) || 0) + 1);
-  }
-  return [...groups.entries()]
-    .map(([label, value]) => ({ label, value }))
-    .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
-}
-
-function groupedAmountRows(rows: Record<string, unknown>[], labelFor: (row: Record<string, unknown>) => string) {
-  const groups = new Map<string, number>();
-  for (const row of rows) {
-    const label = labelFor(row);
-    const value = aumValue(row);
-    if (!label || label === "Not disclosed" || value <= 0) continue;
-    groups.set(label, (groups.get(label) || 0) + value);
   }
   return [...groups.entries()]
     .map(([label, value]) => ({ label, value }))

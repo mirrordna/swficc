@@ -3,7 +3,7 @@
 import { selfContainedHref } from "@/lib/selfContainedLinks";
 
 const ACTIONS = [
-  { label: "Find LPs", href: "/profiles/?filter=Sovereign%20Wealth%20Fund" },
+  { label: "Find LPs", href: "/profiles/?filter=Sovereign%20Wealth%20Fund&entity_type=Sovereign%20Wealth%20Fund" },
   { label: "View Mandates", href: "/mandates" },
   { label: "Search Deals", href: "/deals" },
   { label: "Comparisons", href: "/comparisons" },

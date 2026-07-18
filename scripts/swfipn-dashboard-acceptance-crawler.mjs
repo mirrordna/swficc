@@ -202,18 +202,6 @@ function cleanText(value, fallback = "") {
   return String(value).trim();
 }
 
-function numberValue(value) {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  const parsed = Number(String(value ?? "").replace(/[^0-9.-]/g, ""));
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function formatAum(row) {
-  const numeric = numberValue(row?.aum);
-  const currency = cleanText(row?.aum_currency);
-  return numeric == null || !currency ? "" : `${currency} ${numeric.toLocaleString("en-US")}`;
-}
-
 async function waitForDashboard(page, timeout = 90_000) {
   await page.waitForFunction(
     () => {

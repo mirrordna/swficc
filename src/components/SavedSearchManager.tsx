@@ -80,9 +80,8 @@ const sections = [
 const frequencies = ["Daily Digest", "Weekly Digest", "Immediate"] as const;
 
 export default function SavedSearchManager() {
-  const [token, setToken] = useState("");
   const [userId, setUserId] = useState("swfi-validation@swfi.test");
-  const [status, setStatus] = useState("Enter access details to load saved searches.");
+  const [status, setStatus] = useState("Use your SWFI session to load saved searches.");
   const [items, setItems] = useState<SavedSearchItem[]>([]);
   const [resultText, setResultText] = useState("");
   const [name, setName] = useState("Asia infrastructure deals");
@@ -202,10 +201,6 @@ export default function SavedSearchManager() {
   }
 
   async function apiRequest(path: string, init: RequestInit = {}): Promise<SavedSearchEnvelope | null> {
-    if (!token.trim()) {
-      setStatus("Access token required.");
-      return null;
-    }
     if (!userId.trim()) {
       setStatus("Subscriber identity required.");
       return null;
@@ -217,7 +212,6 @@ export default function SavedSearchManager() {
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token.trim()}`,
           "X-SWFI-User-Id": userId.trim(),
           "X-SWFIPN-Internal": "1",
           ...(init.headers || {}),
@@ -256,18 +250,7 @@ export default function SavedSearchManager() {
         </div>
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] lg:items-end">
-        <label className="grid gap-1 text-sm">
-          <span className="font-semibold text-[#41566B]">API access token</span>
-          <input
-            data-testid="saved-searches-access-token"
-            type="password"
-            value={token}
-            onChange={(event) => setToken(event.target.value)}
-            className="min-h-10 rounded border border-[#C7D2DD] px-3 outline-none"
-            autoComplete="off"
-          />
-        </label>
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
         <label className="grid gap-1 text-sm">
           <span className="font-semibold text-[#41566B]">Subscriber identity</span>
           <input

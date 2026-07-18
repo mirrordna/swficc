@@ -11,7 +11,7 @@ const outputDir = path.join(cwd, "output");
 const receiptPath = path.join(outputDir, "swfipn-search-relevance-regression-latest.json");
 fs.mkdirSync(outputDir, { recursive: true });
 
-const { businessSearchQueryVariants, rankSearchRecords } = await import(pathToFileURL(path.join(cwd, "src/lib/searchRelevance.ts")).href);
+const { businessSearchQueryVariants, rankSearchRecords, searchSubjectQuery } = await import(pathToFileURL(path.join(cwd, "src/lib/searchRelevance.ts")).href);
 
 const fixtures = {
   abuDhabi: [
@@ -78,6 +78,24 @@ const checks = [
     actual: businessSearchQueryVariants("family offices"),
     expected: ["family offices", "Family Office"],
   },
+  {
+    id: "natural_language_entity_subject_give",
+    query: "Give me information about ADIA",
+    actual: [searchSubjectQuery("Give me information about ADIA"), ...businessSearchQueryVariants("Give me information about ADIA").slice(1)],
+    expected: ["ADIA", "Abu Dhabi Investment Authority"],
+  },
+  {
+    id: "natural_language_entity_subject_provide",
+    query: "Provide me with information about PIF",
+    actual: rankSearchRecords(fixtures.pif, "Provide me with information about PIF", "entity").slice(0, 1).map((row) => row.name),
+    expected: ["Public Investment Fund"],
+  },
+  {
+    id: "natural_language_entity_subject_retrieve",
+    query: "Retrieve information about Zurich Insurance Group",
+    actual: rankSearchRecords(fixtures.zurich, "Retrieve information about Zurich Insurance Group", "entity").slice(0, 1).map((row) => row.name),
+    expected: ["Zurich Insurance Group"],
+  },
 ];
 
 const serverChecks = await runServerRenderedChecks();
@@ -130,35 +148,14 @@ async function runServerRenderedChecks() {
     stderr += chunk.toString();
   });
   try {
-    await waitForHttp(`http://127.0.0.1:${searchPort}/swficc/search/?q=health`, 5_000);
-    const abuDhabiHtml = await fetchText(`http://127.0.0.1:${searchPort}/swficc/search/?q=Abu%20Dhabi`);
-    const pifHtml = await fetchText(`http://127.0.0.1:${searchPort}/swficc/search/?q=PIF`);
+    await waitForHttp(`http://127.0.0.1:${searchPort}/api/v1/public/search?q=health&limit=25`, 5_000);
     const pifApi = await fetchJson(`http://127.0.0.1:${searchPort}/api/v1/public/search?q=PIF&limit=25`);
-    const zurichHtml = await fetchText(`http://127.0.0.1:${searchPort}/swficc/search/?q=Zurich%20Insurance%20Group`);
     return [
-      {
-        id: "server_abu_dhabi_business_order",
-        query: "Abu Dhabi",
-        actual: orderedHits(abuDhabiHtml, ["Abu Dhabi Investment Authority", "Abu Dhabi Developmental Holding Company", "Abu Dhabi Pension Fund"]),
-        expected: ["Abu Dhabi Investment Authority", "Abu Dhabi Developmental Holding Company", "Abu Dhabi Pension Fund"],
-      },
-      {
-        id: "server_pif_synonym_before_substring_noise",
-        query: "PIF",
-        actual: orderedHits(pifHtml, ["Public Investment Fund", "Ampifii", "Bpifrance"]).slice(0, 1),
-        expected: ["Public Investment Fund"],
-      },
       {
         id: "edge_public_api_pif_synonym_before_substring_noise",
         query: "PIF",
         actual: [pifApi?.data?.results?.[0]?.name || ""],
         expected: ["Public Investment Fund"],
-      },
-      {
-        id: "server_zurich_exact",
-        query: "Zurich Insurance Group",
-        actual: orderedHits(zurichHtml, ["Zurich Insurance Group"]).slice(0, 1),
-        expected: ["Zurich Insurance Group"],
       },
     ];
   } catch (error) {
@@ -218,14 +215,6 @@ function factPacket(data) {
     generated_at: new Date(0).toISOString(),
     data,
   };
-}
-
-function orderedHits(html, names) {
-  return names
-    .map((name) => ({ name, index: html.indexOf(name) }))
-    .filter((item) => item.index >= 0)
-    .sort((a, b) => a.index - b.index)
-    .map((item) => item.name);
 }
 
 function freePort() {

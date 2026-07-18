@@ -18,12 +18,6 @@ function text(value) {
   return String(value ?? "").trim();
 }
 
-function appUrl(route) {
-  const value = text(route);
-  if (!value) return "";
-  if (/^https?:\/\//i.test(value)) return value;
-  return new URL(value.replace(/^\//, ""), origin).href;
-}
 
 function sourceKindFromRow(row) {
   if (row.family === "news") return "legacy_news";

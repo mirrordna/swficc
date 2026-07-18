@@ -8,6 +8,7 @@
 // says honestly that a real alerts feed does not exist yet.
 
 import { useEffect, useState } from "react";
+import AlertsRuleManager from "@/components/AlertsRuleManager";
 import SwfiBrandHeader from "@/components/SwfiBrandHeader";
 import { appHref } from "@/lib/selfContainedLinks";
 import { fetchPacket, isFact, rows, text, type Packet } from "@/lib/sourcePackets";
@@ -28,6 +29,7 @@ function deadlineTime(value: unknown): number | null {
 
 export default function AlertsPage() {
   const [packet, setPacket] = useState<Packet | undefined>(undefined);
+  const [now] = useState(() => Date.now());
   useEffect(() => {
     const controller = new AbortController();
     void fetchPacket("/api/live-opportunities/v1", 120_000, { signal: controller.signal, attempts: 2 }).then((next) => {
@@ -37,7 +39,6 @@ export default function AlertsPage() {
   }, []);
 
   const rfpRows = packet && isFact(packet) ? rows(packet, "rows") : [];
-  const now = Date.now();
   const dated = rfpRows
     .map((row) => ({ row, at: deadlineTime(row.deadline || row.due_at) }))
     .filter((entry): entry is { row: Record<string, unknown>; at: number } => entry.at !== null && entry.at >= now);
@@ -92,6 +93,7 @@ export default function AlertsPage() {
             </a>
           </div>
         </section>
+        <AlertsRuleManager />
       </main>
     </>
   );

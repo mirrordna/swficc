@@ -25,6 +25,7 @@ import SavedSearchManager from "@/components/SavedSearchManager";
 import CompetitionAnalysisWorkbench from "@/components/CompetitionAnalysisWorkbench";
 import { defaultSortColumn, defaultSortDir, type Kind } from "@/lib/recordSort";
 import { entityLifecycleIntent } from "@/lib/entityLifecycle";
+import { eligibleTextQuery, isShortTextQuery, isTextQueryReady, MIN_TEXT_QUERY_CHARACTERS } from "@/lib/textQueryPolicy";
 
 type Row = Record<string, unknown>;
 type CellLink = { label: string; href?: string; sourceHref?: string };
@@ -101,8 +102,8 @@ const CONFIG: Record<Kind, { title: string; endpoint: string; columns: string[];
   },
   allocators: {
     title: "Active Allocators",
-    endpoint: "/api/active-allocators/v1?days=90&limit=100",
-    columns: ["Entity Name", "Entity Type", "Country", "Region", "Activity Reason", "Activity Count", "Most Recent Activity Date", "AUM", "Managed Assets"],
+    endpoint: "/api/allocator-activity/v1?days=90&limit=100&page=1&sort=activity_count&direction=desc",
+    columns: ["Entity Name", "Entity Type", "Country", "Region", "Number of Deals", "Total Deal Value", "Last Transaction Date", "AUM"],
   },
   comparisons: {
     title: "Peer Comparisons",
@@ -152,11 +153,10 @@ function rowCells(kind: Kind, row: Row): Cell[] {
       text(row.entity_type || row.type, NOT_DISCLOSED),
       text(row.country, NOT_DISCLOSED),
       text(row.region, NOT_DISCLOSED),
-      text(row.activity_reason, NOT_DISCLOSED),
-      text(row.activity_count, "0"),
-      text(row.most_recent_activity_date || row.last_updated, NOT_DISCLOSED),
+      text(row.deal_count || row.activity_count, "0"),
+      disclosedMoney(row.total_deal_value_display || row.total_deal_value),
+      text(row.last_transaction_date || row.latest_transaction_date || row.most_recent_activity_date, NOT_DISCLOSED),
       disclosedMoney(row.aum || row.assets),
-      disclosedMoney(row.managed_assets || row.assets_managed),
     ];
   }
   if (kind === "people") {
@@ -202,11 +202,11 @@ function rowCells(kind: Kind, row: Row): Cell[] {
 }
 
 const allocatorSortOptions = [
-  ["activity_count", "Activity Count"],
-  ["most_recent_activity_date", "Most Recent Activity Date"],
+  ["activity_count", "Number of Deals"],
+  ["total_deal_value", "Total Deal Value"],
+  ["most_recent_activity_date", "Last Transaction Date"],
   ["name", "Entity Name"],
   ["aum", "AUM"],
-  ["managed_assets", "Managed Assets"],
   ["country", "Country"],
   ["entity_type", "Entity Type"],
 ] as const;
@@ -219,27 +219,44 @@ function allocatorSortParamForColumn(column: string): string {
   if (normalized === "entity name") return "name";
   if (normalized === "entity type") return "entity_type";
   if (normalized === "country") return "country";
-  if (normalized === "activity count") return "activity_count";
-  if (normalized === "most recent activity date") return "most_recent_activity_date";
+  if (normalized === "number of deals") return "activity_count";
+  if (normalized === "total deal value") return "total_deal_value";
+  if (normalized === "last transaction date") return "most_recent_activity_date";
   if (normalized === "aum") return "aum";
-  if (normalized === "managed assets") return "managed_assets";
   return "activity_count";
 }
 
 function allocatorColumnIndexForSort(sortKey: string, columns: string[]): number {
   const columnBySort: Record<string, string> = {
-    activity_count: "Activity Count",
-    most_recent_activity_date: "Most Recent Activity Date",
+    activity_count: "Number of Deals",
+    total_deal_value: "Total Deal Value",
+    most_recent_activity_date: "Last Transaction Date",
     name: "Entity Name",
     aum: "AUM",
-    managed_assets: "Managed Assets",
     country: "Country",
     entity_type: "Entity Type",
   };
-  return columns.indexOf(columnBySort[sortKey] || "Activity Count");
+  return columns.indexOf(columnBySort[sortKey] || "Number of Deals");
 }
 
 type DealFieldFilter = { key: string; field: "industry" | "sector"; value: string };
+type MandateFilters = {
+  investmentType: string;
+  ticketMin: string;
+  ticketMax: string;
+  ticketCurrency: string;
+};
+
+function emptyMandateFilters(): MandateFilters {
+  return { investmentType: "", ticketMin: "", ticketMax: "", ticketCurrency: "" };
+}
+
+function normalizedTicketBound(value: string): string | null {
+  const clean = value.trim();
+  if (!clean) return "";
+  const numeric = Number(clean);
+  return Number.isFinite(numeric) && numeric >= 0 ? clean : null;
+}
 
 function dealFieldOptionRows(packet: Packet | undefined, packets: Record<string, Packet>): Row[] {
   const source = packets.dealTaxonomy || packets.dealEntityTypes || packet;
@@ -376,14 +393,23 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
   const [packets, setPackets] = useState<Record<string, Packet>>({});
   const [query, setQuery] = useState(DEFAULT_SEARCH_QUERY);
   const [submittedQuery, setSubmittedQuery] = useState(DEFAULT_SEARCH_QUERY);
+  const [searchInputIssue, setSearchInputIssue] = useState("");
   const [tableFilter, setTableFilter] = useState("");
+  const [serverFilterTerm, setServerFilterTerm] = useState("");
   const [sortColumn, setSortColumn] = useState(() => defaultSortColumn(kind));
   const [sortDir, setSortDir] = useState<"asc" | "desc">(() => defaultSortDir(kind));
   const [allocatorSort, setAllocatorSort] = useState("most_recent_activity_date");
+  const [allocatorDays, setAllocatorDays] = useState(90);
   const [selectedDealEntityTypes, setSelectedDealEntityTypes] = useState<string[]>([]);
   const [selectedDealIndustries, setSelectedDealIndustries] = useState<string[]>([]);
   const [selectedDealSectors, setSelectedDealSectors] = useState<string[]>([]);
+  const [mandateFilterDraft, setMandateFilterDraft] = useState<MandateFilters>(emptyMandateFilters);
+  const [mandateFilters, setMandateFilters] = useState<MandateFilters>(emptyMandateFilters);
+  const [mandateFilterIssue, setMandateFilterIssue] = useState("");
   const [includeDefunct, setIncludeDefunct] = useState(false);
+  const [routeEntityType, setRouteEntityType] = useState<string | null>(() => (
+    kind === "profiles" || kind === "comparisons" ? null : ""
+  ));
   const [sectionView, setSectionView] = useState<"data" | "visualization">(() => supportsSectionVisualization(kind) ? "visualization" : "data");
   // Client fix (7-Jul): Active Allocators is restricted to the 10 most recent.
   // Other list kinds keep the 25-row default preview.
@@ -406,15 +432,40 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
         setIncludeDefunct(true);
         setSectionView("data");
       }
+      if (kind === "profiles" || kind === "comparisons") {
+        const entityType = params.get("entity_type")?.trim() || "";
+        setRouteEntityType(entityType);
+        if (entityType) {
+          setTableFilter(entityType);
+          setServerFilterTerm(entityType);
+          setSectionView("data");
+        }
+      }
+      if (kind === "allocators") {
+        const requestedDays = Number(params.get("days"));
+        if ([30, 60, 90, 365].includes(requestedDays)) setAllocatorDays(requestedDays);
+      }
     } catch {
+      if (kind === "profiles" || kind === "comparisons") setRouteEntityType("");
       /* no window or malformed query: keep the default view */
     }
   }, [kind]);
   const [pageIndex, setPageIndex] = useState(0);
   const serverPageIndex = isServerPagedKind(kind) ? pageIndex : 0;
   const serverRowLimit = isServerPagedKind(kind) ? rowLimit : 0;
-  const serverFilterTerm = supportsServerFilter(kind) ? tableFilter.trim() : "";
+  const activeTableFilter = eligibleTextQuery(tableFilter);
   const serverSortDir = kind === "allocators" ? sortDir : "desc";
+
+  useEffect(() => {
+    if (!supportsServerFilter(kind)) return;
+    const clean = tableFilter.trim();
+    // A short typed value is deliberately inert: retain the last served packet and
+    // do not convert one or two characters into either a broad q= request or a
+    // fallback-list refresh. Clearing the field intentionally restores the list.
+    if (isShortTextQuery(clean)) return;
+    const timer = globalThis.setTimeout(() => setServerFilterTerm(clean), clean ? 250 : 0);
+    return () => globalThis.clearTimeout(timer);
+  }, [kind, tableFilter]);
   const dealFieldFilters = useMemo<DealFieldFilter[]>(() => {
     if (kind !== "deals") return [];
     return [
@@ -426,9 +477,13 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
   const sources = useMemo(() => {
     if (kind !== "search") {
       if (kind === "profiles" || kind === "comparisons") {
-        const entityQuery = serverFilterTerm ? `&q=${encodeURIComponent(serverFilterTerm)}` : "";
+        if (routeEntityType === null) return {};
+        const sameAsEntityType = routeEntityType
+          && serverFilterTerm.trim().toLowerCase() === routeEntityType.toLowerCase();
+        const entityQuery = serverFilterTerm && !sameAsEntityType ? `&q=${encodeURIComponent(serverFilterTerm)}` : "";
+        const entityTypeQuery = routeEntityType ? `&entity_type=${encodeURIComponent(routeEntityType)}` : "";
         const lifecycleQuery = includeDefunct ? "&include_defunct=true" : "";
-        return { main: `/api/source-data/search/v1?collection=entities${entityQuery}${lifecycleQuery}&limit=${serverRowLimit}&page=${serverPageIndex + 1}` };
+        return { main: `/api/source-data/search/v1?collection=entities${entityQuery}${entityTypeQuery}${lifecycleQuery}&limit=${serverRowLimit}&page=${serverPageIndex + 1}` };
       }
       if (kind === "people") {
         const peopleQuery = serverFilterTerm ? `&q=${encodeURIComponent(serverFilterTerm)}` : "";
@@ -452,14 +507,26 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
       }
       if (kind === "allocators") {
         const allocatorQuery = serverFilterTerm ? `&q=${encodeURIComponent(serverFilterTerm)}` : "";
-        return { main: `/api/active-allocators/v1?days=90&limit=${serverRowLimit}&page=${serverPageIndex + 1}${allocatorQuery}&sort=${encodeURIComponent(allocatorSort)}&direction=${serverSortDir}` };
+        return { main: `/api/allocator-activity/v1?days=${allocatorDays}&limit=${serverRowLimit}&page=${serverPageIndex + 1}${allocatorQuery}&sort=${encodeURIComponent(allocatorSort)}&direction=${serverSortDir}` };
       }
-      if (kind === "mandates") return { main: `/api/live-opportunities/v1?limit=${serverRowLimit}&page=${serverPageIndex + 1}` };
+      if (kind === "mandates") {
+        const params = new URLSearchParams({
+          limit: String(serverRowLimit),
+          page: String(serverPageIndex + 1),
+        });
+        if (mandateFilters.investmentType) params.set("investment_type", mandateFilters.investmentType);
+        if (mandateFilters.ticketMin) params.set("ticket_min", mandateFilters.ticketMin);
+        if (mandateFilters.ticketMax) params.set("ticket_max", mandateFilters.ticketMax);
+        if ((mandateFilters.ticketMin || mandateFilters.ticketMax) && mandateFilters.ticketCurrency) {
+          params.set("ticket_currency", mandateFilters.ticketCurrency);
+        }
+        return { main: `/api/live-opportunities/v1?${params.toString()}` };
+      }
       if (kind === "alerts") {
         return {
           deals: "/api/recent-transactions/v1?days=30&limit=100&page=1",
           mandates: "/api/live-opportunities/v1?limit=100&page=1",
-          allocators: "/api/active-allocators/v1?days=90&limit=100&sort=activity_count&direction=desc",
+          allocators: "/api/allocator-activity/v1?days=90&limit=100&page=1&sort=activity_count&direction=desc",
         };
       }
       if (kind === "research" || kind === "intelligence") {
@@ -469,7 +536,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
       return config.sources || (config.endpoint ? { main: config.endpoint } : {});
     }
     const clean = submittedQuery.trim();
-    if (!clean) return {};
+    if (!isTextQueryReady(clean)) return {};
     const encoded = encodeURIComponent(clean);
     const lifecycleIntent = entityLifecycleIntent(clean);
     if (lifecycleIntent.explicitDefunctRequest) {
@@ -479,7 +546,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
     return {
       institutions: `/api/v1/public/search?q=${encoded}&limit=${rowLimit}`,
     };
-  }, [allocatorSort, config.endpoint, config.sources, dealFieldFilters, includeDefunct, kind, rowLimit, serverFilterTerm, serverPageIndex, serverRowLimit, serverSortDir, submittedQuery]);
+  }, [allocatorDays, allocatorSort, config.endpoint, config.sources, dealFieldFilters, includeDefunct, kind, mandateFilters, routeEntityType, rowLimit, serverFilterTerm, serverPageIndex, serverRowLimit, serverSortDir, submittedQuery]);
 
   useEffect(() => {
     let active = true;
@@ -508,6 +575,14 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
     if (kind !== "search" || typeof window === "undefined") return;
     const urlQuery = new URLSearchParams(window.location.search).get("q")?.trim() || DEFAULT_SEARCH_QUERY;
     if (!urlQuery) return;
+    if (!isTextQueryReady(urlQuery)) {
+      const shortTimer = window.setTimeout(() => {
+        setQuery(urlQuery);
+        setSubmittedQuery("");
+        setSearchInputIssue(`Enter at least ${MIN_TEXT_QUERY_CHARACTERS} characters to search.`);
+      }, 0);
+      return () => window.clearTimeout(shortTimer);
+    }
     const cachedPackets = initialSearchPackets(kind, urlQuery);
     const timer = window.setTimeout(() => {
       setQuery(urlQuery);
@@ -522,7 +597,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
   useEffect(() => {
     if (kind !== "search") return;
     const clean = submittedQuery.trim();
-    if (!clean || !packets.institutions || packets.people || packets.strategy) return;
+    if (!isTextQueryReady(clean) || !packets.institutions || packets.people || packets.strategy) return;
     if (entityLifecycleIntent(clean).explicitDefunctRequest) return;
     let active = true;
     const controller = new AbortController();
@@ -569,7 +644,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
   const isLoading = sourceKeys.length > 0 && !allSourcesReady;
   const emptyMessage = isLoading ? LOADING : kind === "search" && !submittedQuery.trim() ? "Enter an institution, person, or strategy" : NOT_DISCLOSED;
   const waitingForSearch = kind === "search" && !submittedQuery.trim();
-  const serverPaged = isServerPagedKind(kind) && (!tableFilter.trim() || supportsServerFilter(kind));
+  const serverPaged = isServerPagedKind(kind) && (!activeTableFilter || supportsServerFilter(kind));
 
   const sourceRows = useMemo(() => {
     if (isLoading) return [];
@@ -598,33 +673,40 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
     return total || sourceRows.length;
   }, [dealFieldFilters.length, kind, packets, sourceRows.length]);
   const totalRows = dealFieldFilterTotal ?? totalCount(kind, packet, packets, sourceRows.length);
+  const incompleteCoverage = kind === "mandates" ? incompletePacketCoverage(packet) : null;
   const filteredRows = useMemo(() => {
-    const clean = tableFilter.trim().toLowerCase();
+    const clean = activeTableFilter.toLowerCase();
     const filtered = clean
       ? sourceRows.filter((row) => row.some((cell) => searchableCellText(cell).toLowerCase().includes(clean)))
       : sourceRows;
     if (kind === "allocators") return filtered;
     return [...filtered].sort((a, b) => compareCells(a[sortColumn], b[sortColumn], sortDir));
-  }, [kind, sourceRows, sortColumn, sortDir, tableFilter]);
-  const fullPageCount = Math.max(1, Math.ceil((serverPaged ? totalRows : filteredRows.length) / rowLimit));
+  }, [activeTableFilter, kind, sourceRows, sortColumn, sortDir]);
+  const fullPageCount = incompleteCoverage
+    ? 1
+    : Math.max(1, Math.ceil((serverPaged ? totalRows : filteredRows.length) / rowLimit));
   // Dashboard 2.0 P02/P03: the Data view is a limited preview — the pager stops
   // at the cap and hands off to SWFI sign-in for the full universe.
   // Allocators are capped at the 10 most recent (single page, no deeper paging);
   // other kinds keep the multi-page preview handoff.
-  const pageCount = kind === "allocators" ? 1 : previewPageCount(fullPageCount);
+  const pageCount = previewPageCount(fullPageCount);
   const previewCapped = fullPageCount > pageCount;
   const safePageIndex = Math.min(pageIndex, pageCount - 1);
   const pageStart = serverPaged ? 0 : safePageIndex * rowLimit;
-  const visibleRows = filteredRows.slice(pageStart, pageStart + rowLimit);
+  // A partial packet has no proven cursor or deeper page. Keep every observed row
+  // browseable on the single local page instead of silently dropping rowLimit+1.
+  const visibleRows = incompleteCoverage
+    ? filteredRows
+    : filteredRows.slice(pageStart, pageStart + rowLimit);
   const comparisonRecords = useMemo(() => {
     if (kind !== "comparisons" || !isFact(packet)) return [];
-    const clean = tableFilter.trim().toLowerCase();
+    const clean = activeTableFilter.toLowerCase();
     const source = rows(packet);
     const filtered = clean
       ? source.filter((row) => rowCells("comparisons", row).some((cell) => searchableCellText(cell).toLowerCase().includes(clean)))
       : source;
     return [...filtered].sort((a, b) => compareCells(rowCells("comparisons", a)[sortColumn], rowCells("comparisons", b)[sortColumn], sortDir));
-  }, [kind, packet, sortColumn, sortDir, tableFilter]);
+  }, [activeTableFilter, kind, packet, sortColumn, sortDir]);
   const countDetails = tableCountDetails(kind, packet, packets, totalRows, sourceRows.length);
   const visualizationRows = useMemo(() => isFact(packet) ? rows(packet) : [], [packet]);
   const dealEntityTypeOptions = useMemo(() => {
@@ -642,9 +724,12 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
     kind === "deals" ? fieldOptionsForRows(dealFieldOptionRows(packet, packets), "sector", selectedDealSectors) : []
   ), [kind, packet, packets, selectedDealSectors]);
   const activeRoute = routeByKind[kind];
+  const visibleCountLabel = incompleteCoverage
+    ? `Loaded Compass rows observed: ${sourceRows.length.toLocaleString("en-US")}; ${visibleRows.length.toLocaleString("en-US")} shown. Coverage partial: ${incompleteCoverage.reasonLabel}.`
+    : `Showing ${visibleRows.length.toLocaleString("en-US")} of ${totalRows.toLocaleString("en-US")}`;
 
   return (
-    <div ref={rootRef} className="flex min-h-screen flex-col bg-[#F2F4F6] font-sans text-[#1B2733] lg:h-screen lg:overflow-hidden">
+    <div ref={rootRef} className="flex min-h-screen flex-col bg-[#F2F4F6] font-sans text-[#1B2733] lg:h-screen lg:overflow-hidden" data-entity-type-context={routeEntityType || undefined}>
       <SwfiBrandHeader searchId="global-swfi-search" searchDefaultValue={kind === "search" ? submittedQuery : ""} />
 
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
@@ -673,7 +758,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
                     ? "Awaiting search"
                     : isLoading
                       ? LOADING
-                    : `Showing ${visibleRows.length.toLocaleString("en-US")} of ${totalRows.toLocaleString("en-US")}`}
+                    : visibleCountLabel}
                 </div>
               </div>
             </section>
@@ -686,9 +771,14 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
             className="grid grid-cols-1 gap-2 rounded border border-[#DCE3EA] bg-white px-4 py-3 sm:grid-cols-[180px_minmax(0,1fr)_120px] sm:items-center"
             onSubmit={(event) => {
               event.preventDefault();
-              const clean = query.trim() || DEFAULT_SEARCH_QUERY;
+              const clean = query.trim();
+              if (!isTextQueryReady(clean)) {
+                setSearchInputIssue(clean ? `Enter at least ${MIN_TEXT_QUERY_CHARACTERS} characters to search.` : "Enter a search query.");
+                return;
+              }
               setQuery(clean);
               setSubmittedQuery(clean);
+              setSearchInputIssue("");
               window.history.replaceState(null, "", `?q=${encodeURIComponent(clean)}`);
             }}
           >
@@ -698,11 +788,19 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
               name="q"
               type="search"
               value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                if (!isShortTextQuery(event.target.value)) setSearchInputIssue("");
+              }}
+              minLength={MIN_TEXT_QUERY_CHARACTERS}
+              aria-describedby="swfi-search-minimum"
               className="min-h-10 rounded border border-[#C7D2DD] px-3 text-base outline-none"
               placeholder="Search institutions, people, strategies"
             />
-            <button type="submit" className="min-h-10 rounded border border-[#C7D2DD] bg-white px-3 text-base text-[#16538C]">Search</button>
+            <button type="submit" disabled={!isTextQueryReady(query)} className="min-h-10 rounded border border-[#C7D2DD] bg-white px-3 text-base text-[#16538C] disabled:cursor-not-allowed disabled:text-[#8A96A3]">Search</button>
+            <span id="swfi-search-minimum" className="text-[11px] text-[#6B7785] sm:col-start-2" aria-live="polite">
+              {searchInputIssue || `Search starts at ${MIN_TEXT_QUERY_CHARACTERS} characters.`}
+            </span>
           </form>
         ) : null}
 
@@ -747,7 +845,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
             </div>
             {sectionView === "visualization" ? (
               kind === "mandates"
-                ? <CompassVisualization rows={visualizationRows} totalRows={totalRows} />
+                ? <CompassVisualization rows={visualizationRows} totalRows={totalRows} incompleteCoverage={incompleteCoverage} />
                 : <SectionVisualization kind={kind} rows={visualizationRows} totalRows={totalRows} />
             ) : null}
           </section>
@@ -758,13 +856,13 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
 		          <span className="mt-1 block text-[#7A8A9B]">{kind === "profiles" || kind === "comparisons" ? (includeDefunct ? "Explicit lifecycle view: active and defunct entities are included and labeled by the source API." : "Active entities only by default. Defunct=true records are excluded from results, counts, rankings, and visualizations.") : "Reached from a chart, ranking, or filter, this table shows the matching records; unfiltered, it shows the first preview pages only. Every row links to its SWFI platform page, where the full record lives."}</span>
         </section>
 
-        <section data-gsap-reveal className={`grid grid-cols-1 gap-2 rounded border border-[#DCE3EA] bg-white px-4 py-3 text-sm sm:items-center ${showRecordData ? "" : "hidden"} ${kind === "allocators" ? "sm:grid-cols-[minmax(0,1fr)_180px_150px_190px]" : kind === "deals" ? "sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_160px_120px_180px_180px_180px]" : "sm:grid-cols-[minmax(0,1fr)_180px_150px]"}`}>
+        <section data-gsap-reveal className={`grid grid-cols-1 gap-2 rounded border border-[#DCE3EA] bg-white px-4 py-3 text-sm sm:items-center ${showRecordData ? "" : "hidden"} ${kind === "allocators" ? "sm:grid-cols-[minmax(0,1fr)_180px_150px_190px]" : kind === "deals" ? "sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_160px_120px_180px_180px_180px]" : kind === "mandates" ? "sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_160px_100px_190px_100px_120px_120px]" : "sm:grid-cols-[minmax(0,1fr)_180px_150px]"}`}>
           <div className="font-semibold text-[#11314F]">
             {waitingForSearch
               ? "Enter an institution, person, or strategy"
               : isLoading
                 ? LOADING
-              : `Showing ${visibleRows.length.toLocaleString("en-US")} of ${totalRows.toLocaleString("en-US")}${countDetails}${tableFilter.trim() ? ` / filtered ${filteredRows.length.toLocaleString("en-US")}` : ""}`}
+              : `${visibleCountLabel}${incompleteCoverage ? "" : countDetails}${activeTableFilter ? ` / filtered ${filteredRows.length.toLocaleString("en-US")}` : ""}`}
           </div>
           <label className="grid grid-cols-1 gap-1">
             <span className="font-semibold text-[#41566B]">Filter</span>
@@ -775,9 +873,14 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
                 setTableFilter(event.target.value);
                 setPageIndex(0);
               }}
+              minLength={MIN_TEXT_QUERY_CHARACTERS}
+              aria-describedby="source-table-filter-minimum"
               className="min-h-9 rounded border border-[#C7D2DD] px-2 outline-none"
-              placeholder="Filter rows"
+              placeholder={`Filter rows (${MIN_TEXT_QUERY_CHARACTERS}+ characters)`}
             />
+            <span id="source-table-filter-minimum" className="text-[10px] font-normal text-[#7A8A9B]" aria-live="polite">
+              {isShortTextQuery(tableFilter) ? `Enter at least ${MIN_TEXT_QUERY_CHARACTERS} characters; no query has run.` : `Filtering starts at ${MIN_TEXT_QUERY_CHARACTERS} characters.`}
+            </span>
           </label>
           <label className="grid grid-cols-1 gap-1">
             <span className="font-semibold text-[#41566B]">Rows</span>
@@ -850,23 +953,124 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
                 maxSelections={5}
               />
 	          ) : null}
-	          {kind === "allocators" ? (
-            <label className="grid grid-cols-1 gap-1">
-              <span className="font-semibold text-[#41566B]">Sort</span>
-              <select
-                value={allocatorSort}
-                onChange={(event) => {
-                  const nextSort = event.target.value;
-                  setAllocatorSort(nextSort);
-                  const nextColumn = allocatorColumnIndexForSort(nextSort, config.columns);
-                  if (nextColumn >= 0) setSortColumn(nextColumn);
+	          {kind === "mandates" ? (
+              <form
+                className="grid gap-2 border-t border-[#E1E7ED] pt-3 sm:col-span-2 sm:grid-cols-2 xl:col-span-7 xl:grid-cols-[minmax(0,1fr)_150px_150px_120px_auto]"
+                data-testid="mandates-supported-filters"
+                data-contract-status="supported"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const ticketMin = normalizedTicketBound(mandateFilterDraft.ticketMin);
+                  const ticketMax = normalizedTicketBound(mandateFilterDraft.ticketMax);
+                  if (ticketMin == null || ticketMax == null) {
+                    setMandateFilterIssue("Ticket bounds must be zero or greater.");
+                    return;
+                  }
+                  if (ticketMin && ticketMax && Number(ticketMin) > Number(ticketMax)) {
+                    setMandateFilterIssue("Minimum ticket cannot exceed maximum ticket.");
+                    return;
+                  }
+                  const ticketCurrency = mandateFilterDraft.ticketCurrency.trim().toUpperCase();
+                  if (ticketCurrency && !ticketMin && !ticketMax) {
+                    setMandateFilterIssue("Set a ticket bound before applying a currency.");
+                    return;
+                  }
+                  setMandateFilters({
+                    investmentType: mandateFilterDraft.investmentType.trim(),
+                    ticketMin,
+                    ticketMax,
+                    ticketCurrency,
+                  });
+                  setMandateFilterIssue("");
                   setPageIndex(0);
                 }}
-                className="min-h-9 rounded border border-[#C7D2DD] bg-white px-2"
               >
-                {allocatorSortOptions.map(([value, label]) => <option key={`${value}-${label}`} value={value}>{label}</option>)}
-              </select>
-            </label>
+                <label className="grid gap-1">
+                  <span className="font-semibold text-[#41566B]">Investment type</span>
+                  <input
+                    type="search"
+                    value={mandateFilterDraft.investmentType}
+                    onChange={(event) => setMandateFilterDraft((current) => ({ ...current, investmentType: event.target.value }))}
+                    className="min-h-9 rounded border border-[#C7D2DD] px-2 outline-none"
+                    data-testid="mandates-investment-type-filter"
+                  />
+                </label>
+                <label className="grid gap-1">
+                  <span className="font-semibold text-[#41566B]">Minimum ticket</span>
+                  <input
+                    type="number"
+                    min="0"
+                    value={mandateFilterDraft.ticketMin}
+                    onChange={(event) => setMandateFilterDraft((current) => ({ ...current, ticketMin: event.target.value }))}
+                    className="min-h-9 rounded border border-[#C7D2DD] px-2 outline-none"
+                    data-testid="mandates-ticket-min-filter"
+                  />
+                </label>
+                <label className="grid gap-1">
+                  <span className="font-semibold text-[#41566B]">Maximum ticket</span>
+                  <input
+                    type="number"
+                    min="0"
+                    value={mandateFilterDraft.ticketMax}
+                    onChange={(event) => setMandateFilterDraft((current) => ({ ...current, ticketMax: event.target.value }))}
+                    className="min-h-9 rounded border border-[#C7D2DD] px-2 outline-none"
+                    data-testid="mandates-ticket-max-filter"
+                  />
+                </label>
+                <label className="grid gap-1">
+                  <span className="font-semibold text-[#41566B]">Currency</span>
+                  <input
+                    type="text"
+                    inputMode="text"
+                    maxLength={3}
+                    value={mandateFilterDraft.ticketCurrency}
+                    onChange={(event) => setMandateFilterDraft((current) => ({ ...current, ticketCurrency: event.target.value }))}
+                    className="min-h-9 rounded border border-[#C7D2DD] px-2 uppercase outline-none"
+                    data-testid="mandates-ticket-currency-filter"
+                  />
+                </label>
+                <button type="submit" className="min-h-9 self-end rounded border border-[#11314F] bg-[#11314F] px-3 font-semibold text-white" data-testid="mandates-apply-filters">
+                  Apply
+                </button>
+                <span className="text-[11px] text-[#9B2C2C] sm:col-span-2 xl:col-span-5" aria-live="polite">{mandateFilterIssue}</span>
+              </form>
+	          ) : null}
+	          {kind === "allocators" ? (
+            <>
+              <label className="grid grid-cols-1 gap-1">
+                <span className="font-semibold text-[#41566B]">Activity window</span>
+                <select
+                  value={allocatorDays}
+                  onChange={(event) => {
+                    setAllocatorDays(Number(event.target.value));
+                    setPageIndex(0);
+                  }}
+                  className="min-h-9 rounded border border-[#C7D2DD] bg-white px-2"
+                  data-testid="allocator-window-filter"
+                >
+                  <option value={30}>Last 30 days</option>
+                  <option value={60}>Last 60 days</option>
+                  <option value={90}>Last 90 days</option>
+                  <option value={365}>Last 12 months</option>
+                </select>
+              </label>
+              <label className="grid grid-cols-1 gap-1">
+                <span className="font-semibold text-[#41566B]">Sort</span>
+                <select
+                  value={allocatorSort}
+                  onChange={(event) => {
+                    const nextSort = event.target.value;
+                    setAllocatorSort(nextSort);
+                    const nextColumn = allocatorColumnIndexForSort(nextSort, config.columns);
+                    if (nextColumn >= 0) setSortColumn(nextColumn);
+                    setPageIndex(0);
+                  }}
+                  className="min-h-9 rounded border border-[#C7D2DD] bg-white px-2"
+                >
+                  {allocatorSortOptions.map(([value, label]) => <option key={`${value}-${label}`} value={value}>{label}</option>)}
+                </select>
+              </label>
+            </>
           ) : null}
         </section>
 
@@ -1447,6 +1651,35 @@ function totalCount(kind: Kind, packet: Packet | undefined, packets: Record<stri
   }
   if (!isFact(packet)) return fallback;
   return packetNumber(packet, ["source_total", "total", "count", "row_count"]) ?? fallback;
+}
+
+type IncompletePacketCoverage = { complete: false; reasonLabel: string };
+
+function incompletePacketCoverage(packet: Packet | undefined): IncompletePacketCoverage | null {
+  if (!packet) return null;
+  const payload = packetData(packet);
+  for (const source of [payload, packet]) {
+    const candidate = source.coverage;
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
+    const coverage = candidate as Record<string, unknown>;
+    if (coverage.complete === false) {
+      return { complete: false, reasonLabel: coverageReasonLabel(coverage.reason) };
+    }
+  }
+  return null;
+}
+
+function coverageReasonLabel(value: unknown): string {
+  const reason = typeof value === "string" ? value.trim().toLowerCase() : "";
+  const labels: Record<string, string> = {
+    count_unavailable: "record count unavailable",
+    partial_response: "backend returned a partial response",
+    source_total_unavailable: "source total unavailable",
+    stable_snapshot_or_cursor_contract_unavailable: "complete source snapshot unavailable",
+    upstream_limit: "upstream source limit reached",
+    upstream_partial: "upstream source returned partial coverage",
+  };
+  return labels[reason] || "backend did not verify the complete record set";
 }
 
 function isServerPagedKind(kind: Kind) {
@@ -2196,7 +2429,7 @@ function SectionInsights({ kind, rows: sourceRows }: { kind: Kind; rows: Row[] }
   );
 }
 
-function CompassVisualization({ rows: sourceRows, totalRows }: { rows: Row[]; totalRows: number }) {
+function CompassVisualization({ rows: sourceRows, totalRows, incompleteCoverage }: { rows: Row[]; totalRows: number; incompleteCoverage: IncompletePacketCoverage | null }) {
   const investmentTypeRows = bucketRows(sourceRows, (row) => businessText(row.investment_type || row.strategy || row.asset_class_or_strategy || row.type));
   const regionRows = bucketRows(sourceRows, (row) => businessText(row.region || row.country));
   const monthRows = bucketRows(sourceRows, (row) => monthBucket(row.posted_at || row.created_at || row.published_at || row.deadline || row.due_at)).reverse();
@@ -2204,9 +2437,9 @@ function CompassVisualization({ rows: sourceRows, totalRows }: { rows: Row[]; to
   const totalCapital = disclosedAmounts.reduce((sum, value) => sum + value, 0);
   const averageTicket = disclosedAmounts.length ? totalCapital / disclosedAmounts.length : 0;
   const summary = [
-    ["Total RFP Records", totalRows.toLocaleString("en-US")],
-    ["Total Capital Sought", totalCapital ? compactMoney(totalCapital) : NOT_DISCLOSED],
-    ["Average Ticket Size", averageTicket ? compactMoney(averageTicket) : NOT_DISCLOSED],
+    [incompleteCoverage ? "Observed RFP Records" : "Total RFP Records", (incompleteCoverage ? sourceRows.length : totalRows).toLocaleString("en-US")],
+    [incompleteCoverage ? "Capital Sought in Loaded Rows" : "Total Capital Sought", totalCapital ? compactMoney(totalCapital) : NOT_DISCLOSED],
+    [incompleteCoverage ? "Average Disclosed Ticket" : "Average Ticket Size", averageTicket ? compactMoney(averageTicket) : NOT_DISCLOSED],
   ] as const;
   const { focusTerms, toggleFocusTerm, clearFocusTerms } = useFocusTerms();
   const now = useNowOnce();
@@ -2230,7 +2463,11 @@ function CompassVisualization({ rows: sourceRows, totalRows }: { rows: Row[]; to
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="grid grid-cols-1 gap-1 text-[12px] text-[#7A8A9B]">
           <span>Updated from SWFI</span>
-          <span>Showing {sourceRows.length.toLocaleString("en-US")} loaded Compass rows from {totalRows.toLocaleString("en-US")} total records.</span>
+          {incompleteCoverage ? (
+            <span>Analyzing {sourceRows.length.toLocaleString("en-US")} loaded Compass rows. Coverage partial: {incompleteCoverage.reasonLabel}.</span>
+          ) : (
+            <span>Showing {sourceRows.length.toLocaleString("en-US")} loaded Compass rows from {totalRows.toLocaleString("en-US")} total records.</span>
+          )}
         </div>
         {/* Dashboard 2.0 P05: data export requires SWFI authentication — no public downloads. */}
         <a href="https://www.swfi.com/v1/signin/?msg=auth" className="rounded border border-[#C7D2DD] bg-white px-3 py-1.5 text-sm font-semibold text-[#16538C] no-underline">

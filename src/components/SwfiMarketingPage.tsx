@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import Image from "next/image";
 import SwfiBrandHeader from "@/components/SwfiBrandHeader";
 import { appHref, assetHref } from "@/lib/selfContainedLinks";
 
@@ -102,7 +103,7 @@ export function SwfiFooter() {
         <div className="h-px bg-white/20" />
         <div className="flex flex-col gap-4 text-[13px] text-white/85 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-4">
-            <img src={assetHref("/swfi-assets/footer-logo.svg")} alt="" className="h-6 w-5" />
+            <Image src={assetHref("/swfi-assets/footer-logo.svg")} alt="" width={19} height={24} className="h-6 w-5" />
             <span>© 2008-2023 Sovereign Wealth Fund Institute | All rights reserved</span>
           </div>
           <div className="flex flex-wrap gap-4">

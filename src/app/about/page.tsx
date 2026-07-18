@@ -1,3 +1,4 @@
+import Image from "next/image";
 import SwfiBrandHeader from "@/components/SwfiBrandHeader";
 import { SwfiFooter } from "@/components/SwfiMarketingPage";
 import SwfiTimeline from "@/components/SwfiTimeline";
@@ -19,7 +20,7 @@ export default function AboutPage() {
         <section className="grid max-w-[980px] gap-5">
           <h1 className="m-0 text-[32px] font-bold leading-tight text-[#22272F] sm:text-[42px]">{swfiAboutOverview.title}</h1>
         </section>
-        <img src={assetHref("/swfi-assets/about-us-banner.svg")} alt="about-us-banner" className="h-auto w-full" />
+        <Image src={assetHref("/swfi-assets/about-us-banner.svg")} alt="about-us-banner" width={925} height={230} className="h-auto w-full" />
         <section className="grid gap-5">
           <p className="m-0 text-[24px] leading-8 text-[#A61C20]">{swfiAboutOverview.subtitle}</p>
           <div className="grid gap-4 text-[16px] leading-7 text-[#505A69]">

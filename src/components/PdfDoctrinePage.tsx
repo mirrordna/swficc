@@ -18,6 +18,7 @@ import {
 import { appHref } from "@/lib/selfContainedLinks";
 import { mandateDetailHref, profileDetailHref, researchDetailHref, transactionDetailHref } from "@/lib/detailRoutes";
 import SwfiBrandHeader from "@/components/SwfiBrandHeader";
+import { eligibleTextQuery, MIN_TEXT_QUERY_CHARACTERS } from "@/lib/textQueryPolicy";
 
 type Packets = Record<string, Packet>;
 type TableCell = string | { label: string; href: string };
@@ -27,7 +28,7 @@ const pageLinks = DASHBOARD_SECTION_NAV;
 const ENDPOINTS = {
   metrics: "/api/swfi/dashboard-metrics/v1",
   top20: "/v1/swfi/top20?limit=100",
-  allocators: "/api/active-allocators/v1?days=90&limit=100&sort=activity_count&direction=desc",
+  allocators: "/api/allocator-activity/v1?days=90&limit=100&page=1&sort=activity_count&direction=desc",
   rfps: "/api/live-opportunities/v1?limit=100&page=1",
   transactions: "/api/recent-transactions/v1?days=90&limit=100&page=1",
   sectorFlows: "/api/sector-flows/v1?days=365",
@@ -136,8 +137,9 @@ export default function PdfDoctrinePage() {
   const latestReportDate = latestDate(reportSourceRows, ["published_at", "publishedAt", "date"]);
   const reportCatalogAsOf = clean(packets.reports?.generated_at || packets.reports2?.generated_at);
   const historicalReportCatalog = isOlderThanDays(latestReportDate, reportCatalogAsOf, 365);
+  const reportCatalogAgeDays = ageInDays(latestReportDate, reportCatalogAsOf);
   const reportCatalogSummary = latestReportDate
-    ? `Latest report on file: ${displayDate(latestReportDate)} · ${historicalReportCatalog ? "Historical catalog" : "Current catalog"} · ${reportSourceTotal.toLocaleString("en-US")} records`
+    ? `Latest report on file: ${displayDate(latestReportDate)} · ${historicalReportCatalog ? "Historical catalog" : "Current catalog"}${reportCatalogAgeDays === null ? "" : ` · Source age ${reportCatalogAgeDays.toLocaleString("en-US")} days`} · ${reportSourceTotal.toLocaleString("en-US")} records`
     : `${reportSourceTotal.toLocaleString("en-US")} report records on file · latest publication date not disclosed`;
 
   const summaryRows: TableCell[][] = [
@@ -224,7 +226,6 @@ export default function PdfDoctrinePage() {
 
             <Section title="AUM Rankings">
               <ReportTable
-                filename="swfi-aum-rankings.csv"
                 headers={["Institution", "Type", "Country / Region", "AUM"]}
                 rows={topAumRows}
                 empty="No AUM ranking rows available."
@@ -233,7 +234,6 @@ export default function PdfDoctrinePage() {
 
             <Section title="Dashboard Summary">
               <ReportTable
-                filename="swfi-dashboard-summary.csv"
                 headers={["Metric", "Value", "Basis"]}
                 rows={summaryRows}
                 empty="No summary rows available."
@@ -242,7 +242,6 @@ export default function PdfDoctrinePage() {
 
             <Section title="Active Allocators">
               <ReportTable
-                filename="swfi-active-allocators.csv"
                 headers={["Entity Name", "Entity Type", "Country", "Region", "Activity Reason", "Activity Count", "Most Recent Activity Date", "AUM", "Managed Assets"]}
                 rows={allocatorRows}
                 empty="No active allocator rows available."
@@ -251,7 +250,6 @@ export default function PdfDoctrinePage() {
 
             <Section title="RFP Opportunities">
               <ReportTable
-                filename="swfi-rfp-opportunities.csv"
                 headers={["Mandate", "Institution", "Category", "Deadline"]}
                 rows={mandateRows}
                 empty="No live RFP rows available."
@@ -260,7 +258,6 @@ export default function PdfDoctrinePage() {
 
             <Section title="Recent Transactions">
               <ReportTable
-                filename="swfi-recent-transactions.csv"
                 headers={["Deal", "Buyer Entity", "Seller Entity", "Amount", "Closed At"]}
                 rows={transactionRows}
                 empty="No recent transaction rows available."
@@ -269,7 +266,6 @@ export default function PdfDoctrinePage() {
 
             <Section title="Market Activity">
               <ReportTable
-                filename="swfi-market-activity.csv"
                 headers={["Sector / Industry", "Capital Deployed", "Record Count"]}
                 rows={marketRows}
                 empty="No market activity rows available."
@@ -278,7 +274,6 @@ export default function PdfDoctrinePage() {
 
             <Section title="Quarterly Reports">
               <ReportTable
-                filename="swfi-quarterly-reports.csv"
                 headers={["Report", "Type", "Published At", "Asset"]}
                 rows={reportRows}
                 initialSortColumn={2}
@@ -289,7 +284,6 @@ export default function PdfDoctrinePage() {
 
             <Section title="News">
               <ReportTable
-                filename="swfi-news.csv"
                 headers={["Article", "Published / Updated"]}
                 rows={newsRows}
                 initialSortColumn={1}
@@ -375,14 +369,12 @@ function ReportsBarChart({ title, rows }: { title: string; rows: { label: string
 function ReportTable({
   headers,
   rows: tableRows,
-  filename,
   empty,
   initialSortColumn = 0,
   initialSortDir = "asc",
 }: {
   headers: string[];
   rows: TableCell[][];
-  filename: string;
   empty: string;
   initialSortColumn?: number;
   initialSortDir?: "asc" | "desc";
@@ -395,7 +387,7 @@ function ReportTable({
 
   const sourceRows = tableRows.filter((row) => row.some((cell) => displayText(cell)));
   const sortedRows = useMemo(() => {
-    const cleanFilter = filter.trim().toLowerCase();
+    const cleanFilter = eligibleTextQuery(filter).toLowerCase();
     const filtered = cleanFilter
       ? sourceRows.filter((row) => row.some((cell) => displayText(cell).toLowerCase().includes(cleanFilter)))
       : sourceRows;
@@ -428,8 +420,9 @@ function ReportTable({
               setFilter(event.target.value);
               setPageIndex(0);
             }}
+            minLength={MIN_TEXT_QUERY_CHARACTERS}
             className="min-h-8 rounded border border-[#C7D2DD] px-2 outline-none"
-            placeholder="Filter rows"
+            placeholder={`Filter rows (${MIN_TEXT_QUERY_CHARACTERS}+ characters)`}
           />
         </label>
         {showRowLimit ? (
@@ -592,6 +585,13 @@ function isOlderThanDays(value: string, asOf: string, days: number): boolean {
   const valueStamp = Date.parse(value);
   const asOfStamp = Date.parse(asOf);
   return Number.isFinite(valueStamp) && Number.isFinite(asOfStamp) && asOfStamp - valueStamp > days * 86_400_000;
+}
+
+function ageInDays(value: string, asOf: string): number | null {
+  const valueStamp = Date.parse(value);
+  const asOfStamp = Date.parse(asOf);
+  if (!Number.isFinite(valueStamp) || !Number.isFinite(asOfStamp) || asOfStamp < valueStamp) return null;
+  return Math.floor((asOfStamp - valueStamp) / 86_400_000);
 }
 
 function displayDate(value: string): string {
