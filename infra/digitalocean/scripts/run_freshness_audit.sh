@@ -60,8 +60,8 @@ temporary.replace(versioned)
 
 latest = receipt_dir / "latest.json"
 latest_tmp = receipt_dir / ".latest.json.tmp"
-latest_tmp.write_text(body)
-latest_tmp.chmod(0o640)
+latest_tmp.unlink(missing_ok=True)
+latest_tmp.symlink_to(versioned.name)
 latest_tmp.replace(latest)
 print(json.dumps({"status": "pass", "receipt": str(versioned)}))
 PY

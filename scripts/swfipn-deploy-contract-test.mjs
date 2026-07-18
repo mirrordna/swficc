@@ -17,11 +17,12 @@ const requiredDeployContracts = [
   ["health-waited activation", "up -d --wait --wait-timeout 240"],
   ["automatic previous-release restore", "activation failed; restoring previous release"],
   ["current target verification", "test \\\"\\$(readlink -f '$REMOTE_ROOT/current')\\\" = '$REMOTE_RELEASE'"],
-  ["versioned deploy receipt", 'swfipn.strict_acceptance_deploy.v4'],
+  ["versioned deploy receipt", 'swfipn.strict_acceptance_deploy.v5'],
   ["rollback image receipt", 'rollback_images_present'],
   ["daily freshness timer install", "systemctl enable --now swfipn-freshness-audit.timer"],
   ["pre-switch freshness audit", "/usr/local/sbin/swfipn-freshness-audit"],
   ["freshness receipt binding", 'freshness_audit_sha256'],
+  ["immutable freshness receipt resolution", "readlink -f '$FRESHNESS_AUDIT_LATEST'"],
 ];
 
 for (const [label, marker] of requiredDeployContracts) {
@@ -47,6 +48,10 @@ assert.ok(
 assert.ok(
   freshnessAudit.includes('"source_refresh_claimed": False'),
   "freshness receipt must not claim that source data was refreshed",
+);
+assert.ok(
+  freshnessAudit.includes("latest_tmp.symlink_to(versioned.name)"),
+  "latest freshness pointer must resolve to an immutable timestamped receipt",
 );
 
 const activationIndex = deploy.indexOf("up -d --wait --wait-timeout 240");

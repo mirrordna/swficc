@@ -117,7 +117,9 @@ if [[ -n "$PREVIOUS_RELEASE" && -n "$PREVIOUS_FRONTEND_IMAGE_ID" && -n "$PREVIOU
   && ssh $SSH_OPTS "$HOST" "docker image inspect '$PREVIOUS_FRONTEND_IMAGE_ID' '$PREVIOUS_BACKEND_IMAGE_ID' >/dev/null"; then
   ROLLBACK_IMAGES_PRESENT=1
 fi
-FRESHNESS_AUDIT_RECEIPT="/var/lib/swfipn/freshness/latest.json"
+FRESHNESS_AUDIT_DIR="/var/lib/swfipn/freshness"
+FRESHNESS_AUDIT_LATEST="$FRESHNESS_AUDIT_DIR/latest.json"
+FRESHNESS_AUDIT_RECEIPT="$(ssh $SSH_OPTS "$HOST" "set -eu; receipt=\$(readlink -f '$FRESHNESS_AUDIT_LATEST'); case \"\$receipt\" in '$FRESHNESS_AUDIT_DIR'/swfipn-freshness-audit-*.json) ;; *) exit 1 ;; esac; printf '%s' \"\$receipt\"")"
 FRESHNESS_AUDIT_SHA256="$(ssh $SSH_OPTS "$HOST" "test -s '$FRESHNESS_AUDIT_RECEIPT'; sha256sum '$FRESHNESS_AUDIT_RECEIPT' | awk '{print \$1}'")"
 FRESHNESS_TIMER_ACTIVE="$(ssh $SSH_OPTS "$HOST" "systemctl is-active swfipn-freshness-audit.timer")"
 
@@ -150,7 +152,7 @@ import os
 from pathlib import Path
 
 receipt = {
-    "schema_version": "swfipn.strict_acceptance_deploy.v4",
+    "schema_version": "swfipn.strict_acceptance_deploy.v5",
     "generated_at": os.environ["SWFIPN_DEPLOY_GENERATED_AT"],
     "status": "pass",
     "release": os.environ["SWFIPN_DEPLOY_RELEASE"],
