@@ -15,8 +15,11 @@ const requiredDeployContracts = [
   ["health-waited activation", "up -d --wait --wait-timeout 240"],
   ["automatic previous-release restore", "activation failed; restoring previous release"],
   ["current target verification", "test \\\"\\$(readlink -f '$REMOTE_ROOT/current')\\\" = '$REMOTE_RELEASE'"],
-  ["versioned deploy receipt", 'swfipn.strict_acceptance_deploy.v3'],
+  ["versioned deploy receipt", 'swfipn.strict_acceptance_deploy.v4'],
   ["rollback image receipt", 'rollback_images_present'],
+  ["daily freshness timer install", "systemctl enable --now swfipn-freshness-audit.timer"],
+  ["pre-switch freshness audit", "/usr/local/sbin/swfipn-freshness-audit"],
+  ["freshness receipt binding", 'freshness_audit_sha256'],
 ];
 
 for (const [label, marker] of requiredDeployContracts) {

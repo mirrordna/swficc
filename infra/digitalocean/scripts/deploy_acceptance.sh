@@ -93,11 +93,13 @@ ssh $SSH_OPTS "$HOST" "ln -sfn '$REMOTE_ROOT/shared/.env.swfi2-backend' '$REMOTE
 
 ssh $SSH_OPTS "$HOST" "printf '%s\n' 'SWFIPN_IMAGE_TAG=$STAMP' 'SWFIPN_ASSET_VERSION=$ASSET_VERSION' 'SWFIPN_GIT_SHA=$GIT_SHA' 'SWFIPN_GIT_DIRTY=$GIT_DIRTY' > '$REMOTE_RELEASE/.release.env'"
 
+ssh $SSH_OPTS "$HOST" "set -eu; install -m 0755 '$REMOTE_RELEASE/swfi-dashboard/infra/digitalocean/scripts/run_freshness_audit.sh' /usr/local/sbin/swfipn-freshness-audit; install -m 0644 '$REMOTE_RELEASE/swfi-dashboard/infra/digitalocean/systemd/swfipn-freshness-audit.service' /etc/systemd/system/swfipn-freshness-audit.service; install -m 0644 '$REMOTE_RELEASE/swfi-dashboard/infra/digitalocean/systemd/swfipn-freshness-audit.timer' /etc/systemd/system/swfipn-freshness-audit.timer; mkdir -p /var/lib/swfipn/freshness; chmod 0750 /var/lib/swfipn/freshness; systemctl daemon-reload; systemctl enable --now swfipn-freshness-audit.timer"
+
 ssh $SSH_OPTS "$HOST" "cd '$REMOTE_RELEASE' && SWFI2_BACKEND_CONTEXT=./SWFI2.0-final SWFIPN_FRONTEND_CONTEXT=./swfi-dashboard SWFIPN_DOMAIN='$DOMAIN' SWFIPN_SITE_ADDRESSES='$SITE_ADDRESSES' SWFIPN_API_DOMAIN='$API_DOMAIN' docker compose --env-file .release.env -p '$COMPOSE_PROJECT' -f compose.acceptance.yml build"
 
 ssh $SSH_OPTS "$HOST" "docker volume create swfipn_acceptance_caddy_data >/dev/null && docker volume create swfipn_acceptance_caddy_config >/dev/null && cid=\$(docker ps --filter 'name=caddy-1' --format '{{.Names}}' | head -n 1); if [ -n \"\$cid\" ]; then docker run --rm --volumes-from \"\$cid\" -v swfipn_acceptance_caddy_data:/to-data -v swfipn_acceptance_caddy_config:/to-config alpine sh -c 'cp -a /data/. /to-data/ 2>/dev/null || true; cp -a /config/. /to-config/ 2>/dev/null || true'; fi"
 
-if ! ssh $SSH_OPTS "$HOST" "cd '$REMOTE_RELEASE' && SWFI2_BACKEND_CONTEXT=./SWFI2.0-final SWFIPN_FRONTEND_CONTEXT=./swfi-dashboard SWFIPN_DOMAIN='$DOMAIN' SWFIPN_SITE_ADDRESSES='$SITE_ADDRESSES' SWFIPN_API_DOMAIN='$API_DOMAIN' docker compose --env-file .release.env -p '$COMPOSE_PROJECT' -f compose.acceptance.yml up -d --wait --wait-timeout 240"; then
+if ! ssh $SSH_OPTS "$HOST" "cd '$REMOTE_RELEASE' && SWFI2_BACKEND_CONTEXT=./SWFI2.0-final SWFIPN_FRONTEND_CONTEXT=./swfi-dashboard SWFIPN_DOMAIN='$DOMAIN' SWFIPN_SITE_ADDRESSES='$SITE_ADDRESSES' SWFIPN_API_DOMAIN='$API_DOMAIN' docker compose --env-file .release.env -p '$COMPOSE_PROJECT' -f compose.acceptance.yml up -d --wait --wait-timeout 240 && /usr/local/sbin/swfipn-freshness-audit"; then
   echo "activation failed; restoring previous release" >&2
   ssh $SSH_OPTS "$HOST" "cd '$REMOTE_RELEASE' && docker compose --env-file .release.env -p '$COMPOSE_PROJECT' -f compose.acceptance.yml down --remove-orphans || true"
   if [[ -n "$PREVIOUS_RELEASE" ]]; then
@@ -115,6 +117,9 @@ if [[ -n "$PREVIOUS_RELEASE" && -n "$PREVIOUS_FRONTEND_IMAGE_ID" && -n "$PREVIOU
   && ssh $SSH_OPTS "$HOST" "docker image inspect '$PREVIOUS_FRONTEND_IMAGE_ID' '$PREVIOUS_BACKEND_IMAGE_ID' >/dev/null"; then
   ROLLBACK_IMAGES_PRESENT=1
 fi
+FRESHNESS_AUDIT_RECEIPT="/var/lib/swfipn/freshness/latest.json"
+FRESHNESS_AUDIT_SHA256="$(ssh $SSH_OPTS "$HOST" "test -s '$FRESHNESS_AUDIT_RECEIPT'; sha256sum '$FRESHNESS_AUDIT_RECEIPT' | awk '{print \$1}'")"
+FRESHNESS_TIMER_ACTIVE="$(ssh $SSH_OPTS "$HOST" "systemctl is-active swfipn-freshness-audit.timer")"
 
 mkdir -p "$FRONTEND_REPO/output"
 SWFIPN_DEPLOY_RECEIPT="$FRONTEND_REPO/output/swfipn-strict-acceptance-deploy-latest.json" \
@@ -136,13 +141,16 @@ SWFIPN_DEPLOY_BACKEND_IMAGE_ID="$BACKEND_IMAGE_ID" \
 SWFIPN_DEPLOY_PREVIOUS_FRONTEND_IMAGE_ID="$PREVIOUS_FRONTEND_IMAGE_ID" \
 SWFIPN_DEPLOY_PREVIOUS_BACKEND_IMAGE_ID="$PREVIOUS_BACKEND_IMAGE_ID" \
 SWFIPN_DEPLOY_ROLLBACK_IMAGES_PRESENT="$ROLLBACK_IMAGES_PRESENT" \
+SWFIPN_DEPLOY_FRESHNESS_AUDIT_RECEIPT="$FRESHNESS_AUDIT_RECEIPT" \
+SWFIPN_DEPLOY_FRESHNESS_AUDIT_SHA256="$FRESHNESS_AUDIT_SHA256" \
+SWFIPN_DEPLOY_FRESHNESS_TIMER_ACTIVE="$FRESHNESS_TIMER_ACTIVE" \
 python3 - <<'PY'
 import json
 import os
 from pathlib import Path
 
 receipt = {
-    "schema_version": "swfipn.strict_acceptance_deploy.v3",
+    "schema_version": "swfipn.strict_acceptance_deploy.v4",
     "generated_at": os.environ["SWFIPN_DEPLOY_GENERATED_AT"],
     "status": "pass",
     "release": os.environ["SWFIPN_DEPLOY_RELEASE"],
@@ -165,6 +173,9 @@ receipt = {
     "previous_frontend_image_id": os.environ["SWFIPN_DEPLOY_PREVIOUS_FRONTEND_IMAGE_ID"] or None,
     "previous_backend_image_id": os.environ["SWFIPN_DEPLOY_PREVIOUS_BACKEND_IMAGE_ID"] or None,
     "rollback_images_present": os.environ["SWFIPN_DEPLOY_ROLLBACK_IMAGES_PRESENT"] == "1",
+    "freshness_audit_receipt": os.environ["SWFIPN_DEPLOY_FRESHNESS_AUDIT_RECEIPT"],
+    "freshness_audit_sha256": os.environ["SWFIPN_DEPLOY_FRESHNESS_AUDIT_SHA256"],
+    "freshness_timer_active": os.environ["SWFIPN_DEPLOY_FRESHNESS_TIMER_ACTIVE"] == "active",
 }
 Path(os.environ["SWFIPN_DEPLOY_RECEIPT"]).write_text(json.dumps(receipt, indent=2) + "\n")
 PY
