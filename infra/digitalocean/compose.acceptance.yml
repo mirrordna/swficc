@@ -36,7 +36,7 @@ services:
     build:
       context: ${SWFI2_BACKEND_CONTEXT:-../SWFI2.0-final}
       dockerfile: Dockerfile
-    image: swfipn/swfi2-backend:acceptance
+    image: swfipn/swfi2-backend:${SWFIPN_IMAGE_TAG:-acceptance}
     restart: unless-stopped
     depends_on:
       swfi2-key-store-init:
@@ -82,7 +82,7 @@ services:
         SWFIPN_ASSET_VERSION: ${SWFIPN_ASSET_VERSION:-}
         SWFIPN_GIT_SHA: ${SWFIPN_GIT_SHA:-unknown}
         SWFIPN_GIT_DIRTY: ${SWFIPN_GIT_DIRTY:-0}
-    image: swfipn/web:acceptance
+    image: swfipn/web:${SWFIPN_IMAGE_TAG:-acceptance}
     restart: unless-stopped
     depends_on:
       swfi2-backend:

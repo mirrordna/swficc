@@ -31,18 +31,38 @@ done
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 ASSET_VERSION="${SWFIPN_ASSET_VERSION:-$STAMP}"
 GIT_SHA="$(git -C "$FRONTEND_REPO" rev-parse HEAD 2>/dev/null || printf 'unknown')"
-if git -C "$FRONTEND_REPO" diff --quiet 2>/dev/null && git -C "$FRONTEND_REPO" diff --cached --quiet 2>/dev/null; then
+if [[ -z "$(git -C "$FRONTEND_REPO" status --porcelain --untracked-files=normal 2>/dev/null)" ]]; then
   GIT_DIRTY=0
 else
   GIT_DIRTY=1
 fi
+BACKEND_GIT_SHA="$(git -C "$BACKEND_REPO" rev-parse HEAD 2>/dev/null || printf 'unknown')"
+if [[ -z "$(git -C "$BACKEND_REPO" status --porcelain --untracked-files=normal 2>/dev/null)" ]]; then
+  BACKEND_GIT_DIRTY=0
+else
+  BACKEND_GIT_DIRTY=1
+fi
+if [[ "${SWFIPN_ALLOW_DIRTY:-0}" != "1" && ("$GIT_DIRTY" == "1" || "$BACKEND_GIT_DIRTY" == "1") ]]; then
+  echo "refusing deploy from dirty source: frontend_dirty=$GIT_DIRTY backend_dirty=$BACKEND_GIT_DIRTY" >&2
+  exit 2
+fi
 REMOTE_RELEASE="$REMOTE_ROOT/releases/$STAMP"
+PREVIOUS_RELEASE="$(ssh $SSH_OPTS "$HOST" "if [ -L '$REMOTE_ROOT/current' ]; then readlink -f '$REMOTE_ROOT/current'; fi")"
+PREVIOUS_FRONTEND_IMAGE_ID="$(ssh $SSH_OPTS "$HOST" "docker inspect --format '{{.Image}}' '$COMPOSE_PROJECT-swfipn-web-1' 2>/dev/null || true")"
+PREVIOUS_BACKEND_IMAGE_ID="$(ssh $SSH_OPTS "$HOST" "docker inspect --format '{{.Image}}' '$COMPOSE_PROJECT-swfi2-backend-1' 2>/dev/null || true")"
 
-ssh $SSH_OPTS "$HOST" "mkdir -p '$REMOTE_RELEASE' '$REMOTE_ROOT/shared'"
+if [[ -n "$PREVIOUS_RELEASE" && "$PREVIOUS_RELEASE" != "$REMOTE_ROOT/releases/"* ]]; then
+  echo "refusing deploy with invalid previous release: $PREVIOUS_RELEASE" >&2
+  exit 2
+fi
+
+ssh $SSH_OPTS "$HOST" "set -eu; mkdir -p '$REMOTE_ROOT/releases' '$REMOTE_ROOT/shared'; test ! -e '$REMOTE_RELEASE'; test ! -L '$REMOTE_RELEASE'; mkdir '$REMOTE_RELEASE'; test -d '$REMOTE_RELEASE'; test ! -L '$REMOTE_RELEASE'"
 
 rsync -az --delete --timeout=120 --stats -e "ssh $SSH_OPTS" \
   --exclude '.git' \
   --exclude '.DS_Store' \
+  --exclude '.env' \
+  --exclude '.env.*' \
   --exclude 'node_modules' \
   --exclude '.next' \
   --exclude 'out' \
@@ -53,6 +73,8 @@ rsync -az --delete --timeout=120 --stats -e "ssh $SSH_OPTS" \
 rsync -az --delete --timeout=120 --stats -e "ssh $SSH_OPTS" \
   --exclude '.git' \
   --exclude '.DS_Store' \
+  --exclude '.env' \
+  --exclude '.env.*' \
   --exclude 'node_modules' \
   --exclude '.venv' \
   --exclude '.verify-venv' \
@@ -69,15 +91,30 @@ ssh $SSH_OPTS "$HOST" "test -s '$REMOTE_ROOT/shared/.env.swfi2-backend' && test 
 
 ssh $SSH_OPTS "$HOST" "ln -sfn '$REMOTE_ROOT/shared/.env.swfi2-backend' '$REMOTE_RELEASE/.env.swfi2-backend' && ln -sfn '$REMOTE_ROOT/shared/.env.swfipn-web' '$REMOTE_RELEASE/.env.swfipn-web'"
 
-ssh $SSH_OPTS "$HOST" "cd '$REMOTE_RELEASE' && SWFI2_BACKEND_CONTEXT=./SWFI2.0-final SWFIPN_FRONTEND_CONTEXT=./swfi-dashboard SWFIPN_DOMAIN='$DOMAIN' SWFIPN_SITE_ADDRESSES='$SITE_ADDRESSES' SWFIPN_API_DOMAIN='$API_DOMAIN' SWFIPN_ASSET_VERSION='$ASSET_VERSION' SWFIPN_GIT_SHA='$GIT_SHA' SWFIPN_GIT_DIRTY='$GIT_DIRTY' docker compose -p '$COMPOSE_PROJECT' -f compose.acceptance.yml build"
+ssh $SSH_OPTS "$HOST" "printf '%s\n' 'SWFIPN_IMAGE_TAG=$STAMP' 'SWFIPN_ASSET_VERSION=$ASSET_VERSION' 'SWFIPN_GIT_SHA=$GIT_SHA' 'SWFIPN_GIT_DIRTY=$GIT_DIRTY' > '$REMOTE_RELEASE/.release.env'"
+
+ssh $SSH_OPTS "$HOST" "cd '$REMOTE_RELEASE' && SWFI2_BACKEND_CONTEXT=./SWFI2.0-final SWFIPN_FRONTEND_CONTEXT=./swfi-dashboard SWFIPN_DOMAIN='$DOMAIN' SWFIPN_SITE_ADDRESSES='$SITE_ADDRESSES' SWFIPN_API_DOMAIN='$API_DOMAIN' docker compose --env-file .release.env -p '$COMPOSE_PROJECT' -f compose.acceptance.yml build"
 
 ssh $SSH_OPTS "$HOST" "docker volume create swfipn_acceptance_caddy_data >/dev/null && docker volume create swfipn_acceptance_caddy_config >/dev/null && cid=\$(docker ps --filter 'name=caddy-1' --format '{{.Names}}' | head -n 1); if [ -n \"\$cid\" ]; then docker run --rm --volumes-from \"\$cid\" -v swfipn_acceptance_caddy_data:/to-data -v swfipn_acceptance_caddy_config:/to-config alpine sh -c 'cp -a /data/. /to-data/ 2>/dev/null || true; cp -a /config/. /to-config/ 2>/dev/null || true'; fi"
 
-ssh $SSH_OPTS "$HOST" "if [ -L '$REMOTE_ROOT/current' ]; then current=\$(readlink -f '$REMOTE_ROOT/current'); if [ -n \"\$current\" ] && [ -f \"\$current/compose.acceptance.yml\" ]; then release_project=\$(basename \"\$current\" | tr '[:upper:]' '[:lower:]'); cd \"\$current\" && for project in '$COMPOSE_PROJECT' \"\$release_project\" current; do SWFIPN_DOMAIN='$DOMAIN' SWFIPN_SITE_ADDRESSES='$SITE_ADDRESSES' SWFIPN_API_DOMAIN='$API_DOMAIN' docker compose -p \"\$project\" -f compose.acceptance.yml down --remove-orphans || true; done; fi; fi"
+if ! ssh $SSH_OPTS "$HOST" "cd '$REMOTE_RELEASE' && SWFI2_BACKEND_CONTEXT=./SWFI2.0-final SWFIPN_FRONTEND_CONTEXT=./swfi-dashboard SWFIPN_DOMAIN='$DOMAIN' SWFIPN_SITE_ADDRESSES='$SITE_ADDRESSES' SWFIPN_API_DOMAIN='$API_DOMAIN' docker compose --env-file .release.env -p '$COMPOSE_PROJECT' -f compose.acceptance.yml up -d --wait --wait-timeout 240"; then
+  echo "activation failed; restoring previous release" >&2
+  ssh $SSH_OPTS "$HOST" "cd '$REMOTE_RELEASE' && docker compose --env-file .release.env -p '$COMPOSE_PROJECT' -f compose.acceptance.yml down --remove-orphans || true"
+  if [[ -n "$PREVIOUS_RELEASE" ]]; then
+    ssh $SSH_OPTS "$HOST" "set -eu; test -d '$PREVIOUS_RELEASE'; test ! -L '$PREVIOUS_RELEASE'; cd '$PREVIOUS_RELEASE'; if [ -s .release.env ]; then set -- --env-file .release.env; else set --; fi; SWFIPN_DOMAIN='$DOMAIN' SWFIPN_SITE_ADDRESSES='$SITE_ADDRESSES' SWFIPN_API_DOMAIN='$API_DOMAIN' docker compose \"\$@\" -p '$COMPOSE_PROJECT' -f compose.acceptance.yml up -d --wait --wait-timeout 240"
+  fi
+  exit 1
+fi
 
-ssh $SSH_OPTS "$HOST" "cd '$REMOTE_RELEASE' && SWFI2_BACKEND_CONTEXT=./SWFI2.0-final SWFIPN_FRONTEND_CONTEXT=./swfi-dashboard SWFIPN_DOMAIN='$DOMAIN' SWFIPN_SITE_ADDRESSES='$SITE_ADDRESSES' SWFIPN_API_DOMAIN='$API_DOMAIN' SWFIPN_ASSET_VERSION='$ASSET_VERSION' SWFIPN_GIT_SHA='$GIT_SHA' SWFIPN_GIT_DIRTY='$GIT_DIRTY' docker compose -p '$COMPOSE_PROJECT' -f compose.acceptance.yml up -d"
+ssh $SSH_OPTS "$HOST" "set -eu; test -d '$REMOTE_RELEASE'; test ! -L '$REMOTE_RELEASE'; ln -sfn '$REMOTE_RELEASE' '$REMOTE_ROOT/current'; test \"\$(readlink -f '$REMOTE_ROOT/current')\" = '$REMOTE_RELEASE'; cd '$REMOTE_RELEASE'; SWFIPN_DOMAIN='$DOMAIN' SWFIPN_SITE_ADDRESSES='$SITE_ADDRESSES' SWFIPN_API_DOMAIN='$API_DOMAIN' docker compose --env-file .release.env -p '$COMPOSE_PROJECT' -f compose.acceptance.yml ps"
 
-ssh $SSH_OPTS "$HOST" "ln -sfn '$REMOTE_RELEASE' '$REMOTE_ROOT/current' && cd '$REMOTE_RELEASE' && SWFIPN_DOMAIN='$DOMAIN' SWFIPN_SITE_ADDRESSES='$SITE_ADDRESSES' SWFIPN_API_DOMAIN='$API_DOMAIN' docker compose -p '$COMPOSE_PROJECT' -f compose.acceptance.yml ps"
+FRONTEND_IMAGE_ID="$(ssh $SSH_OPTS "$HOST" "docker inspect --format '{{.Image}}' '$COMPOSE_PROJECT-swfipn-web-1'")"
+BACKEND_IMAGE_ID="$(ssh $SSH_OPTS "$HOST" "docker inspect --format '{{.Image}}' '$COMPOSE_PROJECT-swfi2-backend-1'")"
+ROLLBACK_IMAGES_PRESENT=0
+if [[ -n "$PREVIOUS_RELEASE" && -n "$PREVIOUS_FRONTEND_IMAGE_ID" && -n "$PREVIOUS_BACKEND_IMAGE_ID" ]] \
+  && ssh $SSH_OPTS "$HOST" "docker image inspect '$PREVIOUS_FRONTEND_IMAGE_ID' '$PREVIOUS_BACKEND_IMAGE_ID' >/dev/null"; then
+  ROLLBACK_IMAGES_PRESENT=1
+fi
 
 mkdir -p "$FRONTEND_REPO/output"
 SWFIPN_DEPLOY_RECEIPT="$FRONTEND_REPO/output/swfipn-strict-acceptance-deploy-latest.json" \
@@ -90,13 +127,22 @@ SWFIPN_DEPLOY_HOST="$HOST" \
 SWFIPN_DEPLOY_ASSET_VERSION="$ASSET_VERSION" \
 SWFIPN_DEPLOY_GIT_SHA="$GIT_SHA" \
 SWFIPN_DEPLOY_GIT_DIRTY="$GIT_DIRTY" \
+SWFIPN_DEPLOY_BACKEND_GIT_SHA="$BACKEND_GIT_SHA" \
+SWFIPN_DEPLOY_BACKEND_GIT_DIRTY="$BACKEND_GIT_DIRTY" \
+SWFIPN_DEPLOY_PREVIOUS_RELEASE="$PREVIOUS_RELEASE" \
+SWFIPN_DEPLOY_IMAGE_TAG="$STAMP" \
+SWFIPN_DEPLOY_FRONTEND_IMAGE_ID="$FRONTEND_IMAGE_ID" \
+SWFIPN_DEPLOY_BACKEND_IMAGE_ID="$BACKEND_IMAGE_ID" \
+SWFIPN_DEPLOY_PREVIOUS_FRONTEND_IMAGE_ID="$PREVIOUS_FRONTEND_IMAGE_ID" \
+SWFIPN_DEPLOY_PREVIOUS_BACKEND_IMAGE_ID="$PREVIOUS_BACKEND_IMAGE_ID" \
+SWFIPN_DEPLOY_ROLLBACK_IMAGES_PRESENT="$ROLLBACK_IMAGES_PRESENT" \
 python3 - <<'PY'
 import json
 import os
 from pathlib import Path
 
 receipt = {
-    "schema_version": "swfipn.strict_acceptance_deploy.v2",
+    "schema_version": "swfipn.strict_acceptance_deploy.v3",
     "generated_at": os.environ["SWFIPN_DEPLOY_GENERATED_AT"],
     "status": "pass",
     "release": os.environ["SWFIPN_DEPLOY_RELEASE"],
@@ -107,6 +153,18 @@ receipt = {
     "asset_version": os.environ["SWFIPN_DEPLOY_ASSET_VERSION"],
     "git_sha": os.environ["SWFIPN_DEPLOY_GIT_SHA"],
     "git_dirty": os.environ["SWFIPN_DEPLOY_GIT_DIRTY"] == "1",
+    "frontend_git_sha": os.environ["SWFIPN_DEPLOY_GIT_SHA"],
+    "frontend_git_dirty": os.environ["SWFIPN_DEPLOY_GIT_DIRTY"] == "1",
+    "backend_git_sha": os.environ["SWFIPN_DEPLOY_BACKEND_GIT_SHA"],
+    "backend_git_dirty": os.environ["SWFIPN_DEPLOY_BACKEND_GIT_DIRTY"] == "1",
+    "release_is_real_directory": True,
+    "previous_release": os.environ["SWFIPN_DEPLOY_PREVIOUS_RELEASE"] or None,
+    "image_tag": os.environ["SWFIPN_DEPLOY_IMAGE_TAG"],
+    "frontend_image_id": os.environ["SWFIPN_DEPLOY_FRONTEND_IMAGE_ID"],
+    "backend_image_id": os.environ["SWFIPN_DEPLOY_BACKEND_IMAGE_ID"],
+    "previous_frontend_image_id": os.environ["SWFIPN_DEPLOY_PREVIOUS_FRONTEND_IMAGE_ID"] or None,
+    "previous_backend_image_id": os.environ["SWFIPN_DEPLOY_PREVIOUS_BACKEND_IMAGE_ID"] or None,
+    "rollback_images_present": os.environ["SWFIPN_DEPLOY_ROLLBACK_IMAGES_PRESENT"] == "1",
 }
 Path(os.environ["SWFIPN_DEPLOY_RECEIPT"]).write_text(json.dumps(receipt, indent=2) + "\n")
 PY
