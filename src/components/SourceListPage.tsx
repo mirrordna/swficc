@@ -641,7 +641,8 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
   const allSourcesReady = kind === "search"
     ? sourceKeys.length > 0 && (searchHasRenderableRows || searchPacketsComplete)
     : sourceKeys.every((key) => packets[key]);
-  const isLoading = sourceKeys.length > 0 && !allSourcesReady;
+  const routeFiltersLoading = (kind === "profiles" || kind === "comparisons") && routeEntityType === null;
+  const isLoading = routeFiltersLoading || (sourceKeys.length > 0 && !allSourcesReady);
   const emptyMessage = isLoading ? LOADING : kind === "search" && !submittedQuery.trim() ? "Enter an institution, person, or strategy" : NOT_DISCLOSED;
   const waitingForSearch = kind === "search" && !submittedQuery.trim();
   const serverPaged = isServerPagedKind(kind) && (!activeTableFilter || supportsServerFilter(kind));

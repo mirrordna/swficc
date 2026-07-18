@@ -204,7 +204,7 @@ async function dashboardCheck(browser) {
     const body = await waitForDashboard(page);
     result.first_usable_ms = Date.now() - start;
     if (!response || response.status() >= 400) result.failures.push(`http_${response?.status() || "missing"}`);
-    for (const text of ["SWFI", "Top AUM ranking", "Investment Trends by Sector", "Recent Activity", "Recently Fundraising Institutions"]) {
+    for (const text of ["SWFI", "Top AUM ranking", "Investment Trends by Sector", "Recent Activity", "Live RFPs & Opportunities"]) {
       if (!body.includes(text)) result.failures.push(`missing_text:${text}`);
     }
     const hits = forbiddenHits(body);
