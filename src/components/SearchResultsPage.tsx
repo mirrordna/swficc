@@ -127,7 +127,10 @@ export default function SearchResultsPage() {
         if (!active) return nextPacket;
         if (isFact(nextPacket)) {
           setPacket(nextPacket);
-          setLoading(false);
+          const hasVisibleCategory = currentCategory === "all"
+            || currentCategory === "entities"
+            || packetRows(nextPacket).some((row) => inferSearchCategory(row) === currentCategory);
+          if (hasVisibleCategory) setLoading(false);
         }
         return nextPacket;
       })
@@ -213,7 +216,10 @@ export default function SearchResultsPage() {
             signal: controller.signal,
             attempts: 2,
           }).catch(() => null);
-          if (active && nextPacket && isFact(nextPacket)) setTransactionPacket(nextPacket);
+          if (active && nextPacket && isFact(nextPacket)) {
+            setTransactionPacket(nextPacket);
+            setLoading(false);
+          }
           return nextPacket;
         })
       : Promise.resolve(null);
