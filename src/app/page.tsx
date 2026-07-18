@@ -4,6 +4,7 @@ import type { AnchorHTMLAttributes, CSSProperties, KeyboardEvent as ReactKeyboar
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import type { Packet } from "@/lib/sourcePackets";
 import {
   count,
@@ -143,6 +144,7 @@ function storeRenderedSearchPrefetch(query: string, groups: BrdSearchGroup[]): v
 
 export default function DashboardPage() {
   const rootRef = useGsapReveal<HTMLDivElement>();
+  const router = useRouter();
   const [packets, setPackets] = useState<Packets>({} as Packets);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -173,6 +175,10 @@ export default function DashboardPage() {
     const timer = window.setTimeout(() => setClientHydrated(true), 0);
     return () => window.clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    router.prefetch("/search/");
+  }, [router]);
 
   useEffect(() => {
     let active = true;

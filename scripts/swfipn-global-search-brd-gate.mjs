@@ -147,6 +147,21 @@ async function main() {
       ? Math.ceil(timing.completed_at - timing.started_at)
       : null;
   }).then((value) => Number.isFinite(value) ? value : resultsRunnerMs);
+  const resultsResourceTimings = await page.evaluate(() => {
+    const startedAt = window.__swfipnResultsTiming?.started_at;
+    if (!Number.isFinite(startedAt)) return [];
+    return performance.getEntriesByType("resource")
+      .filter((entry) => entry.startTime >= startedAt)
+      .map((entry) => ({
+        name: entry.name,
+        initiator_type: entry.initiatorType,
+        start_ms: Math.round(entry.startTime - startedAt),
+        duration_ms: Math.round(entry.duration),
+        transfer_size: entry.transferSize,
+      }))
+      .sort((left, right) => right.duration_ms - left.duration_ms)
+      .slice(0, 30);
+  });
   const resultsBody = await page.locator("body").innerText();
   const resultsHasRowsOrEmptyState = /Showing\s+\d+\s+of\s+[\d,]+/.test(resultsBody) || resultsBody.includes("Not disclosed");
   const resultsHasExpectedResult = expectedResult ? resultsBody.includes(expectedResult) : true;
@@ -208,6 +223,7 @@ async function main() {
       prefetch_cache: prefetchEvidence,
       modal_prefetch_cache: modalPrefetchEvidence,
       click_prefetch_cache: clickPrefetchEvidence,
+      results_resource_timings: resultsResourceTimings,
     }
   };
   fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2));
@@ -262,6 +278,7 @@ function createNetworkRecorder(page) {
       url: response.url(),
       status: response.status(),
       method: request.method(),
+      resource_type: request.resourceType(),
       duration_ms: Date.now() - started
     });
   });
