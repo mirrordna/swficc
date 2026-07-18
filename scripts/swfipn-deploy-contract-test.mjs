@@ -3,8 +3,10 @@ import { readFileSync } from "node:fs";
 
 const deployPath = "infra/digitalocean/scripts/deploy_acceptance.sh";
 const composePath = "infra/digitalocean/compose.acceptance.yml";
+const freshnessAuditPath = "infra/digitalocean/scripts/run_freshness_audit.sh";
 const deploy = readFileSync(deployPath, "utf8");
 const compose = readFileSync(composePath, "utf8");
+const freshnessAudit = readFileSync(freshnessAuditPath, "utf8");
 
 const requiredDeployContracts = [
   ["untracked frontend dirty detection", 'status --porcelain --untracked-files=normal'],
@@ -33,6 +35,18 @@ assert.ok(
 assert.ok(
   compose.includes("swfipn/web:${SWFIPN_IMAGE_TAG:-acceptance}"),
   "frontend image must be release-versioned",
+);
+assert.ok(
+  freshnessAudit.includes("--env HOME=/tmp/swfipn-freshness"),
+  "freshness verifier must use a writable isolated home",
+);
+assert.ok(
+  freshnessAudit.includes('"mode": "read_only_verification"'),
+  "freshness receipt must label its read-only mode",
+);
+assert.ok(
+  freshnessAudit.includes('"source_refresh_claimed": False'),
+  "freshness receipt must not claim that source data was refreshed",
 );
 
 const activationIndex = deploy.indexOf("up -d --wait --wait-timeout 240");

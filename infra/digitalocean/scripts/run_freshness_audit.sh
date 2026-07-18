@@ -16,7 +16,8 @@ if [[ "$HEALTH" != "healthy" ]]; then
 fi
 
 IMAGE_ID="$(docker inspect --format '{{.Image}}' "$CONTAINER")"
-docker exec "$CONTAINER" python /app/scripts/staleness_monitor.py --backend-origin "$ORIGIN" > "$RAW_RECEIPT"
+docker exec --env HOME=/tmp/swfipn-freshness "$CONTAINER" \
+  python /app/scripts/staleness_monitor.py --backend-origin "$ORIGIN" > "$RAW_RECEIPT"
 
 SWFIPN_FRESHNESS_RAW_RECEIPT="$RAW_RECEIPT" \
 SWFIPN_FRESHNESS_RECEIPT_DIR="$RECEIPT_DIR" \
