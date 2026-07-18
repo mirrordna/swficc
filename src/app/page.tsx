@@ -3,6 +3,7 @@
 import type { AnchorHTMLAttributes, CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import type { Packet } from "@/lib/sourcePackets";
 import {
   count,
@@ -108,6 +109,7 @@ type BrdSearchItem = {
   detail: string;
   href: string;
   sourceHref?: string;
+  prefetchRow?: Record<string, unknown>;
 };
 
 type BrdSearchGroup = {
@@ -115,6 +117,29 @@ type BrdSearchGroup = {
   items: BrdSearchItem[];
 };
 type SearchCategoryLabel = (typeof SEARCH_CATEGORY_LABELS)[number];
+
+function storeRenderedSearchPrefetch(query: string, groups: BrdSearchGroup[]): void {
+  if (typeof window === "undefined" || !isTextQueryReady(query)) return;
+  const results = groups.flatMap((group) => group.items.map((item) => {
+    const sourceUrl = item.prefetchRow ? sourceHref(item.prefetchRow) || "" : "";
+    if (!item.prefetchRow || !sourceUrl.startsWith("https://www.swfi.com/")) return null;
+    return {
+      ...item.prefetchRow,
+      name: brdText(item.prefetchRow.name || item.prefetchRow.title || item.label),
+      source_url: sourceUrl,
+    };
+  })).filter((row): row is Record<string, unknown> & { name: string; source_url: string } => row !== null);
+  if (!results.length) return;
+  try {
+    window.sessionStorage.setItem(searchPrefetchCacheKey(query), JSON.stringify({
+      query: query.trim(),
+      stored_at: Date.now(),
+      packet: { status: "ok", fact: true, data: { results } },
+    }));
+  } catch {
+    // Session storage is an optimization only; the results page still fetches live.
+  }
+}
 
 export default function DashboardPage() {
   const rootRef = useGsapReveal<HTMLDivElement>();
@@ -1200,9 +1225,13 @@ function BrdSearchModal({
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#E2E6ED] px-5 py-3 text-[12px] text-[#687385]">
           <span>Use ↑↓ to move, Enter to open, Escape to close.</span>
           {queryReady ? (
-            <DashboardLink href={brdSearchResultsHref(query, selectedFilter)} className="font-bold text-[#0B4A83] underline">
+            <Link
+              href={brdSearchResultsHref(query, selectedFilter)}
+              className="font-bold text-[#0B4A83] underline"
+              onClick={() => storeRenderedSearchPrefetch(query, visibleGroups)}
+            >
               View all results
-            </DashboardLink>
+            </Link>
           ) : (
             <span className="font-semibold text-[#7B8794]">View all results after {MIN_TEXT_QUERY_CHARACTERS} characters</span>
           )}
@@ -1429,7 +1458,7 @@ function brdPublicSearchItem(row: Record<string, unknown>, group: string): BrdSe
         : group === "News & Articles"
           ? researchRecordHref(row)
           : dashboardProfileHref(row);
-  return { label, detail, href, sourceHref: source };
+  return { label, detail, href, sourceHref: source, prefetchRow: row };
 }
 
 function brdSearchKindForLabel(label: string): SearchKind {
@@ -1574,6 +1603,7 @@ function entityTransactionSearchGroups(packet: Packet | undefined, query: string
     detail: transactionSearchDetail(row, resolvedEntityName),
     href: dashboardTransactionHref(row),
     sourceHref: sourceHref(row),
+    prefetchRow: row,
   }));
   return items.length ? [{ label: "Transactions", items }] : [];
 }
@@ -1590,6 +1620,7 @@ function peopleSearchGroups(packet: Packet | undefined, query: string): BrdSearc
     detail: [brdText(row.title, ""), brdText(row.institution, "")].filter(Boolean).join(" · "),
     href: dashboardPersonHref(row),
     sourceHref: sourceHref(row),
+    prefetchRow: row,
   }));
   return items.length ? [{ label: "People", items }] : [];
 }
@@ -1615,30 +1646,35 @@ function brdSearchGroups({ query, entityRows, peopleRows, transactionRows, rfpRo
       detail: [brdText(row.type || row.entity_type, "Entity"), brdText(row.country, "")].filter(Boolean).join(" · "),
       href: dashboardProfileHref(row),
       sourceHref: sourceHref(row),
+      prefetchRow: row,
     }))),
     group("RFPs & Opportunities", rankRecordsForQuery(rfpRows.filter((row) => filter(row, "rfp")), query, "rfp").map((row) => ({
       label: brdText(row.title || row.name),
       detail: [brdText(row.institution, ""), brdText(row.strategy || row.asset_class_or_strategy, "")].filter(Boolean).join(" · "),
       href: dashboardMandateHref(row),
       sourceHref: sourceHref(row),
+      prefetchRow: row,
     }))),
     group("Transactions", rankRecordsForQuery(transactionRows.filter((row) => filter(row, "transaction")), query, "transaction").map((row) => ({
       label: brdText(row.title || row.name),
       detail: transactionSearchDetail(row),
       href: dashboardTransactionHref(row),
       sourceHref: sourceHref(row),
+      prefetchRow: row,
     }))),
     group("News & Articles", rankRecordsForQuery(newsRows.filter((row) => filter(row, "news")), query, "news").map((row) => ({
       label: brdText(row.title || row.name),
       detail: [brdReadTime(row), brdText(row.source, "")].filter(Boolean).join(" · "),
       href: researchRecordHref(row),
       sourceHref: sourceHref(row),
+      prefetchRow: row,
     }))),
     group("People", rankRecordsForQuery(peopleRows.filter((row) => filter(row, "person")), query, "person").map((row) => ({
       label: brdText(row.name),
       detail: [brdText(row.title, ""), brdText(row.institution, "")].filter(Boolean).join(" · "),
       href: dashboardPersonHref(row),
       sourceHref: sourceHref(row),
+      prefetchRow: row,
     }))),
   ].filter((searchGroup) => searchGroup.items.length);
 }

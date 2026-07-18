@@ -125,7 +125,10 @@ export default function SearchResultsPage() {
         attempts: 2,
       }).then((nextPacket) => {
         if (!active) return nextPacket;
-        if (isFact(nextPacket)) setPacket(nextPacket);
+        if (isFact(nextPacket)) {
+          setPacket(nextPacket);
+          setLoading(false);
+        }
         return nextPacket;
       })
       : Promise.resolve(null);
@@ -141,7 +144,10 @@ export default function SearchResultsPage() {
         })
       ))).then((nextPackets) => {
       const factPackets = nextPackets.filter(isFact);
-      if (active) setEntityPackets(factPackets);
+      if (active) {
+        setEntityPackets(factPackets);
+        if (lifecycleIntent.explicitDefunctRequest && factPackets.length) setLoading(false);
+      }
       return factPackets;
     }).catch(() => {
       if (active) setEntityPackets([]);
@@ -154,7 +160,10 @@ export default function SearchResultsPage() {
           signal: controller.signal,
           attempts: 2,
         }).then((nextPacket) => {
-          if (active && isFact(nextPacket)) setPeoplePacket(nextPacket);
+          if (active && isFact(nextPacket)) {
+            setPeoplePacket(nextPacket);
+            setLoading(false);
+          }
           return nextPacket;
         }).catch(() => null)
       : Promise.resolve(null);
@@ -171,7 +180,10 @@ export default function SearchResultsPage() {
           }),
         ]).then((nextPackets) => {
           const factPackets = nextPackets.filter(isFact);
-          if (active) setOpportunityPackets(factPackets);
+          if (active) {
+            setOpportunityPackets(factPackets);
+            if (factPackets.length) setLoading(false);
+          }
           return factPackets;
         }).catch(() => {
           if (active) setOpportunityPackets([]);
@@ -184,7 +196,10 @@ export default function SearchResultsPage() {
           signal: controller.signal,
           attempts: 2,
         }).then((nextPacket) => {
-          if (active && isFact(nextPacket)) setNewsPacket(nextPacket);
+          if (active && isFact(nextPacket)) {
+            setNewsPacket(nextPacket);
+            setLoading(false);
+          }
           return nextPacket;
         }).catch(() => null)
       : Promise.resolve(null);
@@ -215,6 +230,7 @@ export default function SearchResultsPage() {
           const factPackets = nextPackets.filter(isFact);
           if (active) {
             setIntentPackets(factPackets);
+            if (factPackets.length) setLoading(false);
             const transportFailures = nextPackets
               .map(packetReason)
               .filter((reason) => /^(?:backend_fetch_|backend_http_5|frontend_fetch_)/.test(reason));

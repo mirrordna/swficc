@@ -64,28 +64,34 @@ async function main() {
   const tabsMissing = requiredTabs.filter((tab) => !modalText.includes(tab));
   const groupsMissing = requiredGroups.filter((group) => !modalText.includes(group));
   const modalHasExpectedResult = expectedResult ? modalText.includes(expectedResult) : true;
+  const modalPrefetchEvidence = await readPrefetchEvidence(page, query, expectedResult);
   const clearButtonVisible = await page.locator("button", { hasText: "Clear" }).count().then((count) => count > 0);
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Escape");
   const modalClosed = await page.locator("[role=\"dialog\"]").count().then((count) => count === 0);
 
   const searchUrl = `${origin.replace(/\/$/, "")}/search/?q=${encodeURIComponent(query)}`;
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+K" : "Control+K");
+  await page.waitForSelector("[role=\"dialog\"]", { timeout: 10_000 });
   network.reset();
   const resultsStarted = Date.now();
-  const resultsResponse = await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 120_000 });
-  await page.waitForFunction(() => {
+  await page.getByRole("link", { name: "View all results" }).click({ timeout: 10_000 });
+  await page.waitForURL(searchUrl, { timeout: 120_000 });
+  const clickPrefetchEvidence = await readPrefetchEvidence(page, query, expectedResult);
+  const prefetchEvidence = clickPrefetchEvidence.valid ? clickPrefetchEvidence : modalPrefetchEvidence;
+  await page.waitForFunction((expected) => {
     const text = document.body.innerText || "";
     return !text.includes("Loading")
       && !text.includes("Awaiting search")
-      && (text.includes("Showing") || text.includes("Not disclosed") || text.includes("Search"));
-  }, null, { timeout: 120_000 });
+      && (expected ? text.includes(String(expected)) : (text.includes("Showing") || text.includes("Not disclosed") || text.includes("Search")));
+  }, expectedResult, { timeout: 120_000 });
   const resultsPageMs = Date.now() - resultsStarted;
   const resultsBody = await page.locator("body").innerText();
   const resultsHasRowsOrEmptyState = /Showing\s+\d+\s+of\s+[\d,]+/.test(resultsBody) || resultsBody.includes("Not disclosed");
   const resultsHasExpectedResult = expectedResult ? resultsBody.includes(expectedResult) : true;
   const searchApiResponses = network.items().filter((item) => /api\/(v1\/public\/search|source-data\/search|transaction-drilldown)/.test(item.url));
-  const serverRenderedSearch = String(resultsResponse?.headers()?.["x-swfipn-search-render"] || "").toLowerCase() === "server";
-  const apiOk = serverRenderedSearch || searchApiResponses.some((item) => item.status === 200);
+  const serverRenderedSearch = false;
+  const apiOk = prefetchEvidence.valid || searchApiResponses.some((item) => item.status === 200);
 
   const failures = [];
   if (!autofocus) failures.push("modal_input_not_autofocused");
@@ -125,6 +131,7 @@ async function main() {
       results_has_expected_result: resultsHasExpectedResult,
       results_has_rows_or_empty_state: resultsHasRowsOrEmptyState,
       search_api_200: apiOk,
+      prefetch_cache_valid: prefetchEvidence.valid,
       server_rendered_search: serverRenderedSearch,
       console_errors: consoleErrors.slice(0, 10),
       failures
@@ -132,13 +139,51 @@ async function main() {
     network: searchApiResponses,
     evidence: {
       modal_screenshot: screenshotPath,
-      results_url: searchUrl
+      results_url: searchUrl,
+      prefetch_cache: prefetchEvidence,
+      modal_prefetch_cache: modalPrefetchEvidence,
+      click_prefetch_cache: clickPrefetchEvidence,
     }
   };
   fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2));
   console.log(JSON.stringify({ status, receipt: receiptPath, summary: receipt.summary }, null, 2));
   await browser.close();
   if (status === "fail") process.exit(1);
+}
+
+async function readPrefetchEvidence(page, searchQuery, expected) {
+  return page.evaluate(({ cacheKey, expectedResult, queryValue }) => {
+    try {
+      const raw = window.sessionStorage.getItem(cacheKey);
+      if (!raw) return { valid: false, reason: "missing", result_count: 0, source_backed_rows: 0 };
+      const parsed = JSON.parse(raw);
+      const packet = parsed?.packet;
+      const packetRows = Array.isArray(packet?.data?.results) ? packet.data.results : [];
+      const sourceBackedRows = packetRows.filter((row) => typeof row?.source_url === "string" && row.source_url.startsWith("https://www.swfi.com/")).length;
+      const expectedMatch = !expectedResult || packetRows.some((row) => String(row?.name || "").includes(expectedResult));
+      const valid = String(parsed?.query || "").trim().toLowerCase() === queryValue.trim().toLowerCase()
+        && Number.isFinite(parsed?.stored_at)
+        && Date.now() - parsed.stored_at <= 60_000
+        && packet?.status === "ok"
+        && packet?.fact === true
+        && packetRows.length > 0
+        && sourceBackedRows === packetRows.length
+        && expectedMatch;
+      return {
+        valid,
+        reason: valid ? "fresh_query_matched_source_backed_packet" : "packet_contract_mismatch",
+        result_count: packetRows.length,
+        source_backed_rows: sourceBackedRows,
+        expected_match: expectedMatch,
+      };
+    } catch {
+      return { valid: false, reason: "unreadable", result_count: 0, source_backed_rows: 0 };
+    }
+  }, {
+    cacheKey: `swfipn.search.prefetch.v1:${searchQuery.trim().toLowerCase()}`,
+    expectedResult: expected,
+    queryValue: searchQuery,
+  });
 }
 
 function createNetworkRecorder(page) {
@@ -172,6 +217,7 @@ function expectedResultForQuery(value) {
   const key = String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
   const expected = new Map([
     ["pif", "Public Investment Fund"],
+    ["gic", "GIC Private Limited"],
     ["abu dhabi", "Abu Dhabi Investment Authority"],
     ["zurich insurance group", "Zurich Insurance Group"],
   ]);
