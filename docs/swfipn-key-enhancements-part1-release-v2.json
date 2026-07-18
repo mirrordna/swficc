@@ -1,0 +1,112 @@
+{
+  "schema_version": "swfipn.key_enhancements_part1.release.v2",
+  "generated_at": "2026-07-18T16:22:41Z",
+  "verdict": "GO_WITH_CAVEAT",
+  "scope": "SWFI Key Enhancements Part 1 and the 2026-07-16 Smart Search feedback",
+  "public_url": "https://dashboard.swfi.com/swficc/",
+  "candidate": {
+    "release": "/opt/swfipn-acceptance/releases/20260718T160531Z",
+    "asset_version": "20260718T160531Z",
+    "frontend_git_sha": "5c3beae5b99e87f201e7a28412ad0025b8509945",
+    "backend_git_sha": "e2df348021568fabf355fb3cddd409730745096f",
+    "frontend_git_dirty": false,
+    "backend_git_dirty": false,
+    "frontend_image_id": "sha256:f03e3306c691bf5e82c59e4c3bde7be09ebdec3e36e64454f6f5fd855b511b6a",
+    "backend_image_id": "sha256:7e80eccaf9bbf1aece781c8d0069f77deece51bd7ca5c310507927fb47ffcf4a",
+    "previous_release": "/opt/swfipn-acceptance/releases/20260718T160117Z",
+    "rollback_images_present": true
+  },
+  "checked_scope": [
+    "The exact committed frontend was rebuilt with the deployed asset version and Git SHA.",
+    "The real public browser suite passed all 19 Part 1 checks without mocked network responses.",
+    "The broad public acceptance gate passed all 10 criteria, including the SWFI auth handoff without using credentials.",
+    "The runtime staleness gate matched the deployed release and asset version on both checked routes.",
+    "The visual gate passed all four checks across three viewports.",
+    "The 2026-07-16 feedback checks passed for search result relevance, AUM ordering, allocator recency, field-specific deal filters, and source-backed curiosity radar inputs.",
+    "The deployed backend passed 11 live health contracts and 40 schema-drift contracts.",
+    "Canonical source reconciliation passed with 168 active SWFs, 18 defunct SWFs, 186 total SWFs, matching total assets, and zero row differences.",
+    "The daily systemd freshness service passed under its production hardening rules and its timer is active.",
+    "The deploy receipt binds an immutable timestamped freshness receipt; a later audit advanced latest.json without changing the bound receipt hash.",
+    "The failed first freshness deployment restored the previous release automatically and left the public service healthy."
+  ],
+  "unchecked_scope": [
+    "The complete external client query spreadsheet, presentation attachments, and final category-specific filter wishlist were not available in the checked source set.",
+    "No client-approved latency SLA was supplied, so observed performance is not labeled SLA-compliant.",
+    "The daily rail verifies source-backed routes and records drift; it does not mutate or refresh the canonical SWFI source.",
+    "The public forensic Node gate cannot read the production Mongo URI directly from its shell, although the independent backend reconciliation passed through the approved Keychain selector."
+  ],
+  "bad_news": [
+    "The first freshness-aware deployment was blocked because the backend runtime user had no writable verifier home. Rollback succeeded; the image and runner were repaired and retested.",
+    "A mutable latest.json receipt pointer initially made deploy evidence unverifiable after the next audit. The final release uses an atomic symlink and binds the immutable timestamped target.",
+    "No source-refresh command or write authority was approved, so no refresh scheduler was invented."
+  ],
+  "freshness": {
+    "mode": "read_only_verification",
+    "source_refresh_claimed": false,
+    "timer_active": true,
+    "immutable_receipt": "/var/lib/swfipn/freshness/swfipn-freshness-audit-20260718T160741Z.json",
+    "immutable_receipt_sha256": "69196be6ecd55c61d2800152eca53aebf7b323698d4a6dbb4cf338b7a70eb553",
+    "subsequent_service_result": "success",
+    "subsequent_latest_target": "/var/lib/swfipn/freshness/swfipn-freshness-audit-20260718T160825Z.json"
+  },
+  "receipts": [
+    {
+      "path": "output/swfipn-strict-acceptance-deploy-latest.json",
+      "sha256": "c67dff532da366a59b50e6a1bd6c899a5dab7aa4f3e680e9953e085d8019a19b",
+      "status": "PASS_V5"
+    },
+    {
+      "path": "output/swfipn-key-enhancements-part1-public-final.json",
+      "sha256": "2f3bd0cbffbfb719a3ba670e3d2d7e04f3898f6ac4db93f8c3fde16d9a34b14e",
+      "status": "PASS_19_OF_19"
+    },
+    {
+      "path": "output/swfipn-acceptance-criteria-gate-latest.json",
+      "sha256": "1474c002ac53268082a9286c154fd3b019335b61db901483d920793d3c733dbf",
+      "status": "PASS_10_OF_10"
+    },
+    {
+      "path": "output/swfipn-runtime-staleness-gate-latest.json",
+      "sha256": "ba4e0afbf7500e40d82f3a899e7bf58a836942db6da84def94d111315a70ad05",
+      "status": "PASS_2_OF_2"
+    },
+    {
+      "path": "output/swfipn-visual-gate-latest.json",
+      "sha256": "6e6590cef19f7b5a5421c3e1c038a587b9d22b5c18d009d64e32c25b9bcde4da",
+      "status": "PASS_4_OF_4_THREE_VIEWPORTS"
+    },
+    {
+      "path": "output/swfipn-latest-feedback-forensic-gate-latest.json",
+      "sha256": "72eda7e5e8addc7420e2ee3a600e17be6b455168479eefb10627bb99178a43f8",
+      "status": "PASS_WITH_DIRECT_MONGO_SHELL_BLOCKED"
+    },
+    {
+      "path": "output/swfipn-asset-version-latest.json",
+      "sha256": "9b5407c88cbf0bbfe1d7b94d67df808882f62f25922693c0a7e58d3adc91b61b",
+      "status": "PASS_EXACT_REBUILD"
+    },
+    {
+      "repo": "backend",
+      "path": "output/schema-drift-latest.json",
+      "sha256": "8a16c5c05734e6b28d60d43a00b7837da981537a42a74538b5858616865a00c3",
+      "status": "PASS_40_OF_40"
+    },
+    {
+      "repo": "backend",
+      "path": "output/release-gate-latest.json",
+      "sha256": "1ce0aa119d564fc6907f337397ac9e34786975a1b9733d83e9e7ba3c00c4fb6d",
+      "status": "PASS_298_TESTS_AND_LIVE_GATES"
+    },
+    {
+      "repo": "backend",
+      "path": "output/long-horizon-agents-latest.json",
+      "sha256": "7b81fc115678b2be9ab67fc646eb3bc8e3911c341a7d0bfb90b06e0c56808001",
+      "status": "PASS"
+    }
+  ],
+  "remaining_risk": [
+    "External acceptance can still expand when SWFI supplies the complete query corpus and category filter specification.",
+    "A source-side refresh SLA and an approved writer would be required before claiming that canonical source data is refreshed on a schedule.",
+    "The superseded 20260718T132622Z release directory remains unsuitable for source rebuild rollback; use recorded versioned image IDs and later real-directory releases."
+  ]
+}
