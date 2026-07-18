@@ -126,7 +126,11 @@ export default function SearchResultsPage() {
       }).then((nextPacket) => {
         if (!active) return nextPacket;
         if (isFact(nextPacket)) {
-          setPacket(nextPacket);
+          setPacket((currentPacket) => (
+            packetRows(nextPacket).length > 0 || !currentPacket || packetRows(currentPacket).length === 0
+              ? nextPacket
+              : currentPacket
+          ));
           const hasVisibleCategory = currentCategory === "all"
             || currentCategory === "entities"
             || packetRows(nextPacket).some((row) => inferSearchCategory(row) === currentCategory);
@@ -393,7 +397,11 @@ export default function SearchResultsPage() {
   return (
     <div className="min-h-screen bg-[#F2F4F6] font-sans text-[#1B2733]">
       <SwfiBrandHeader searchId="global-swfi-search" searchDefaultValue={query} />
-      <main className="mx-auto grid w-full max-w-[1188px] gap-4 p-4 sm:p-[20px_22px_30px]">
+      <main
+        className="mx-auto grid w-full max-w-[1188px] gap-4 p-4 sm:p-[20px_22px_30px]"
+        data-search-results-query={query.trim().toLowerCase()}
+        data-search-results-ready={isTextQueryReady(query) && !loading ? "true" : "false"}
+      >
         <section className="rounded border border-[#DCE3EA] bg-white p-4" data-search-category={category}>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>

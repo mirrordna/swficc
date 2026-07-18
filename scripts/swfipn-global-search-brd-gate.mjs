@@ -104,8 +104,32 @@ async function main() {
   const searchUrl = `${origin.replace(/\/$/, "")}/search/?q=${encodeURIComponent(query)}`;
   await page.keyboard.press(process.platform === "darwin" ? "Meta+K" : "Control+K");
   await page.waitForSelector("[role=\"dialog\"]", { timeout: 10_000 });
+  await page.evaluate(({ expected, queryValue }) => {
+    const timing = { started_at: null, completed_at: null };
+    window.__swfipnResultsTiming = timing;
+    const normalizedQuery = String(queryValue || "").trim().toLowerCase();
+    const check = () => {
+      if (timing.started_at === null || timing.completed_at !== null) return;
+      const results = document.querySelector("[data-search-results-ready='true']");
+      const committedQuery = results?.getAttribute("data-search-results-query") || "";
+      const hasExpectedResult = !expected || (results?.textContent || "").includes(String(expected));
+      if (committedQuery === normalizedQuery && hasExpectedResult) {
+        timing.completed_at = performance.now();
+        observer.disconnect();
+      }
+    };
+    const observer = new MutationObserver(check);
+    observer.observe(document.documentElement, { attributes: true, childList: true, subtree: true });
+    const resultsLink = [...document.querySelectorAll("a")]
+      .find((node) => (node.textContent || "").trim() === "View all results");
+    resultsLink?.addEventListener("click", () => {
+      timing.started_at = performance.now();
+      queueMicrotask(check);
+      requestAnimationFrame(check);
+    }, { once: true });
+  }, { expected: expectedResult, queryValue: query });
   network.reset();
-  const resultsStarted = Date.now();
+  const resultsRunnerStarted = Date.now();
   await page.getByRole("link", { name: "View all results" }).click({ timeout: 10_000 });
   await page.waitForURL(searchUrl, { timeout: 120_000 });
   const clickPrefetchEvidence = await readPrefetchEvidence(page, query, expectedResult);
@@ -116,7 +140,13 @@ async function main() {
       && !text.includes("Awaiting search")
       && (expected ? text.includes(String(expected)) : (text.includes("Showing") || text.includes("Not disclosed") || text.includes("Search")));
   }, expectedResult, { timeout: 120_000 });
-  const resultsPageMs = Date.now() - resultsStarted;
+  const resultsRunnerMs = Date.now() - resultsRunnerStarted;
+  const resultsPageMs = await page.evaluate(() => {
+    const timing = window.__swfipnResultsTiming;
+    return timing && Number.isFinite(timing.started_at) && Number.isFinite(timing.completed_at)
+      ? Math.ceil(timing.completed_at - timing.started_at)
+      : null;
+  }).then((value) => Number.isFinite(value) ? value : resultsRunnerMs);
   const resultsBody = await page.locator("body").innerText();
   const resultsHasRowsOrEmptyState = /Showing\s+\d+\s+of\s+[\d,]+/.test(resultsBody) || resultsBody.includes("Not disclosed");
   const resultsHasExpectedResult = expectedResult ? resultsBody.includes(expectedResult) : true;
@@ -153,6 +183,8 @@ async function main() {
       autocomplete_p95_ms: autocompleteMs,
       autocomplete_target_ms: autocompleteTargetMs,
       results_page_ms: resultsPageMs,
+      results_page_runner_ms: resultsRunnerMs,
+      results_measurement: "browser_click_to_react_committed_results_dom",
       results_target_ms: resultsTargetMs,
       tabs_missing: tabsMissing,
       groups_missing: groupsMissing,

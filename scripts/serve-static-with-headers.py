@@ -1408,6 +1408,7 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
         except ValueError:
             safe_limit = 25
         cache_key = f"enhanced-public-search:{query.casefold()}:{safe_limit}"
+        cacheable = False
         if not query:
             body = json.dumps({
                 "status": "ok",
@@ -1419,15 +1420,20 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
             cached = self.server.public_search_cache.get(cache_key)
             if cached and time.time() - cached["stored_at"] <= PUBLIC_SEARCH_CACHE_TTL_SECONDS:
                 body = cached["body"]
+                cacheable = True
             else:
                 search_rows = []
+                upstream_fact = False
                 for variant in search_query_variants(query):
-                    search_rows.extend(self.rows_from_public_search_packet(self.public_search_packet(variant, limit=str(safe_limit))))
-                    search_rows.extend(self.rows_from_source_data_packet(self.source_entity_search_packet(variant, limit=str(safe_limit))))
+                    public_packet = self.public_search_packet(variant, limit=str(safe_limit))
+                    source_packet = self.source_entity_search_packet(variant, limit=str(safe_limit))
+                    upstream_fact = upstream_fact or public_packet.get("fact") is True or source_packet.get("fact") is True
+                    search_rows.extend(self.rows_from_public_search_packet(public_packet))
+                    search_rows.extend(self.rows_from_source_data_packet(source_packet))
                 ranked = rank_search_rows(dedupe_search_rows(search_rows), query)[:safe_limit]
                 body = json.dumps({
-                    "status": "ok",
-                    "fact": True,
+                    "status": "ok" if upstream_fact else "unavailable",
+                    "fact": upstream_fact,
                     "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
                     "data": {
                         "results": ranked,
@@ -1436,11 +1442,13 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
                         "count_basis": "ranked_public_plus_entity_variants",
                     },
                 }, separators=(",", ":")).encode("utf-8")
-                self.server.public_search_cache[cache_key] = {"stored_at": time.time(), "body": body}
+                cacheable = upstream_fact
+                if cacheable:
+                    self.server.public_search_cache[cache_key] = {"stored_at": time.time(), "body": body}
         self.send_response(HTTPStatus.OK)
         self.send_security_headers()
         self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Cache-Control", "public, max-age=60, s-maxage=300, stale-while-revalidate=300")
+        self.send_header("Cache-Control", "public, max-age=60, s-maxage=300, stale-while-revalidate=300" if cacheable else "no-store")
         self.send_header("X-SWFIPN-Search-Render", "enhanced")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
