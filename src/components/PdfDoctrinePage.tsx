@@ -408,7 +408,7 @@ function ReportTable({
     <div className="grid gap-2">
       <div className={`grid gap-2 rounded border border-[#DCE3EA] bg-white px-3 py-2 text-sm sm:items-center ${showRowLimit ? "sm:grid-cols-[minmax(0,1fr)_180px_130px_auto]" : "sm:grid-cols-[minmax(0,1fr)_180px_auto]"}`}>
         <div className="font-semibold text-[#11314F]">
-          Showing {visibleRows.length.toLocaleString("en-US")} of {sourceRows.length.toLocaleString("en-US")}
+          Showing {visibleRows.length.toLocaleString("en-US")} of {sourceRows.length.toLocaleString("en-US")} records
           {sortedRows.length !== sourceRows.length ? ` / filtered ${sortedRows.length.toLocaleString("en-US")}` : ""}
         </div>
         <label className="grid gap-1">

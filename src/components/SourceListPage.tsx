@@ -3150,9 +3150,16 @@ function SectionBarChart({
   transactionContext?: TransactionFilter;
 }) {
   const max = Math.max(1, ...chartRows.map((row) => row.count));
+  const recordsParams = new URLSearchParams();
+  if (entityTypeContext) recordsParams.set("entity_type", entityTypeContext);
+  if (regionContext) recordsParams.set("region", regionContext);
+  if (kind === "transactions" && transactionContext) appendTransactionContext(recordsParams, transactionContext);
+  if (includeDefunct) recordsParams.set("include_defunct", "true");
+  recordsParams.set("view", "data");
+  const recordsHref = appHref(`${routeByKind[kind]}/?${recordsParams.toString()}`);
   const firstHref = chartRows[0] && filterParam
     ? sectionChartRecordsHref(kind, chartRows[0].label, filterParam, includeDefunct, entityTypeContext, regionContext, transactionContext)
-    : "";
+    : recordsHref;
   return (
     <div
       className="rounded border border-[#DCE3EA] bg-white p-3"
@@ -3160,7 +3167,7 @@ function SectionBarChart({
       data-display-type="chart"
       data-purpose={title}
       data-source="SWFI platform data"
-      data-primary-cta={filterParam ? "Click a bar to open the matching records" : "Distribution only; exact source filtering is unavailable"}
+      data-primary-cta={filterParam ? "Click a bar to open the matching records" : "Open the underlying records; exact facet filtering is unavailable"}
       data-cta-href={firstHref}
     >
       <h3 className="m-0 mb-3 text-[13px] font-bold text-[#11314F]">{title}</h3>
@@ -3184,7 +3191,12 @@ function SectionBarChart({
             <div key={`${title}-${row.label}`} className="grid grid-cols-1 gap-1" title="The upstream API does not currently support an exact filter for this facet.">{content}</div>
           );
         }) : <div className="text-sm text-[#5C6D7E]">No source rows available.</div>}
-        {!filterParam && chartRows.length ? <div className="text-[11px] text-[#5C6D7E]">Display only: the current upstream API does not expose an exact filter for this facet.</div> : null}
+        {!filterParam && chartRows.length ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#5C6D7E]">
+            <span>Display only: the current upstream API does not expose an exact filter for this facet.</span>
+            <a href={recordsHref} className="font-semibold text-[#16538C] no-underline">Open the underlying records →</a>
+          </div>
+        ) : null}
       </div>
     </div>
   );
