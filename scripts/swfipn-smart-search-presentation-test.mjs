@@ -7,6 +7,7 @@ import {
   searchResultCategoryCounts,
   searchResultRecordType,
 } from "../src/lib/searchResultPresentation.ts";
+import { searchUrlContextFromParams } from "../src/lib/searchUrlContext.ts";
 
 const rows = [
   ...Array.from({ length: 20 }, (_, index) => ({ __searchCategory: "entities", name: `Entity ${index}` })),
@@ -44,7 +45,11 @@ assert.equal(searchResultRecordType({ __searchCategory: "transactions", acquisit
 assert.equal(searchResultRecordType({ __searchCategory: "people" }), "Person");
 
 const searchPageSource = readFileSync("src/components/SearchResultsPage.tsx", "utf8");
-assert.match(searchPageSource, /useState\(10\)/, "category detail pages default to 10 rows");
+assert.equal(
+  searchUrlContextFromParams(new URLSearchParams()).rowLimit,
+  10,
+  "category detail pages default to 10 rows",
+);
 assert.match(searchPageSource, /Rows per category/, "All results exposes the bounded per-category control");
 assert.match(searchPageSource, /search-result-category-refinements/, "the detailed screen can refine category in place");
 assert.match(searchPageSource, /searchResultRecordType\(categorizedRow\)/, "rows display source-specific record types");

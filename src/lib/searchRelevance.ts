@@ -58,6 +58,20 @@ export function businessSearchQueryVariants(query: string, sourceRows: Record<st
   return uniqueStrings(variants).slice(0, 3);
 }
 
+export function verifiedCanonicalSearchName(
+  query: string,
+  sourceRows: Record<string, unknown>[],
+): string {
+  const canonicalTargets = businessSearchQueryVariants(query).slice(1);
+  for (const target of canonicalTargets) {
+    const match = sourceRows.find((row) => (
+      primarySearchName(row).localeCompare(target, undefined, { sensitivity: "base" }) === 0
+    ));
+    if (match) return primarySearchName(match);
+  }
+  return "";
+}
+
 export function dedupeSearchRecords<T extends Record<string, unknown>>(sourceRows: T[]): T[] {
   const seen = new Set<string>();
   const next: T[] = [];

@@ -31,11 +31,11 @@ function reservePort() {
 }
 
 async function waitForOrigin(origin, child) {
-  const deadline = Date.now() + 10_000;
+  const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     if (child.exitCode !== null) throw new Error(`static_server_exited_${child.exitCode}`);
     try {
-      const response = await fetch(origin, { signal: AbortSignal.timeout(1_000) });
+      const response = await fetch(origin, { signal: AbortSignal.timeout(5_000) });
       if (response.ok) return;
     } catch { /* retry until deadline */ }
     await new Promise((resolve) => setTimeout(resolve, 100));

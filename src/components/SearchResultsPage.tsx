@@ -7,7 +7,7 @@ import SwfiBrandHeader from "@/components/SwfiBrandHeader";
 import type { Packet } from "@/lib/sourcePackets";
 import { fetchPacket, isFact, money, packetReason, rows, text } from "@/lib/sourcePackets";
 import { appHref, isSwfiPlatformRecordHref, selfContainedHref, swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
-import { aggregateEntitySearchRecords, businessSearchQueryVariants, dedupeSearchRecords, mergeSearchRecordsPreferPrimary, prioritizeSearchRecords, rankSearchRecords } from "@/lib/searchRelevance";
+import { aggregateEntitySearchRecords, businessSearchQueryVariants, dedupeSearchRecords, mergeSearchRecordsPreferPrimary, prioritizeSearchRecords, rankSearchRecords, verifiedCanonicalSearchName } from "@/lib/searchRelevance";
 import { filterSmartSearchIntentRows, smartSearchIntentForQuery } from "@/lib/smartSearchIntent";
 import { entityLifecycleIntent } from "@/lib/entityLifecycle";
 import { isShortTextQuery, isTextQueryReady, MIN_TEXT_QUERY_CHARACTERS, textQueryEligibility } from "@/lib/textQueryPolicy";
@@ -138,6 +138,8 @@ export default function SearchResultsPage() {
         controller.abort();
       };
     }
+    const requestTimer = window.setTimeout(() => {
+    if (!active) return;
     const shouldSearchPublic = !currentIntent
       && !lifecycleIntent.explicitDefunctRequest
       && (currentCategory === "all" || currentCategory === "entities" || currentCategory === "transactions");
@@ -297,9 +299,11 @@ export default function SearchResultsPage() {
         return next;
       });
     });
+    }, 0);
     return () => {
       active = false;
       window.clearTimeout(resetTimer);
+      window.clearTimeout(requestTimer);
       controller.abort();
     };
   }, [retryKey, urlCategory, urlQuery]);
@@ -325,12 +329,17 @@ export default function SearchResultsPage() {
     const entityRows = entityPackets
       .flatMap((entityPacket) => packetRows(entityPacket))
       .map((row) => categorizedSearchRow(row, "entities"));
-    const entities = aggregateEntitySearchRecords(
-      publicEntities,
-      entityRows,
-      relevanceQuery,
-      [...intentEntities, ...prefetchRows.filter((row) => row.__searchCategory === "entities")],
-    );
+    // Intent endpoints already apply the requested taxonomy, geography, and
+    // ordering contract. Re-ranking those rows against the user's natural
+    // language phrase would discard valid names that do not repeat the phrase.
+    const entities = interpretedIntent?.category === "entities"
+      ? dedupeSearchRecords(intentEntities)
+      : aggregateEntitySearchRecords(
+          publicEntities,
+          entityRows,
+          relevanceQuery,
+          prefetchRows.filter((row) => row.__searchCategory === "entities"),
+        );
     const matchedEntityName = transactionPacketEntityName(transactionPacket);
     const joinedTransactions = packetRows(transactionPacket).map((row) => ({
       ...categorizedSearchRow(row, "transactions"),
@@ -728,6 +737,8 @@ function packetCount(packet: Packet | null | undefined): number | null {
 function resolvedEntityName(query: string, publicPacket: Packet | null, entityPackets: Packet[]): string {
   const publicEntities = packetRows(publicPacket).filter((row) => inferSearchCategory(row) === "entities");
   const sourceEntities = entityPackets.flatMap((entityPacket) => packetRows(entityPacket));
+  const canonicalName = verifiedCanonicalSearchName(query, [...sourceEntities, ...publicEntities]);
+  if (canonicalName) return canonicalName;
   const ranked = mergeSearchRecordsPreferPrimary(publicEntities, sourceEntities, query, "entity");
   return text(ranked[0]?.name || ranked[0]?.title || ranked[0]?.institution, "").trim();
 }

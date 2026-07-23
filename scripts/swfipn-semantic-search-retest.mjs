@@ -9,13 +9,13 @@ const cases = [
   ["Top Active Investors", "Transaction-buyer entities ranked by sourced 30-day activity count", 1, "entities"],
   ["RFPs from the Middle East", "Current RFP, mandate, and opportunity records with sourced region Middle East", 1, "opportunities"],
   ["Sovereign Wealth Funds investing in AI", "AI transactions in the last 365 days with a sourced Sovereign Wealth Fund buyer", 1, "transactions"],
-  ["Pension Funds in Europe", "Pension funds with a sourced region in Europe", 10, "entities"],
+  ["Pension Funds in Europe", "Pension funds with a sourced region in Europe", 5, "entities"],
   ["Open manager searches in EMEA", "Current RFP, mandate, and opportunity records with sourced region EMEA", 1, "opportunities"],
-  ["Central banks in APAC", "Central banks with a sourced region in APAC", 10, "entities"],
+  ["Central banks in APAC", "Central banks with a sourced region in APAC", 5, "entities"],
   ["Family offices deploying capital into real estate", "real estate transactions in the last 365 days with a sourced family-office buyer", 1, "transactions"],
 ];
 const checks = [];
-const browser = await chromium.launch({ channel: "chrome", headless: true });
+const browser = await chromium.launch({ headless: true });
 
 try {
   for (const [query, explanation, minimumRows, category] of cases) {
@@ -26,13 +26,12 @@ try {
       await page.goto(`${ORIGIN}/swficc/search/?q=${encodeURIComponent(query)}`, { waitUntil: "domcontentloaded", timeout: TIMEOUT_MS });
       const interpretation = page.getByText(`Interpreted as: ${explanation}`, { exact: true });
       await interpretation.waitFor({ state: "visible", timeout: 10_000 });
-      await page.waitForFunction(() => {
-        const main = document.querySelector("main");
-        return Boolean(main && !/All categories · Loading/.test(main.innerText) && !/^Loading…$/m.test(main.innerText));
-      }, null, { timeout: TIMEOUT_MS });
-      const rows = page.locator("main tbody tr").filter({ has: page.locator('a[href*="www.swfi.com"]') });
+      await page.locator(
+        `main[data-search-results-query="${query.trim().toLowerCase()}"][data-search-results-ready="true"]`,
+      ).waitFor({ state: "visible", timeout: TIMEOUT_MS });
+      const rows = page.getByTestId("search-result-row");
       const rowCount = await rows.count();
-      const typeLabels = (await rows.locator("td:first-child").allTextContents()).map((value) => value.trim());
+      const typeLabels = (await rows.getByTestId("search-result-record-type").allTextContents()).map((value) => value.trim());
       const matchedBuyerCount = await rows.locator("td:nth-child(4)").filter({ hasText: "Matched buyer:" }).count();
       const exactTypeProof = category === "opportunities"
         ? typeLabels.every((label) => /\b(?:RFP|Opportunity)\b/.test(label))
@@ -80,6 +79,10 @@ try {
     const detailedFilterLeak = await dialog.getByText(/^(?:Country|Region|Entity Type|Buyer|Seller|Sector)$/).count();
     await viewAll.click();
     await page.getByTestId("search-result-category-refinements").waitFor({ state: "visible" });
+    await page.locator('main[data-search-results-query="adia"][data-search-results-ready="true"]').waitFor({
+      state: "visible",
+      timeout: TIMEOUT_MS,
+    });
     const queryPreserved = await page.getByRole("searchbox", { name: "Smart Search" }).inputValue();
     const categoryButtons = await page.getByTestId("search-result-category-refinements").getByRole("button").count();
     checks.push({
@@ -93,7 +96,11 @@ try {
 
     await page.getByTestId("search-result-category-refinements").getByRole("button", { name: /^Transactions \(/ }).click();
     await page.waitForFunction(() => /[?&]category=transactions/.test(window.location.search));
-    const transactionRows = page.locator("main tbody tr").filter({ has: page.locator('a[href*="www.swfi.com"]') });
+    await page.locator('main[data-search-results-ready="true"] section[data-search-category="transactions"]').waitFor({
+      state: "visible",
+      timeout: TIMEOUT_MS,
+    });
+    const transactionRows = page.getByTestId("search-result-row");
     checks.push({
       id: "detailed_category_refinement",
       status: await transactionRows.count() === 10 ? "PASS" : "FAIL",

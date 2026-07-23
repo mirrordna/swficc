@@ -11,7 +11,12 @@ const outputDir = path.join(cwd, "output");
 const receiptPath = path.join(outputDir, "swfipn-search-relevance-regression-latest.json");
 fs.mkdirSync(outputDir, { recursive: true });
 
-const { businessSearchQueryVariants, rankSearchRecords, searchSubjectQuery } = await import(pathToFileURL(path.join(cwd, "src/lib/searchRelevance.ts")).href);
+const {
+  businessSearchQueryVariants,
+  rankSearchRecords,
+  searchSubjectQuery,
+  verifiedCanonicalSearchName,
+} = await import(pathToFileURL(path.join(cwd, "src/lib/searchRelevance.ts")).href);
 
 const fixtures = {
   abuDhabi: [
@@ -59,6 +64,15 @@ const checks = [
     query: "PIF",
     actual: businessSearchQueryVariants("PIF"),
     expected: ["PIF", "Public Investment Fund"],
+  },
+  {
+    id: "verified_alias_beats_exact_name_collision",
+    query: "ADIA",
+    actual: verifiedCanonicalSearchName("ADIA", [
+      entity("Adia", "Company", 0),
+      entity("Abu Dhabi Investment Authority", "Sovereign Wealth Fund", 1_128_750_000_000),
+    ]),
+    expected: "Abu Dhabi Investment Authority",
   },
   {
     id: "query_variant_sovereign_wealth_funds",
