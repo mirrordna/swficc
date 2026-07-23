@@ -70,6 +70,18 @@ export function dedupeSearchRecords<T extends Record<string, unknown>>(sourceRow
   return next;
 }
 
+export function prioritizeSearchRecords<T extends Record<string, unknown>>(
+  sourceRows: T[],
+  leadingRows: T[],
+): T[] {
+  const currentByKey = new Map(sourceRows.map((row) => [searchRecordKey(row), row]));
+  const prioritized = leadingRows.map((leadingRow) => {
+    const current = currentByKey.get(searchRecordKey(leadingRow));
+    return current ? { ...leadingRow, ...current } as T : leadingRow;
+  });
+  return dedupeSearchRecords([...prioritized, ...sourceRows]);
+}
+
 export function rankSearchRecords<T extends Record<string, unknown>>(sourceRows: T[], query: string, kind: SearchKind = "entity"): T[] {
   const clean = searchSubjectQuery(query);
   if (!clean) return sourceRows;
@@ -78,9 +90,14 @@ export function rankSearchRecords<T extends Record<string, unknown>>(sourceRows:
       row,
       index,
       score: searchRelevanceScore(row, clean, kind),
+      key: searchRecordKey(row),
     }))
     .filter((item) => item.score > 0)
-    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .sort((a, b) => (
+      b.score - a.score
+      || a.key.localeCompare(b.key, undefined, { numeric: true, sensitivity: "base" })
+      || a.index - b.index
+    ))
     .map((item) => item.row);
 }
 
@@ -133,9 +150,8 @@ export function isWeakSubstringMatch(row: Record<string, unknown>, query: string
 
 // Search merge intent: treat /api/v1/public/search order as the primary ordering source. Entities from
 // the /api/source-data collection are appended only when not already present (they must not reorder above
-// the public/search order). The INTERIM business hierarchy is applied as a stable secondary tiebreak that
-// only reorders rows left as ties and never demotes a strong exact/prefix/acronym match. Weak-substring
-// junk is suppressed only when a strong match also exists.
+// the public/search order). Appended records are relevance-ranked before being added. Weak-substring junk
+// is suppressed only when a strong match also exists, without changing the canonical primary order.
 export function mergeSearchRecordsPreferPrimary<T extends Record<string, unknown>>(
   primaryRows: T[],
   appendRows: T[],
@@ -155,25 +171,40 @@ export function mergeSearchRecordsPreferPrimary<T extends Record<string, unknown
   const merged = [...primary, ...appended];
   if (!clean) return merged;
 
-  const STRONG_TIER_FLOOR = 100;
-  const decorated = merged.map((row, index) => {
+  const decorated = merged.map((row) => {
     const strong = isStrongNameMatch(row, clean, kind);
     return {
       row,
-      index,
       strong,
-      tier: strong ? STRONG_TIER_FLOOR + businessHierarchyTier(row) : businessHierarchyTier(row),
       weak: isWeakSubstringMatch(row, clean, kind),
     };
   });
   const strongCount = decorated.filter((item) => item.strong).length;
-  const ordered = decorated.sort((a, b) => {
-    if (a.strong !== b.strong) return a.strong ? -1 : 1;
-    if (a.tier !== b.tier) return b.tier - a.tier;
-    return a.index - b.index;
-  });
-  const suppressed = ordered.filter((item) => !(item.weak && strongCount > 0));
-  return (suppressed.length ? suppressed : ordered).map((item) => item.row);
+  const suppressed = decorated.filter((item) => !(item.weak && strongCount > 0));
+  return (suppressed.length ? suppressed : decorated).map((item) => item.row);
+}
+
+export function aggregateEntitySearchRecords<T extends Record<string, unknown>>(
+  publicRows: T[],
+  sourceRows: T[],
+  query: string,
+  leadingRows: T[] = [],
+): T[] {
+  // `/api/v1/public/search` can return a different broad-substring page for an
+  // identical query. The collection endpoint is stable and canonical, so it
+  // leads the refresh merge. Rows already shown in the Smart Search preview
+  // are then promoted after deterministic re-ranking without overwriting live
+  // source fields; otherwise a refreshed slice can push a preview item below
+  // the View All category quota.
+  const refreshedRows = rankSearchRecords(
+    mergeSearchRecordsPreferPrimary(sourceRows, publicRows, query, "entity"),
+    query,
+    "entity",
+  );
+  return prioritizeSearchRecords(
+    refreshedRows,
+    rankSearchRecords(dedupeSearchRecords(leadingRows), query, "entity"),
+  );
 }
 
 export function searchSubjectQuery(query: string): string {

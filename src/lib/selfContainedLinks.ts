@@ -257,7 +257,7 @@ function swfiMirrorRoute(parsed: URL): string | undefined {
   const section = v1Index >= 0 ? parts[v1Index + 1] : parts[0];
   const id = v1Index >= 0 ? parts[v1Index + 2] : parts[1];
   if (section === "entities" && id === "aggregates") {
-    return "/profiles/aggregates/";
+    return "/aggregates/";
   }
   if (section === "entities" && id) {
     return `/profiles/detail/?${new URLSearchParams({ id }).toString()}`;

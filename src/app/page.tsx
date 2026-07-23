@@ -1,7 +1,7 @@
 "use client";
 
 import type { AnchorHTMLAttributes, CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -58,21 +58,37 @@ function worldFlowPairs(transactionRows: Record<string, unknown>[]): WorldFlowPa
   return [...pairs.values()].sort((a, b) => b.deals - a.deals);
 }
 import { useDashboardSessionDisplayName } from "@/lib/dashboardAuth";
-import { businessSearchQueryVariants, dedupeSearchRecords, rankSearchRecords, searchRelevanceScore as businessSearchRelevanceScore, type SearchKind } from "@/lib/searchRelevance";
+import { aumRankingEndpoint, inspectAumRankingPacket, type AumRankingState } from "@/lib/aumRankingContract";
+import { allocatorCountEndpoint, inspectAllocatorCountPacket, inspectAllocatorPacket, type AllocatorState } from "@/lib/allocatorSourceContract";
+import { aggregateEntitySearchRecords, businessSearchQueryVariants, dedupeSearchRecords, rankSearchRecords, searchRelevanceScore as businessSearchRelevanceScore, type SearchKind } from "@/lib/searchRelevance";
 import { filterSmartSearchIntentRows, smartSearchIntentForQuery, type SmartSearchIntent } from "@/lib/smartSearchIntent";
-import { isShortTextQuery, isTextQueryReady, MIN_TEXT_QUERY_CHARACTERS } from "@/lib/textQueryPolicy";
+import { entityLifecycleIntent } from "@/lib/entityLifecycle";
+import { isShortTextQuery, isTextQueryReady, MIN_TEXT_QUERY_CHARACTERS, textQueryEligibility } from "@/lib/textQueryPolicy";
+import {
+  beginSearchSourceSettlements,
+  canRenderConfirmedEmpty,
+  combineSearchSourceSettlements,
+  completedSearchSource,
+  isSearchRequestPending,
+  searchRequestLifecycleState,
+  searchSourceSettlementFromPacket,
+  type SearchRequestLifecycleState,
+  type SearchSourceSettlement,
+  type SearchSourceSettlements,
+} from "@/lib/searchRequestLifecycle";
+import { fetchAllOpportunitySearchPackets, searchPacketRows } from "@/lib/searchSourceCoordinator";
 
 const ENDPOINTS = {
   metrics: "/api/swfi/dashboard-metrics/v1",
   institutionTypes: "/api/institution-types/v1?limit=8",
-  allocators30: "/api/allocator-activity/v1?days=30&limit=25&page=1&sort=latest_transaction_date&direction=desc",
-  allocators90: "/api/allocator-activity/v1?days=90&limit=1&page=1&sort=activity_count&direction=desc",
+  allocators30: "/api/allocator-activity/v1?days=30&limit=25&page=1&sort=most_recent_activity_date&direction=desc",
+  allocators90: allocatorCountEndpoint(90),
   rfps: "/api/live-opportunities/v1?limit=25&page=1",
   mandates: "/api/live-mandates/v1?limit=25&page=1",
   transactions30: "/api/recent-transactions/v1?days=30&limit=50&page=1",
   entities: "/api/source-data/search/v1?collection=entities&limit=25&page=1",
   people: "/api/source-data/search/v1?collection=people&limit=25&page=1",
-  top20: "/v1/swfi/top20?limit=25",
+  top20: aumRankingEndpoint(),
   news: "/api/source-intelligence/news/v1?limit=25",
   sectorFlows: "/api/sector-flows/v1?days=365",
 };
@@ -118,6 +134,9 @@ type BrdSearchGroup = {
   items: BrdSearchItem[];
 };
 type SearchCategoryLabel = (typeof SEARCH_CATEGORY_LABELS)[number];
+type SearchResultCategoryLabel = Exclude<SearchCategoryLabel, "All">;
+type DashboardSearchSourceKey = "public" | "entities" | "transactions" | "opportunities" | "news" | "people" | "intent";
+type SearchCategoryLifecycleStates = Record<SearchResultCategoryLabel, SearchRequestLifecycleState>;
 
 function storeRenderedSearchPrefetch(query: string, groups: BrdSearchGroup[]): void {
   if (typeof window === "undefined" || !isTextQueryReady(query)) return;
@@ -160,9 +179,12 @@ export default function DashboardPage() {
   // /api/people/search/v1 live and feed its matches into the People search category as
   // the primary source (same shape as the entity->transactions join above).
   const [searchPeoplePacket, setSearchPeoplePacket] = useState<Packet | undefined>();
+  const [searchOpportunityPackets, setSearchOpportunityPackets] = useState<Packet[]>([]);
+  const [searchNewsPacket, setSearchNewsPacket] = useState<Packet | undefined>();
   const [searchIntentPackets, setSearchIntentPackets] = useState<Packet[]>([]);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const [searchIntentLoading, setSearchIntentLoading] = useState(false);
+  const [searchSourceSettlements, setSearchSourceSettlements] = useState<SearchSourceSettlements<DashboardSearchSourceKey>>({});
+  const [searchCachedSources, setSearchCachedSources] = useState<Partial<Record<DashboardSearchSourceKey, boolean>>>({});
+  const [searchRetryKey, setSearchRetryKey] = useState(0);
   const [activeSearchIndex, setActiveSearchIndex] = useState(0);
   const [newsTab, setNewsTab] = useState<"latest" | "referenced" | "topics">("latest");
   const [recentTab, setRecentTab] = useState<"transactions" | "rfps" | "opportunities" | "people">("transactions");
@@ -266,23 +288,30 @@ export default function DashboardPage() {
   // widgets keep the original rfpRows untouched so nothing that already works regresses.
   const mandateRows = factRows(packets.mandates).slice(0, 25);
   const newsRows = useMemo(() => newestNewsRows(factRows(packets.news).slice(0, 25)), [packets.news]);
-  const allocatorRows = factRows(packets.allocators30).slice(0, 25);
+  const allocator30Contract = useMemo(() => inspectAllocatorPacket(packets.allocators30, {
+    days: 30,
+    limit: 25,
+    page: 1,
+    sort: "most_recent_activity_date",
+    direction: "desc",
+  }), [packets.allocators30]);
+  const allocator90CountContract = useMemo(() => inspectAllocatorCountPacket(packets.allocators90, 90), [packets.allocators90]);
+  const allocatorRows = allocator30Contract.rows;
   const institutionTypeRows = institutionTypeFacetRows(packets.institutionTypes).slice(0, 8);
   const sectorRows = sectorFacetRows(packets.sectorFlows).slice(0, 10);
-  // Two-layer truth (2026-07-06): the backend serves swfi.com-parity order
-  // (source-of-truth mirror, gate-verified row-for-row); the DASHBOARD
-  // re-ranks on the verified-USD value so cross-currency magnitudes never
-  // masquerade as a ranking (doctrine 2026-07-05). Rows without a USD value
-  // keep their relative order at the tail.
-  const topAumRows = useMemo(() => {
-    const served = factRows(packets.top20).slice(0, 25);
-    return [...served].sort((a, b) => (numberValue(b.aum_usd) || 0) - (numberValue(a.aum_usd) || 0));
-  }, [packets.top20]);
+  // The approved ranking contract owns scope, order, lifecycle counts, and
+  // canonical entity identity. Never substitute generic entity rows or
+  // silently re-rank a packet that failed those checks.
+  const topAumContract = useMemo(() => inspectAumRankingPacket(packets.top20), [packets.top20]);
+  const topAumRows = topAumContract.rows;
   const dashboardEntitySearchRows = useMemo(() => dedupeSearchRecords([...topAumRows, ...entityRows]), [entityRows, topAumRows]);
   const dashboardReady = useMemo(() => {
-    return ["metrics", "institutionTypes", "sectorFlows", "allocators30", "rfps", "transactions30", "entities", "top20", "news"]
-      .every((key) => isFact(packets[key as PacketKey]));
-  }, [packets]);
+    return ["metrics", "institutionTypes", "sectorFlows", "rfps", "transactions30", "entities", "news"]
+      .every((key) => isFact(packets[key as PacketKey]))
+      && ["ready", "empty"].includes(topAumContract.state)
+      && ["ready", "empty"].includes(allocator30Contract.state)
+      && ["ready", "empty"].includes(allocator90CountContract.state);
+  }, [allocator30Contract.state, allocator90CountContract.state, packets, topAumContract.state]);
   const dataAsOfLabel = useMemo(() => dataAsOfLabelFor(packets.metrics), [packets.metrics]);
   const sessionDisplayName = useDashboardSessionDisplayName();
   const unifiedRows = useMemo(() => unifiedIntelligenceRows({
@@ -300,10 +329,6 @@ export default function DashboardPage() {
     rfpRows: dedupeSearchRecords([...rfpRows, ...mandateRows]),
     newsRows,
   }), [searchQuery, dashboardEntitySearchRows, peopleRows, transactionRows, rfpRows, mandateRows, newsRows]);
-  const sourceBackedSearchEntityRows = useMemo(() => dedupeSearchRecords([
-    ...dashboardEntitySearchRows,
-    ...searchEntityPackets.flatMap((packet) => [...rows(packet, "results"), ...rows(packet)]),
-  ]), [dashboardEntitySearchRows, searchEntityPackets]);
   const liveSearchGroups = useMemo(() => brdPublicSearchGroups(searchQuery, searchPacket, searchEntityPackets), [searchQuery, searchPacket, searchEntityPackets]);
   const searchIntent = useMemo(
     () => isTextQueryReady(searchQuery) ? smartSearchIntentForQuery(searchQuery) : null,
@@ -313,34 +338,25 @@ export default function DashboardPage() {
     () => smartSearchGroups(searchIntent, searchIntentPackets),
     [searchIntent, searchIntentPackets],
   );
+  const dedicatedCategorySearchGroups = useMemo(() => brdSearchGroups({
+    query: searchQuery,
+    entityRows: [],
+    peopleRows: [],
+    transactionRows: [],
+    rfpRows: dedupeSearchRecords(searchOpportunityPackets.flatMap((packet) => searchPacketRows(packet))),
+    newsRows: searchPacketRows(searchNewsPacket),
+  }), [searchNewsPacket, searchOpportunityPackets, searchQuery]);
   const baseSearchGroups = useMemo(
-    () => mergeSearchGroups(intentSearchGroups, mergeSearchGroups(liveSearchGroups, dashboardSearchGroups)),
-    [intentSearchGroups, liveSearchGroups, dashboardSearchGroups],
+    () => mergeSearchGroups(intentSearchGroups, mergeSearchGroups(
+      dedicatedCategorySearchGroups,
+      mergeSearchGroups(liveSearchGroups, dashboardSearchGroups),
+    )),
+    [dashboardSearchGroups, dedicatedCategorySearchGroups, intentSearchGroups, liveSearchGroups],
   );
-  // Resolve the top-ranked entity candidates for the query; their names drive the
-  // entity->transactions fetch. We keep the top few (not just #1) so the join can fall
-  // through to the real fund when the #1 result is a short/side entity with no deals.
-  const topSearchEntityNames = useMemo(() => {
-    if (!isTextQueryReady(searchQuery)) return [] as string[];
-    const entities = baseSearchGroups.find((group) => group.label === "Entities");
-    return entities ? entities.items.slice(0, 3).map((item) => item.label).filter(Boolean) : [];
-  }, [baseSearchGroups, searchQuery]);
-  // Transaction lookup candidates: put any known alias target (e.g. "JP Morgan" ->
-  // "JPMorgan Chase & Co") FIRST and independent of the entity search settling, so the
-  // Transactions section fills immediately instead of after a second entity-resolve hop
-  // (that double-hop was the latency that briefly showed "No matches" for alias queries).
-  const transactionCandidateKey = useMemo(() => {
-    if (searchIntent) return "";
-    const clean = searchQuery.trim();
-    if (!isTextQueryReady(clean)) return "";
-    const aliasTargets = businessSearchQueryVariants(clean, sourceBackedSearchEntityRows).slice(1);
-    return [...new Set([...aliasTargets, ...topSearchEntityNames])].join("|");
-  }, [searchIntent, searchQuery, sourceBackedSearchEntityRows, topSearchEntityNames]);
   const searchGroups = useMemo(() => {
     const clean = searchQuery.trim();
     if (isShortTextQuery(clean)) return completeSearchGroups([]);
     if (isTextQueryReady(clean)) {
-      if (isShortBusinessQuery(clean) && (searchLoading || searchIntentLoading) && !hasAnySearchItems(liveSearchGroups) && !hasAnySearchItems(dashboardSearchGroups)) return completeSearchGroups([]);
       // Live groups are PRIMARY so a resolved entity's real transactions lead the
       // Transactions category (fills the "No matches" gap) and the live /api/people/search
       // matches lead the People category instead of the 25-row pre-loaded slice.
@@ -351,8 +367,26 @@ export default function DashboardPage() {
       return completeSearchGroups(mergeSearchGroups(primaryLiveGroups, baseSearchGroups));
     }
     return dashboardSearchGroups;
-  }, [baseSearchGroups, dashboardSearchGroups, liveSearchGroups, searchLoading, searchIntentLoading, searchQuery, searchTransactionPacket, searchPeoplePacket]);
+  }, [baseSearchGroups, dashboardSearchGroups, searchQuery, searchTransactionPacket, searchPeoplePacket]);
   const searchItems = useMemo(() => searchGroups.flatMap((group) => group.items), [searchGroups]);
+  const requiredSearchSources = useMemo(() => dashboardRequiredSearchSources(searchQuery), [searchQuery]);
+  const hasCachedSearchResults = useMemo(
+    () => requiredSearchSources.some((source) => searchCachedSources[source]),
+    [requiredSearchSources, searchCachedSources],
+  );
+  const searchRequestLifecycle = useMemo(() => searchRequestLifecycleState<DashboardSearchSourceKey>({
+    queryEligibility: textQueryEligibility(searchQuery),
+    requiredSources: requiredSearchSources,
+    settlements: searchSourceSettlements,
+    resultCount: searchItems.length,
+    hasCachedResults: hasCachedSearchResults,
+  }), [hasCachedSearchResults, requiredSearchSources, searchItems.length, searchQuery, searchSourceSettlements]);
+  const searchCategoryLifecycleStates = useMemo(() => dashboardCategoryLifecycleStates({
+    query: searchQuery,
+    groups: searchGroups,
+    settlements: searchSourceSettlements,
+    cachedSources: searchCachedSources,
+  }), [searchCachedSources, searchGroups, searchQuery, searchSourceSettlements]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setActiveSearchIndex(0), 0);
@@ -362,170 +396,229 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!searchOpen) return;
     const clean = searchQuery.trim();
-    if (!isTextQueryReady(clean)) {
-      const resetTimer = window.setTimeout(() => {
-        setSearchPacket(undefined);
-        setSearchEntityPackets([]);
-        setSearchLoading(false);
-      }, 0);
-      return () => window.clearTimeout(resetTimer);
-    }
+    const requiredSources = dashboardRequiredSearchSources(clean);
+    let active = true;
     const controller = new AbortController();
-    const timer = window.setTimeout(() => {
-      if (smartSearchIntentForQuery(clean)) {
-        setSearchPacket(undefined);
-        setSearchEntityPackets([]);
-        setSearchLoading(false);
-        return;
-      }
-      setSearchLoading(true);
+    const unexpectedFailure = (reason: string): SearchSourceSettlement => ({
+      state: "error",
+      itemCount: 0,
+      reason,
+    });
+    const settleSource = (source: DashboardSearchSourceKey, settlement: SearchSourceSettlement) => {
+      if (!active) return;
+      setSearchSourceSettlements((current) => ({ ...current, [source]: settlement }));
+    };
+    const settlePacket = (source: DashboardSearchSourceKey, packet: Packet | null | undefined) => {
+      settleSource(source, searchSourceSettlementFromPacket(packet, searchPacketRows(packet).length));
+    };
+    const markCachedSource = (source: DashboardSearchSourceKey, cached: boolean) => {
+      if (!active) return;
+      setSearchCachedSources((current) => ({ ...current, [source]: cached }));
+    };
+    const resetTimer = window.setTimeout(() => {
+      if (!active) return;
+      setSearchPacket(undefined);
       setSearchEntityPackets([]);
-      const publicSearch = fetchPacket(`/api/v1/public/search?q=${encodeURIComponent(clean)}&limit=25`, 10_000, {
-        signal: controller.signal,
-        attempts: 1,
-      }).then((packet) => {
-        if (controller.signal.aborted) return;
-        setSearchPacket(packet);
-        if (!isFact(packet)) return;
-        try {
-          window.sessionStorage.setItem(searchPrefetchCacheKey(clean), JSON.stringify({
-            query: clean,
-            stored_at: Date.now(),
-            packet,
-          }));
-        } catch {
-          // Session storage is an optimization only; search still fetches live.
-        }
-      }).catch(() => {
-        if (controller.signal.aborted) return;
-        setSearchPacket(undefined);
-      });
-      const entitySearchRequests = [
-        fetchPacket(`/v1/swfi/top20?limit=50`, 10_000, {
-          signal: controller.signal,
-          attempts: 1,
-        }),
-        ...businessSearchQueryVariants(clean).map((variant) => (
-          fetchPacket(`/api/source-data/search/v1?collection=entities&q=${encodeURIComponent(variant)}&limit=25`, 20_000, {
-            signal: controller.signal,
-            attempts: 1,
-          })
-        )),
-      ];
-      const entitySearch = Promise.allSettled(entitySearchRequests.map(async (request) => {
-        const packet = await request;
-        if (controller.signal.aborted || !isFact(packet)) return;
-        setSearchEntityPackets((current) => [...current, packet]);
-      })).then(() => {
-        if (controller.signal.aborted) return;
-      }).catch(() => {
-        if (controller.signal.aborted) return;
-        setSearchEntityPackets([]);
-      });
-      void Promise.allSettled([publicSearch, entitySearch]).then(() => {
-        if (!controller.signal.aborted) setSearchLoading(false);
-      });
-    }, 120);
-    return () => {
-      window.clearTimeout(timer);
-      controller.abort();
-    };
-  }, [searchOpen, searchQuery]);
-
-  useEffect(() => {
-    if (!searchOpen) return;
-    if (!isTextQueryReady(searchQuery)) {
-      const resetTimer = window.setTimeout(() => {
-        setSearchIntentPackets([]);
-        setSearchIntentLoading(false);
-      }, 0);
-      return () => window.clearTimeout(resetTimer);
-    }
-    const intent = smartSearchIntentForQuery(searchQuery);
-    const controller = new AbortController();
-    const timer = window.setTimeout(() => {
-      if (!intent) {
-        setSearchIntentPackets([]);
-        setSearchIntentLoading(false);
-        return;
-      }
+      setSearchTransactionPacket(undefined);
+      setSearchPeoplePacket(undefined);
+      setSearchOpportunityPackets([]);
+      setSearchNewsPacket(undefined);
       setSearchIntentPackets([]);
-      setSearchIntentLoading(true);
-      void Promise.all(intent.requests.map((request) => (
-        fetchPacket(request.endpoint, 25_000, { signal: controller.signal, attempts: 2 })
-      ))).then((packets) => {
-        if (controller.signal.aborted) return;
-        setSearchIntentPackets(packets.filter(isFact));
-      }).finally(() => {
-        if (!controller.signal.aborted) setSearchIntentLoading(false);
-      });
-    }, 120);
-    return () => {
-      window.clearTimeout(timer);
-      controller.abort();
-    };
-  }, [searchOpen, searchQuery]);
+      setSearchCachedSources({});
+      setSearchSourceSettlements(beginSearchSourceSettlements(requiredSources));
+    }, 0);
 
-  // Entity->transactions join: once the query resolves to a top entity, fetch that
-  // entity's transactions by exact name (buyer/seller entity reference join, returned
-  // pre-built with swfi.com transaction URLs). This is what fixes the
-  // "No matches in Transactions" gap for entities like GIC that have deals but are
-  // referenced in transaction records by a reference id, not by their display name.
-  useEffect(() => {
-    if (!searchOpen) return;
-    const names = transactionCandidateKey.split("|").filter(Boolean).slice(0, 4);
-    const controller = new AbortController();
-    // Every state update runs from the scheduled callback, never synchronously in
-    // the effect body (React cascading-render rule): empty candidates clear the
-    // packet on the next tick; real candidates fetch after the 120ms debounce.
-    const timer = window.setTimeout(() => {
-      if (!names.length) {
-        setSearchTransactionPacket(undefined);
+    if (!isTextQueryReady(clean)) {
+      return () => {
+        active = false;
+        window.clearTimeout(resetTimer);
+        controller.abort();
+      };
+    }
+
+    const requestTimer = window.setTimeout(() => {
+      const lifecycleIntent = entityLifecycleIntent(clean);
+      const interpretedIntent = lifecycleIntent.explicitDefunctRequest ? null : smartSearchIntentForQuery(clean);
+      if (interpretedIntent) {
+        void Promise.all(interpretedIntent.requests.map((request) => (
+          fetchPacket(request.endpoint, 25_000, { signal: controller.signal, attempts: 2 })
+        ))).then((nextPackets) => {
+          if (!active) return;
+          setSearchIntentPackets(nextPackets.filter(isFact));
+          settleSource("intent", combineSearchSourceSettlements(nextPackets.map((packet) => (
+            searchSourceSettlementFromPacket(packet, searchPacketRows(packet).length)
+          ))));
+        }).catch(() => settleSource("intent", unexpectedFailure("intent_search_rejected")));
         return;
       }
-      // Fetch the candidates' transactions in PARALLEL (alias target first, cache-first),
-      // then use the first candidate in order that returns rows. The alias target is
-      // resolvable from the synonym map without waiting for the slow cold entity search,
-      // so the Transactions section fills in ~1s instead of after the ~8s search.
-      void Promise.all(names.map((entityName) => fetchEntityTransactions(entityName, controller.signal)))
-        .then((packets) => {
-          if (controller.signal.aborted) return;
-          const hit = packets.find((packet) => packet && isFact(packet) && (rows(packet, "results").length || rows(packet).length));
-          setSearchTransactionPacket(hit || undefined);
-        });
-    }, names.length ? 120 : 0);
-    return () => {
-      window.clearTimeout(timer);
-      controller.abort();
-    };
-  }, [transactionCandidateKey, searchOpen]);
 
-  // People live search: fetch /api/people/search/v1 for the raw query (the endpoint does
-  // its own PII-safe matching, so no entity-resolve hop is needed). Mirrors the
-  // entity->transactions effect: cache-first, aborts in flight, and every state update is
-  // scheduled from the debounce callback so nothing mutates state synchronously in render.
-  useEffect(() => {
-    if (!searchOpen) return;
-    const clean = searchQuery.trim();
-    if (!isTextQueryReady(clean) || smartSearchIntentForQuery(clean)) {
-      const resetTimer = window.setTimeout(() => setSearchPeoplePacket(undefined), 0);
-      return () => window.clearTimeout(resetTimer);
-    }
-    const controller = new AbortController();
-    const timer = window.setTimeout(() => {
-      void fetchPeopleSearch(clean, controller.signal).then((packet) => {
-        if (controller.signal.aborted) return;
-        setSearchPeoplePacket(packet && isFact(packet) ? packet : undefined);
+      const sourceQuery = lifecycleIntent.sourceQuery || clean;
+      const entityVariants = businessSearchQueryVariants(sourceQuery);
+      const lifecycleQuery = lifecycleIntent.explicitDefunctRequest ? "&entity_status=defunct" : "";
+      const entitySearch = Promise.all(entityVariants.map((variant) => (
+        fetchPacket(`/api/source-data/search/v1?collection=entities&q=${encodeURIComponent(variant)}${lifecycleQuery}&limit=100`, 25_000, {
+          signal: controller.signal,
+          attempts: 2,
+        })
+      ))).then((nextPackets) => {
+        const factPackets = nextPackets.filter(isFact);
+        const settlement = combineSearchSourceSettlements(nextPackets.map((packet) => (
+          searchSourceSettlementFromPacket(packet, searchPacketRows(packet).length)
+        )));
+        if (active) {
+          setSearchEntityPackets(factPackets);
+          settleSource("entities", settlement);
+        }
+        return { packets: factPackets, settlement };
+      }).catch(() => {
+        const settlement = unexpectedFailure("entity_search_rejected");
+        settleSource("entities", settlement);
+        return { packets: [] as Packet[], settlement };
       });
+
+      if (lifecycleIntent.explicitDefunctRequest) {
+        void entitySearch;
+        return;
+      }
+
+      const publicSearch = fetchPacket(`/api/v1/public/search?q=${encodeURIComponent(clean)}&limit=100`, 20_000, {
+        signal: controller.signal,
+        attempts: 2,
+      }).then((packet) => {
+        const settlement = searchSourceSettlementFromPacket(packet, searchPacketRows(packet).length);
+        if (active) {
+          setSearchPacket(isFact(packet) ? packet : undefined);
+          settleSource("public", settlement);
+          if (isFact(packet)) {
+            try {
+              window.sessionStorage.setItem(searchPrefetchCacheKey(clean), JSON.stringify({
+                query: clean,
+                stored_at: Date.now(),
+                packet,
+              }));
+            } catch {
+              // Session storage is an optimization only; search still fetches live.
+            }
+          }
+        }
+        return { packet, settlement };
+      }).catch(() => {
+        const settlement = unexpectedFailure("public_search_rejected");
+        settleSource("public", settlement);
+        return { packet: null, settlement };
+      });
+
+      const peopleSearch = (async () => {
+        const cached = cachedPeoplePacket(clean);
+        if (cached && active) {
+          setSearchPeoplePacket(cached);
+          markCachedSource("people", true);
+        }
+        const packet = await fetchPeopleSearchLive(clean, controller.signal).catch(() => undefined);
+        if (!packet) {
+          settleSource("people", unexpectedFailure("people_search_rejected"));
+          return;
+        }
+        if (!active) return;
+        settlePacket("people", packet);
+        if (isFact(packet)) {
+          setSearchPeoplePacket(packet);
+          storePeoplePacket(clean, packet);
+          markCachedSource("people", false);
+        } else if (!cached) {
+          setSearchPeoplePacket(undefined);
+        }
+      })();
+
+      const opportunitySearch = fetchAllOpportunitySearchPackets(controller.signal).then(({ packets: nextPackets, settlement }) => {
+        if (!active) return;
+        setSearchOpportunityPackets(nextPackets.filter(isFact));
+        settleSource("opportunities", settlement);
+      }).catch(() => settleSource("opportunities", unexpectedFailure("opportunity_search_rejected")));
+
+      const newsSearch = fetchPacket(`/api/source-intelligence/news/v1?q=${encodeURIComponent(clean)}&limit=100&page=1`, 25_000, {
+        signal: controller.signal,
+        attempts: 2,
+      }).then((packet) => {
+        if (!active) return;
+        settlePacket("news", packet);
+        setSearchNewsPacket(isFact(packet) ? packet : undefined);
+      }).catch(() => settleSource("news", unexpectedFailure("news_search_rejected")));
+
+      const transactionSearch = Promise.all([publicSearch, entitySearch]).then(async ([publicResult, entityResult]) => {
+        if (!active) return;
+        const upstreamSettlement = combineSearchSourceSettlements([
+          publicResult.settlement,
+          entityResult.settlement,
+        ]);
+        const publicEntityRows = searchPacketRows(publicResult.packet)
+          .filter((row) => brdPublicSearchGroupLabel(row) === "Entities");
+        const sourceEntityRows = entityResult.packets.flatMap((packet) => searchPacketRows(packet));
+        const resolvedEntities = aggregateEntitySearchRecords(publicEntityRows, sourceEntityRows, clean);
+        const candidateNames = [...new Set([
+          ...businessSearchQueryVariants(clean, resolvedEntities).slice(1),
+          ...resolvedEntities.slice(0, 4).map((row) => brdText(row.name || row.title || row.institution, "")),
+        ].filter(Boolean))].slice(0, 4);
+
+        if (!candidateNames.length) {
+          setSearchTransactionPacket(undefined);
+          settleSource("transactions", upstreamSettlement.state === "success"
+            ? completedSearchSource(0)
+            : { ...upstreamSettlement, itemCount: 0 });
+          return;
+        }
+
+        const cached = candidateNames.map(cachedTxnPacket)
+          .find((packet) => packet && searchPacketRows(packet).length);
+        if (cached && active) {
+          setSearchTransactionPacket(cached);
+          markCachedSource("transactions", true);
+        }
+        const nextPackets = await Promise.all(candidateNames.map((entityName) => (
+          fetchEntityTransactionsLive(entityName, controller.signal).catch(() => undefined)
+        )));
+        if (!active) return;
+        const concretePackets = nextPackets.filter((packet): packet is Packet => Boolean(packet));
+        if (!concretePackets.length) {
+          settleSource("transactions", unexpectedFailure("transaction_search_rejected"));
+          return;
+        }
+        const hitIndex = nextPackets.findIndex((packet) => packet && isFact(packet) && searchPacketRows(packet).length > 0);
+        const hit = hitIndex >= 0 ? nextPackets[hitIndex] : undefined;
+        if (hit && isFact(hit)) {
+          setSearchTransactionPacket(hit);
+          storeTxnPacket(candidateNames[hitIndex], hit);
+          markCachedSource("transactions", false);
+        } else if (concretePackets.some(isFact)) {
+          setSearchTransactionPacket(undefined);
+          markCachedSource("transactions", false);
+        } else if (!cached) {
+          setSearchTransactionPacket(undefined);
+        }
+        settleSource("transactions", combineSearchSourceSettlements(concretePackets.map((packet) => (
+          searchSourceSettlementFromPacket(packet, searchPacketRows(packet).length)
+        ))));
+      }).catch(() => settleSource("transactions", unexpectedFailure("transaction_search_rejected")));
+
+      void Promise.allSettled([publicSearch, entitySearch, peopleSearch, opportunitySearch, newsSearch, transactionSearch]);
     }, 120);
+
     return () => {
-      window.clearTimeout(timer);
+      active = false;
+      window.clearTimeout(resetTimer);
+      window.clearTimeout(requestTimer);
       controller.abort();
     };
-  }, [searchQuery, searchOpen]);
+  }, [searchOpen, searchQuery, searchRetryKey]);
 
   function togglePanel(id: string) {
     setExpandedPanel((current) => current === id ? "" : id);
+  }
+
+  async function retryTopAumRanking() {
+    setPackets((current) => ({ ...current, top20: undefined }));
+    const packet = await fetchPacket(ENDPOINTS.top20, dashboardTimeout("top20"), { attempts: dashboardAttempts("top20") });
+    setPackets((current) => ({ ...current, top20: packet }));
   }
 
   return (
@@ -536,13 +629,16 @@ export default function DashboardPage() {
       className="min-h-screen bg-[#F4F6F8] font-sans text-[#101827]"
     >
       <div className="min-h-screen xl:grid xl:grid-cols-[238px_minmax(0,1fr)]">
-        <BrdCommandCenterSidebar topRows={topAumRows} pending={packets.top20 === undefined} />
+        <BrdCommandCenterSidebar topRows={topAumRows} rankingState={topAumContract.state} onRetry={() => { void retryTopAumRanking(); }} />
         <div className="min-w-0">
           <BrdTopNavigation onSearchOpen={() => setSearchOpen(true)} dataAsOfLabel={dataAsOfLabel} displayName={sessionDisplayName} />
           <VisualExecutiveOverview
             packets={packets}
             topAumRows={topAumRows}
-            entityRows={entityRows}
+            topAumState={topAumContract.state}
+            allocatorCount={allocator90CountContract.count}
+            allocatorCountState={allocator90CountContract.state}
+            onTopAumRetry={() => { void retryTopAumRanking(); }}
             institutionTypeRows={institutionTypeRows}
             allocatorRows={allocatorRows}
             transactionRows={transactionRows}
@@ -575,23 +671,33 @@ export default function DashboardPage() {
           groups={searchGroups}
           activeIndex={activeSearchIndex}
           onQueryChange={(nextQuery) => {
-            const ready = isTextQueryReady(nextQuery);
-            const hasIntent = ready && Boolean(smartSearchIntentForQuery(nextQuery));
-            setSearchLoading(ready && !hasIntent);
-            setSearchIntentLoading(hasIntent);
+            setSearchPacket(undefined);
+            setSearchEntityPackets([]);
+            setSearchTransactionPacket(undefined);
+            setSearchPeoplePacket(undefined);
+            setSearchOpportunityPackets([]);
+            setSearchNewsPacket(undefined);
+            setSearchIntentPackets([]);
+            setSearchCachedSources({});
+            setSearchSourceSettlements(beginSearchSourceSettlements(dashboardRequiredSearchSources(nextQuery)));
             setSearchQuery(nextQuery);
           }}
           onActiveIndexChange={setActiveSearchIndex}
           onClose={() => setSearchOpen(false)}
+          onRetry={() => {
+            setSearchSourceSettlements(beginSearchSourceSettlements(dashboardRequiredSearchSources(searchQuery)));
+            setSearchRetryKey((value) => value + 1);
+          }}
           flatItems={searchItems}
-          loading={searchLoading || searchIntentLoading}
+          requestLifecycle={searchRequestLifecycle}
+          categoryLifecycleStates={searchCategoryLifecycleStates}
         />
       ) : null}
     </div>
   );
 }
 
-function BrdCommandCenterSidebar({ topRows, pending = false }: { topRows: Record<string, unknown>[]; pending?: boolean }) {
+function BrdCommandCenterSidebar({ topRows, rankingState, onRetry }: { topRows: Record<string, unknown>[]; rankingState: AumRankingState; onRetry: () => void }) {
   const sidebarNav = [
     // Minutes F: every nav item needs a distinct, truthful destination — one
     // label per page, SWFIPN vocabulary (minutes M-1), no duplicate targets,
@@ -635,7 +741,7 @@ function BrdCommandCenterSidebar({ topRows, pending = false }: { topRows: Record
           ))}
         </nav>
       </div>
-      <div className="mx-4 border-t border-[#E8ECF1] py-4">
+      <div className="mx-4 border-t border-[#E8ECF1] py-4" data-aum-ranking-state={rankingState}>
         <div className="mb-2 flex items-center justify-between text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#4A5665]">
           {/* Honest label 2026-07-06: these are the top-AUM ranked rows, not a
               user-curated watchlist (this preview has no accounts). */}
@@ -648,8 +754,15 @@ function BrdCommandCenterSidebar({ topRows, pending = false }: { topRows: Record
               <span className="truncate text-[11px] font-semibold text-[#223244]">{brdText(row.name)}</span>
               <span className="text-right text-[11px] font-bold text-[#071F48]">{aumDisplay(row)}</span>
             </DataLink>
-          )) : (
-            <div className="rounded-[6px] bg-[#F6F8FA] px-3 py-2 text-[11px] font-semibold text-[#657282]">{pending ? "Loading…" : "No ranked rows loaded"}</div>
+          )) : rankingState === "pending" ? (
+            <div className="rounded-[6px] bg-[#F6F8FA] px-3 py-2 text-[11px] font-semibold text-[#657282]" role="status" aria-live="polite">Loading verified ranking…</div>
+          ) : rankingState === "empty" ? (
+            <div className="rounded-[6px] bg-[#F6F8FA] px-3 py-2 text-[11px] font-semibold text-[#657282]">No active ranked institutions in the verified source.</div>
+          ) : (
+            <div className="grid gap-2 rounded-[6px] bg-[#FFF7F7] px-3 py-2 text-[11px] font-semibold text-[#8B2B2B]" role="alert">
+              <span>Top AUM ranking temporarily unavailable.</span>
+              <button type="button" onClick={onRetry} className="w-fit border border-[#D7A7A7] bg-white px-2 py-1 text-[10px] font-bold text-[#7C1F1F]">Retry ranking</button>
+            </div>
           )}
         </div>
       </div>
@@ -758,7 +871,10 @@ function greetingForHour(hour: number) {
 function VisualExecutiveOverview({
   packets,
   topAumRows,
-  entityRows,
+  topAumState,
+  allocatorCount,
+  allocatorCountState,
+  onTopAumRetry,
   institutionTypeRows,
   allocatorRows,
   transactionRows,
@@ -773,7 +889,10 @@ function VisualExecutiveOverview({
 }: {
   packets: Packets;
   topAumRows: Record<string, unknown>[];
-  entityRows: Record<string, unknown>[];
+  topAumState: AumRankingState;
+  allocatorCount: number;
+  allocatorCountState: AllocatorState;
+  onTopAumRetry: () => void;
   institutionTypeRows: Record<string, unknown>[];
   allocatorRows: Record<string, unknown>[];
   transactionRows: Record<string, unknown>[];
@@ -786,8 +905,8 @@ function VisualExecutiveOverview({
   controls: DashboardTableControls;
   onTogglePanel: (id: string) => void;
 }) {
-  const kpis = dashboardMetricCards(packets, topAumRows, sectorRows);
-  const topRows = topAumRows.length ? topAumRows : entityRows;
+  const kpis = dashboardMetricCards(packets, topAumRows, sectorRows, topAumState, allocatorCount, allocatorCountState);
+  const topRows = topAumRows;
 
   return (
     <section data-gsap-reveal className="border-b border-[#E0DDD6] bg-[#EEF1F4] px-4 py-4 sm:px-5">
@@ -819,18 +938,19 @@ function VisualExecutiveOverview({
             <ExpandablePanel
               id="institution-overview"
               title="Global Capital Map"
-              href="/profiles/?filter=Sovereign%20Wealth%20Fund&entity_type=Sovereign%20Wealth%20Fund"
+              href="/profiles/?entity_type=Sovereign%20Wealth%20Fund"
               expanded={expandedPanel === "institution-overview"}
               onToggle={onTogglePanel}
               detail={<TotalAumInsightDetail topRows={topRows} institutionTypeRows={institutionTypeRows} transactionRows={transactionRows} rfpRows={rfpRows} sectorRows={sectorRows} />}
-              explain="Real world map, two views: Institutions (where SWFI's top-ranked institutions are based; bubble = count) and Deal flows (arrows from buyer country to deal location, width = connecting deals; hover for values). AUM and USD figures show only when the source disclosed them. Click a country or row → that country's profiles."
+              explain="Real world map, two views: Institutions (where SWFI's validated ranking institutions are based; bubble = count) and Deal flows (arrows from buyer country to deal location, width = connecting deals; hover for values). The ranking is withheld when comparable-currency or provenance checks fail. Country marks remain display-only until the source accepts an exact country filter."
             >
               <CapitalByCountry
                 topPacket={packets.top20}
                 topRows={topRows}
                 sectorRows={sectorRows}
                 flows={worldFlowPairs(transactionRows)}
-                sourcesPending={packets.top20 === undefined || packets.entities === undefined}
+                rankingState={topAumState}
+                onRetry={onTopAumRetry}
               />
             </ExpandablePanel>
             <ExpandablePanel
@@ -866,7 +986,7 @@ function VisualExecutiveOverview({
               detail={<PipelineInsightDetail transactionRows={transactionRows} rfpRows={rfpRows} sectorRows={sectorRows} />}
               explain="Shortcuts into common SWFI research journeys, sized by the records currently loaded. Click a step → the matching SWFI list."
             >
-              <PipelineFunnelPanel packets={packets} topRows={topRows} marketRows={transactionRows} fundraisingRows={rfpRows} />
+              <PipelineFunnelPanel packets={packets} allocatorCount={allocatorCount} allocatorCountState={allocatorCountState} topRows={topRows} marketRows={transactionRows} fundraisingRows={rfpRows} />
             </ExpandablePanel>
             <ExpandablePanel
               id="relationships"
@@ -1102,20 +1222,25 @@ function BrdSearchModal({
   groups,
   activeIndex,
   flatItems,
-  loading,
+  requestLifecycle,
+  categoryLifecycleStates,
   onQueryChange,
   onActiveIndexChange,
   onClose,
+  onRetry,
 }: {
   query: string;
   groups: BrdSearchGroup[];
   activeIndex: number;
   flatItems: BrdSearchItem[];
-  loading: boolean;
+  requestLifecycle: SearchRequestLifecycleState;
+  categoryLifecycleStates: SearchCategoryLifecycleStates;
   onQueryChange: (query: string) => void;
   onActiveIndexChange: (index: number) => void;
   onClose: () => void;
+  onRetry: () => void;
 }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
   const [filter, setFilter] = useState<SearchCategoryLabel>("All");
   const availableFilters = SEARCH_CATEGORY_LABELS;
   const selectedFilter = availableFilters.some((label) => label === filter) ? filter : "All";
@@ -1125,11 +1250,29 @@ function BrdSearchModal({
   const visibleGroups = selectedFilter === "All" ? groups : groups.filter((group) => group.label === selectedFilter);
   const visibleItems = visibleGroups.flatMap((group) => group.items);
   const activeItem = visibleItems[Math.min(activeIndex, Math.max(0, visibleItems.length - 1))];
+  const selectedLifecycle = selectedFilter === "All" ? requestLifecycle : categoryLifecycleStates[selectedFilter];
+  const selectedIssue = dashboardSearchLifecycleIssue(selectedLifecycle);
+  const selectedPending = isSearchRequestPending(selectedLifecycle);
 
   function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
     if (event.key === "Escape") {
       event.preventDefault();
       onClose();
+      return;
+    }
+    if (event.key === "Tab") {
+      const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ) || [])].filter((element) => !element.hasAttribute("hidden"));
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (first && last && event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (first && last && !event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
       return;
     }
     if (event.key === "ArrowDown") {
@@ -1154,8 +1297,17 @@ function BrdSearchModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-start bg-[#050915]/65 px-4 py-10 backdrop-blur-sm sm:py-20" role="dialog" aria-modal="true" aria-label="Global Search" data-search-query={query.trim().toLowerCase()}>
-      <div className="mx-auto w-full max-w-[860px] overflow-hidden bg-white shadow-[0_30px_70px_rgba(0,0,0,0.35)]" onKeyDown={handleKeyDown}>
+    <div
+      className="fixed inset-0 z-50 grid place-items-start bg-[#050915]/65 px-3 py-4 backdrop-blur-sm sm:px-4 sm:py-20"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Global Search"
+      aria-busy={selectedPending}
+      data-search-query={query.trim().toLowerCase()}
+      data-search-request-lifecycle={requestLifecycle}
+      data-search-selected-lifecycle={selectedLifecycle}
+    >
+      <div ref={dialogRef} className="mx-auto w-full max-w-[860px] overflow-hidden bg-white shadow-[0_30px_70px_rgba(0,0,0,0.35)]" onKeyDown={handleKeyDown}>
         <div className="flex items-center gap-3 border-b border-[#E2E6ED] px-5 py-4">
           <svg viewBox="0 0 24 24" className="h-5 w-5 text-[#1E2940]" aria-hidden="true">
             <path d="M10.8 18.2a7.4 7.4 0 1 1 0-14.8 7.4 7.4 0 0 1 0 14.8Zm5.4-1.8 4.2 4.2" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="2.2" />
@@ -1165,18 +1317,18 @@ function BrdSearchModal({
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
             placeholder="Search entities, people, transactions, RFPs, news..."
-            className="min-h-11 min-w-0 flex-1 text-[17px] outline-none placeholder:text-[#8E95A3]"
+            className="min-h-11 min-w-0 flex-1 text-[16px] text-[#152039] placeholder:text-[#6B7585] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#16538C] sm:text-[17px]"
             aria-label="Search query"
             aria-describedby="smart-search-minimum"
           />
           {query ? (
-            <button type="button" onClick={() => onQueryChange("")} className="border border-[#D8DDE5] px-3 py-2 text-[12px] font-bold text-[#394356]">
+            <button type="button" onClick={() => onQueryChange("")} className="border border-[#C5CCD6] px-3 py-2 text-[12px] font-bold text-[#2F3A4C] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#16538C]">
               Clear
             </button>
           ) : null}
-          <button type="button" onClick={onClose} className="grid h-9 w-9 place-items-center text-[22px] text-[#394356]" aria-label="Close search">×</button>
+          <button type="button" onClick={onClose} className="grid h-9 w-9 place-items-center text-[22px] text-[#2F3A4C] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#16538C]" aria-label="Close search">×</button>
         </div>
-        <div id="smart-search-minimum" className="border-b border-[#E2E6ED] px-5 py-2 text-[11px] text-[#687385]" aria-live="polite">
+        <div id="smart-search-minimum" className="border-b border-[#E2E6ED] px-5 py-2 text-[11px] text-[#536173]" aria-live="polite">
           {queryShort ? `Enter at least ${MIN_TEXT_QUERY_CHARACTERS} characters to search.` : `Search starts at ${MIN_TEXT_QUERY_CHARACTERS} characters.`}
         </div>
         <div className="flex gap-2 overflow-x-auto border-b border-[#E2E6ED] px-5 py-3">
@@ -1189,7 +1341,7 @@ function BrdSearchModal({
                 onActiveIndexChange(0);
               }}
               aria-pressed={selectedFilter === label}
-              className={`shrink-0 rounded-full px-3 py-1.5 text-[12px] font-bold ${selectedFilter === label ? "bg-[#0B132B] text-white" : "bg-[#ECEFF4] text-[#46546A]"}`}
+              className={`shrink-0 rounded-full px-3 py-1.5 text-[12px] font-bold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#16538C] ${selectedFilter === label ? "bg-[#0B132B] text-white" : "bg-[#ECEFF4] text-[#35445A]"}`}
             >
               {label}
             </button>
@@ -1201,45 +1353,71 @@ function BrdSearchModal({
           </div>
         ) : null}
         <div className="max-h-[56vh] overflow-y-auto px-5 py-4">
-          {visibleGroups.map((group) => (
-            <section key={group.label} className="mb-5 last:mb-0">
-              <h3 className="mb-2 text-[12px] font-extrabold uppercase tracking-[0.08em] text-[#7E8795]">{group.label}</h3>
-              <div className="grid gap-1">
-                {group.items.length ? group.items.map((item) => {
-                  const itemIndex = visibleItems.indexOf(item);
-                  return (
-                    <DataLink
-                      key={`${group.label}-${item.label}-${item.href}`}
-                      href={item.href}
-                      sourceHref={item.sourceHref}
-                      className={`grid gap-1 px-3 py-2 text-inherit no-underline ${itemIndex === activeIndex ? "bg-[#EEF2F7]" : "hover:bg-[#F6F8FA]"}`}
-                    >
-                      <span className="truncate text-[14px] font-bold text-[#152039]">{item.label}</span>
-                      <span className="truncate text-[12px] text-[#687385]">{item.detail}</span>
-                    </DataLink>
-                  );
-                }) : (
-                  <div className="px-3 py-2 text-[12px] text-[#687385]" aria-live="polite">
-                    {loading && queryReady ? "Searching this category…" : "No matches in this category."}
-                  </div>
-                )}
-              </div>
-            </section>
-          ))}
-          {!flatItems.length ? <div className="py-8 text-center text-[14px] text-[#687385]">{queryShort ? `Enter at least ${MIN_TEXT_QUERY_CHARACTERS} characters.` : loading ? "Searching SWFI records..." : "No matching SWFI records."}</div> : null}
+          {visibleGroups.map((group) => {
+            const category = group.label as SearchResultCategoryLabel;
+            const categoryLifecycle = categoryLifecycleStates[category];
+            const categoryIssue = dashboardSearchLifecycleIssue(categoryLifecycle);
+            const categoryPending = isSearchRequestPending(categoryLifecycle);
+            return (
+              <section key={group.label} className="mb-5 last:mb-0" data-search-category={group.label} data-search-category-lifecycle={categoryLifecycle}>
+                <h3 className="mb-2 text-[12px] font-extrabold uppercase tracking-[0.08em] text-[#566273]">{group.label}</h3>
+                <div className="grid gap-1">
+                  {group.items.length ? group.items.map((item) => {
+                    const itemIndex = visibleItems.indexOf(item);
+                    return (
+                      <DataLink
+                        key={`${group.label}-${item.label}-${item.href}`}
+                        href={item.href}
+                        sourceHref={item.sourceHref}
+                        className={`grid gap-1 px-3 py-2 text-inherit no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#16538C] ${itemIndex === activeIndex ? "bg-[#EEF2F7]" : "hover:bg-[#F6F8FA]"}`}
+                      >
+                        <span className="truncate text-[14px] font-bold text-[#152039]">{item.label}</span>
+                        <span className="truncate text-[12px] text-[#536173]">{item.detail}</span>
+                      </DataLink>
+                    );
+                  }) : (
+                    <div className="px-3 py-2 text-[12px] text-[#536173]" aria-live="polite" data-testid={`homepage-search-category-status-${dashboardSearchCategorySlug(category)}`}>
+                      {dashboardSearchCategoryMessage(categoryLifecycle, queryShort, interpretedIntent, category)}
+                    </div>
+                  )}
+                  {group.items.length && (categoryPending || categoryIssue) ? (
+                    <div className={`mx-3 mt-1 border-l-2 px-2 py-1 text-[11px] ${categoryIssue ? "border-[#B7791F] bg-[#FFF9EC] text-[#6A4B12]" : "border-[#4676A8] bg-[#F2F7FB] text-[#234968]"}`} aria-live="polite">
+                      {categoryIssue || "Partial results are available; checking the remaining source…"}
+                    </div>
+                  ) : null}
+                </div>
+              </section>
+            );
+          })}
+          {selectedFilter === "All" && !flatItems.length ? (
+            <div className="py-8 text-center text-[14px] text-[#536173]" aria-live="polite" data-testid="homepage-search-status">
+              {dashboardSearchOverallMessage(requestLifecycle, queryShort)}
+            </div>
+          ) : null}
+          {selectedIssue && visibleItems.length ? (
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border border-[#D6A548] bg-[#FFF9EC] px-3 py-2 text-[12px] text-[#6A4B12]" role="alert" data-testid="homepage-search-partial-warning">
+              <span>{selectedIssue}</span>
+              <button type="button" onClick={onRetry} className="border border-[#8A6118] bg-white px-3 py-1 font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#8A6118]">Retry search</button>
+            </div>
+          ) : null}
+          {selectedIssue && !visibleItems.length ? (
+            <div className="mt-3 flex justify-center">
+              <button type="button" onClick={onRetry} className="border border-[#16538C] bg-white px-3 py-1 text-[12px] font-semibold text-[#16538C] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#16538C]">Retry search</button>
+            </div>
+          ) : null}
         </div>
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#E2E6ED] px-5 py-3 text-[12px] text-[#687385]">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#E2E6ED] px-5 py-3 text-[12px] text-[#536173]">
           <span>Use ↑↓ to move, Enter to open, Escape to close.</span>
           {queryReady ? (
             <Link
               href={brdSearchResultsHref(query, selectedFilter)}
-              className="font-bold text-[#0B4A83] underline"
+              className="font-bold text-[#0B4A83] underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#16538C]"
               onClick={() => storeRenderedSearchPrefetch(query, visibleGroups)}
             >
               View all results
             </Link>
           ) : (
-            <span className="font-semibold text-[#7B8794]">View all results after {MIN_TEXT_QUERY_CHARACTERS} characters</span>
+            <span className="font-semibold text-[#5F6D7D]">View all results after {MIN_TEXT_QUERY_CHARACTERS} characters</span>
           )}
         </div>
       </div>
@@ -1262,6 +1440,109 @@ function brdSearchResultsHref(query: string, category: SearchCategoryLabel): str
             : "";
   if (categoryParam) params.set("category", categoryParam);
   return `/search/?${params.toString()}`;
+}
+
+function dashboardRequiredSearchSources(query: string): DashboardSearchSourceKey[] {
+  if (!isTextQueryReady(query)) return [];
+  const lifecycleIntent = entityLifecycleIntent(query);
+  if (lifecycleIntent.explicitDefunctRequest) return ["entities"];
+  if (smartSearchIntentForQuery(query)) return ["intent"];
+  return ["public", "entities", "transactions", "opportunities", "news", "people"];
+}
+
+function dashboardCategorySearchSources(
+  query: string,
+  category: SearchResultCategoryLabel,
+): DashboardSearchSourceKey[] {
+  if (!isTextQueryReady(query)) return [];
+  const lifecycleIntent = entityLifecycleIntent(query);
+  if (lifecycleIntent.explicitDefunctRequest) return category === "Entities" ? ["entities"] : [];
+  const interpretedIntent = smartSearchIntentForQuery(query);
+  if (interpretedIntent) return dashboardIntentCategoryLabel(interpretedIntent) === category ? ["intent"] : [];
+  if (category === "Entities") return ["public", "entities"];
+  if (category === "Transactions") return ["public", "entities", "transactions"];
+  if (category === "RFPs & Opportunities") return ["opportunities"];
+  if (category === "News & Articles") return ["news"];
+  return ["people"];
+}
+
+function dashboardCategoryLifecycleStates({
+  query,
+  groups,
+  settlements,
+  cachedSources,
+}: {
+  query: string;
+  groups: BrdSearchGroup[];
+  settlements: SearchSourceSettlements<DashboardSearchSourceKey>;
+  cachedSources: Partial<Record<DashboardSearchSourceKey, boolean>>;
+}): SearchCategoryLifecycleStates {
+  const eligibility = textQueryEligibility(query);
+  return Object.fromEntries(SEARCH_CATEGORY_LABELS.filter((label): label is SearchResultCategoryLabel => label !== "All").map((category) => {
+    const requiredSources = dashboardCategorySearchSources(query, category);
+    if (!requiredSources.length) {
+      return [category, eligibility === "short_query" ? "short_query" : "idle"];
+    }
+    const resultCount = groups.find((group) => group.label === category)?.items.length || 0;
+    return [category, searchRequestLifecycleState<DashboardSearchSourceKey>({
+      queryEligibility: eligibility,
+      requiredSources,
+      settlements,
+      resultCount,
+      hasCachedResults: requiredSources.some((source) => cachedSources[source]),
+    })];
+  })) as SearchCategoryLifecycleStates;
+}
+
+function dashboardIntentCategoryLabel(intent: SmartSearchIntent): SearchResultCategoryLabel {
+  if (intent.category === "entities") return "Entities";
+  if (intent.category === "opportunities") return "RFPs & Opportunities";
+  return "Transactions";
+}
+
+function dashboardSearchLifecycleIssue(state: SearchRequestLifecycleState): string {
+  if (state === "timed_out") return "Search timed out before every required source settled; visible results are unconfirmed.";
+  if (state === "error") return "A required search source failed; visible results may be incomplete.";
+  if (state === "unavailable") return "A required search source is unavailable; visible results may be incomplete.";
+  if (state === "cancelled") return "Search was cancelled before every required source settled.";
+  return "";
+}
+
+function dashboardSearchOverallMessage(state: SearchRequestLifecycleState, queryShort: boolean): string {
+  if (queryShort) return `Enter at least ${MIN_TEXT_QUERY_CHARACTERS} characters.`;
+  if (state === "idle") return "Enter a search term to begin.";
+  if (state === "debouncing") return "Preparing search…";
+  if (state === "cached_stale") return "Showing cached results while required sources refresh…";
+  if (state === "partial_category_loading") return "Partial results are available; loading the remaining sources…";
+  if (state === "loading") return "Searching all required SWFI sources…";
+  const issue = dashboardSearchLifecycleIssue(state);
+  if (issue) return issue;
+  if (canRenderConfirmedEmpty(state)) return "No matching SWFI records.";
+  return "Search status is not yet confirmed.";
+}
+
+function dashboardSearchCategoryMessage(
+  state: SearchRequestLifecycleState,
+  queryShort: boolean,
+  interpretedIntent: SmartSearchIntent | null,
+  category: SearchResultCategoryLabel,
+): string {
+  if (queryShort) return `Enter at least ${MIN_TEXT_QUERY_CHARACTERS} characters to search.`;
+  if (state === "idle" && interpretedIntent) {
+    return `This interpreted request targets ${dashboardIntentCategoryLabel(interpretedIntent)}, not ${category}.`;
+  }
+  if (state === "idle") return "Enter a search term to begin.";
+  if (isSearchRequestPending(state)) return state === "cached_stale"
+    ? "Showing cached matches while this category refreshes…"
+    : "Searching this category…";
+  const issue = dashboardSearchLifecycleIssue(state);
+  if (issue) return issue;
+  if (canRenderConfirmedEmpty(state)) return "No matches in this category.";
+  return "This category has no confirmed visible rows.";
+}
+
+function dashboardSearchCategorySlug(category: SearchResultCategoryLabel): string {
+  return category.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
 function BrdTabs({ tabs, active, onChange, className = "" }: {
@@ -1449,7 +1730,8 @@ function brdPublicSearchItem(row: Record<string, unknown>, group: string): BrdSe
       ? [
           brdText(row.type || row.entity_type, ""),
           brdText(row.country || row.region, ""),
-          `${Number(row.activity_count || row.deal_count).toLocaleString("en-US")} activities in 90 days`,
+          `${Number(row.activity_count || row.deal_count).toLocaleString("en-US")} completed buyer/acquirer deals`,
+          brdText(row.activity_reason, ""),
         ].filter(Boolean).join(" · ")
     : [
         brdText(row.type || row.entity_type || row.title, ""),
@@ -1504,7 +1786,8 @@ function storeTxnPacket(name: string, packet: Packet): void {
 }
 
 // Same client-side KV cache pattern as the entity->transactions lookup above, keyed by the
-// lowercased people-search query, so repeat queries are instant and don't re-hit the API.
+// lowercased people-search query. Cached rows may render immediately, but they never settle
+// the request: a live refresh still runs before the UI may claim success or confirmed empty.
 const PEOPLE_CACHE_PREFIX = "swfipn.peopleSearch.v1:";
 function peopleCacheKey(query: string): string {
   return `${PEOPLE_CACHE_PREFIX}${query.trim().toLowerCase()}`;
@@ -1529,30 +1812,22 @@ function storePeoplePacket(query: string, packet: Packet): void {
     // sessionStorage is an optimization only; the live fetch still runs.
   }
 }
-async function fetchEntityTransactions(name: string, signal: AbortSignal): Promise<Packet | undefined> {
-  const cached = cachedTxnPacket(name);
-  if (cached) return cached;
-  const packet = await fetchPacket(`/api/entity-transactions/v1?name=${encodeURIComponent(name)}&limit=8`, 10_000, {
+async function fetchEntityTransactionsLive(name: string, signal: AbortSignal): Promise<Packet> {
+  return fetchPacket(`/api/entity-transactions/v1?name=${encodeURIComponent(name)}&limit=8`, 20_000, {
     signal,
-    attempts: 1,
-  }).catch(() => undefined);
-  if (packet && isFact(packet)) storeTxnPacket(name, packet);
-  return packet;
+    attempts: 2,
+  });
 }
 
-// Live people lookup for Smart Search. Mirrors fetchEntityTransactions: cache-first, a
-// single attempt, abortable. /api/people/search/v1 is PII-safe (name/title/institution/
+// Live people lookup for Smart Search. Cache display and live settlement are intentionally
+// separate. /api/people/search/v1 is PII-safe (name/title/institution/
 // city/region/country/linkedin_url/photo_url/source_url only) and returns swfi.com record
 // URLs, so results link straight to the SWFI platform per the source-of-truth rule.
-async function fetchPeopleSearch(query: string, signal: AbortSignal): Promise<Packet | undefined> {
-  const cached = cachedPeoplePacket(query);
-  if (cached) return cached;
-  const packet = await fetchPacket(`/api/people/search/v1?q=${encodeURIComponent(query)}&limit=8`, 10_000, {
+async function fetchPeopleSearchLive(query: string, signal: AbortSignal): Promise<Packet> {
+  return fetchPacket(`/api/people/search/v1?q=${encodeURIComponent(query)}&limit=100`, 25_000, {
     signal,
-    attempts: 1,
-  }).catch(() => undefined);
-  if (packet && isFact(packet)) storePeoplePacket(query, packet);
-  return packet;
+    attempts: 2,
+  });
 }
 
 function transactionSearchDetail(row: Record<string, unknown>, buyerFallback = ""): string {
@@ -1685,15 +1960,6 @@ function brdSearchGroups({ query, entityRows, peopleRows, transactionRows, rfpRo
   ].filter((searchGroup) => searchGroup.items.length);
 }
 
-function hasAnySearchItems(groups: BrdSearchGroup[]) {
-  return groups.some((group) => group.items.length > 0);
-}
-
-function isShortBusinessQuery(query: string) {
-  const clean = query.trim();
-  return clean.length > 0 && clean.length <= 3 && /^[a-z0-9]+$/i.test(clean);
-}
-
 function rankRecordsForQuery(rowsToUse: Record<string, unknown>[], query: string, kind: "entity" | "person" | "transaction" | "rfp" | "news") {
   return rankSearchRecords(rowsToUse, query, kind);
 }
@@ -1759,7 +2025,7 @@ function brdCompassTopRows(rfpRows: Record<string, unknown>[]): Cell[][] {
     .sort((a, b) => b[1].count - a[1].count || b[1].amount - a[1].amount)
     .slice(0, 10)
     .map(([label, bucket]) => [
-      { label, href: `/mandates/?filter=${encodeURIComponent(label)}` },
+      { label, href: `/mandates/?investment_type=${encodeURIComponent(label)}&view=data` },
       bucket.amount ? compactMoney(bucket.amount) : "Not disclosed",
       bucket.count.toLocaleString("en-US"),
     ]);
@@ -1970,14 +2236,14 @@ function ConceptKpiCard({ label, value, note, href, series, color, statusLabel =
   explain?: string;
 }) {
   return (
-    <DashboardLink href={href} title={explain || undefined} data-qa-min="150" className="min-w-0 border border-[#C9D3DE] bg-white px-3 py-2.5 text-inherit no-underline shadow-[0_1px_2px_rgba(20,44,70,0.05)] hover:border-[#D51E29]/50">
+    <DashboardLink href={href} title={explain || undefined} data-qa-min="150" data-kpi-label={label} className="min-w-0 border border-[#C9D3DE] bg-white px-3 py-2.5 text-inherit no-underline shadow-[0_1px_2px_rgba(20,44,70,0.05)] hover:border-[#D51E29]/50">
       <div className="text-[9px] font-extrabold uppercase tracking-[0.12em] text-[#7B8996]">{label}</div>
       <div className="mt-1 flex items-end justify-between gap-2">
         <div className="swfi-numeral break-words text-[20px] font-extrabold leading-none text-[#13283D]">{value}</div>
         <MiniSparkline series={series} color={color} large />
       </div>
       <div className="mt-2 flex min-h-[14px] items-center justify-between gap-2 text-[10.5px]">
-        {statusLabel ? <span className="shrink-0 font-bold text-[#1A9A68]">{statusLabel}</span> : null}
+        {statusLabel ? <span className={`shrink-0 font-bold ${/blocked|unavailable/i.test(statusLabel) ? "text-[#9B2C2C]" : "text-[#1A9A68]"}`}>{statusLabel}</span> : null}
         <span className="min-w-0 truncate text-[#7B8996]">{note}</span>
       </div>
       {sourceLabel ? <span hidden data-source-label={sourceLabel} /> : null}
@@ -2015,7 +2281,7 @@ function ExpandablePanel({ id, title, href, expanded, onToggle, children, detail
   );
 }
 
-function CapitalByCountry({ topPacket, topRows, sectorRows, flows = [], sourcesPending = false }: { topPacket?: Packet; topRows: Record<string, unknown>[]; sectorRows: Record<string, unknown>[]; flows?: WorldFlowPair[]; sourcesPending?: boolean }) {
+function CapitalByCountry({ topPacket, topRows, sectorRows, flows = [], rankingState, onRetry }: { topPacket?: Packet; topRows: Record<string, unknown>[]; sectorRows: Record<string, unknown>[]; flows?: WorldFlowPair[]; rankingState: AumRankingState; onRetry: () => void }) {
   const totalAum = totalAumValue(topPacket, topRows);
   const sectorCapital = sumNumbers(sectorRows.map(sectorValue));
   // Ranked by institution count (always known, one unit) — never by a bar
@@ -2027,15 +2293,14 @@ function CapitalByCountry({ topPacket, topRows, sectorRows, flows = [], sourcesP
   const topCountry = display[0];
   const topCountryShare = topCountry?.aum && topCountry.aumCurrency === "USD" && totalAum ? Math.round((topCountry.aum / totalAum) * 100) : 0;
   const countries = knownDistinctCount(topRows.map((row) => row.country));
-  const mapPending = sourcesPending && display.length === 0;
   const stats = [
-    { label: "Countries", value: countries ? compactNumber(countries) : "Not disclosed", href: "/profiles", note: "Profile locations" },
-    { label: "Profiles", value: topRows.length ? compactNumber(topRows.length) : "Not disclosed", href: "/profiles", note: "Loaded ranking rows" },
-    { label: "Top country", value: topCountry ? topCountry.country : "Not disclosed", href: topCountry ? `/profiles/?filter=${encodeURIComponent(topCountry.country)}` : "/profiles", note: topCountryShare ? `${topCountryShare}% of displayed AUM` : "By institutions in loaded rows" },
-    { label: "Ranking total", value: totalAum ? compactNumber(totalAum) : "Not disclosed", href: "/profiles/?filter=Sovereign%20Wealth%20Fund&entity_type=Sovereign%20Wealth%20Fund" },
+    { label: "Countries", value: countries ? compactNumber(countries) : "Not disclosed", href: "/profiles/?entity_type=Sovereign%20Wealth%20Fund", note: "Loaded ranking locations" },
+    { label: "Profiles", value: topRows.length ? compactNumber(topRows.length) : "Not disclosed", href: "/profiles/?entity_type=Sovereign%20Wealth%20Fund", note: "Loaded ranking rows" },
+    { label: "Top country", value: topCountry ? topCountry.country : "Not disclosed", href: "", note: topCountryShare ? `${topCountryShare}% of displayed AUM` : "Display only; country filter unavailable" },
+    { label: "Ranking total", value: totalAum ? compactNumber(totalAum) : "Not disclosed", href: "/profiles/?entity_type=Sovereign%20Wealth%20Fund", note: "Active SWF records; ranking order is not transferred" },
   ];
   return (
-    <div className="grid gap-3">
+    <div className="grid gap-3" data-aum-ranking-state={rankingState}>
       <div className="overflow-hidden rounded-[6px] border border-[#C8D8E8] bg-white shadow-[0_1px_4px_rgba(20,44,70,0.08)]">
         {display.length ? (
           <div className="grid gap-1.5 p-3">
@@ -2045,17 +2310,16 @@ function CapitalByCountry({ topPacket, topRows, sectorRows, flows = [], sourcesP
               <span className="text-[9.5px] font-semibold text-[#7B8996]">from the loaded SWFI ranking rows</span>
             </div>
             {display.map((node, index) => (
-              <DashboardLink
+              <div
                 key={node.country}
-                href={`/profiles/?filter=${encodeURIComponent(node.country)}`}
-                className="group grid grid-cols-[20px_minmax(0,1fr)_auto] items-center gap-2 rounded px-1.5 py-1 text-inherit no-underline hover:bg-[#F4F8FB]"
+                className="grid grid-cols-[20px_minmax(0,1fr)_auto] items-center gap-2 rounded px-1.5 py-1 text-inherit"
               >
                 <span className="text-[11px] font-black text-[#7B8996]">{index + 1}</span>
                 <span className="min-w-0">
                   {/* The country name is the point of the row — it never
                       truncates; the top-institution note yields instead. */}
                   <span className="flex min-w-0 items-baseline gap-2">
-                    <span className="flex-none whitespace-nowrap text-[12.5px] font-bold text-[#13283D] group-hover:text-[#0A3A7A]">{node.country}</span>
+                    <span className="flex-none whitespace-nowrap text-[12.5px] font-bold text-[#13283D]">{node.country}</span>
                     {node.topName ? <span className="hidden min-w-0 flex-1 truncate text-[10px] font-semibold text-[#7B8996] sm:block">top: {node.topName}</span> : null}
                   </span>
                   <span className="mt-1 block h-[6px] w-full overflow-hidden rounded bg-[#EAF1F7]">
@@ -2068,38 +2332,43 @@ function CapitalByCountry({ topPacket, topRows, sectorRows, flows = [], sourcesP
                     {node.aum && node.aumCurrency ? (node.aumCurrency === "USD" ? compactMoney(node.aum) : `${node.aumCurrency} ${compactNumber(node.aum)}`) : "Mixed currencies"}
                   </span>
                 </span>
-              </DashboardLink>
+              </div>
             ))}
           </div>
         ) : (
-          <CapitalSignalFallback sectorRows={sectorRows} pending={mapPending} />
+          <AumRankingFallback state={rankingState} onRetry={onRetry} />
         )}
-        {!mapPending ? (
+        {rankingState === "ready" ? (
           <div className="grid border-t border-[#D7E3EF] bg-white text-[11px] sm:grid-cols-4">
             {stats.map((stat) => (
-              <DashboardLink key={stat.label} href={stat.href} className="min-w-0 border-r border-[#E1E8EF] px-3 py-2 text-inherit no-underline last:border-r-0">
+              stat.href ? <DashboardLink key={stat.label} href={stat.href} className="min-w-0 border-r border-[#E1E8EF] px-3 py-2 text-inherit no-underline last:border-r-0">
                 <span className="block truncate text-[10px] font-bold text-[#7B8996]">{stat.label}</span>
                 {/* Values wrap rather than truncate — "United Arab Emirates"
                     cut to "United ..." hides the answer the tile exists for. */}
                 <span className="mt-1 block text-[15px] font-extrabold leading-tight text-[#0A3A7A]">{stat.value}</span>
                 {"note" in stat && stat.note ? <span className="mt-0.5 block truncate text-[9.5px] font-semibold text-[#7B8996]">{stat.note}</span> : null}
-              </DashboardLink>
+              </DashboardLink> : <div key={stat.label} className="min-w-0 border-r border-[#E1E8EF] px-3 py-2 text-inherit last:border-r-0" data-filter-support="display-only">
+                <span className="block truncate text-[10px] font-bold text-[#7B8996]">{stat.label}</span>
+                <span className="mt-1 block text-[15px] font-extrabold leading-tight text-[#0A3A7A]">{stat.value}</span>
+                {stat.note ? <span className="mt-0.5 block truncate text-[9.5px] font-semibold text-[#7B8996]">{stat.note}</span> : null}
+              </div>
             ))}
           </div>
         ) : null}
       </div>
-      {sectorCapital ? (
+      {rankingState === "ready" && sectorCapital ? (
         <div className="text-[10.5px] font-semibold text-[#7B8996]">Market activity total: {compactMoney(sectorCapital)}</div>
       ) : null}
     </div>
   );
 }
 
-function CapitalSignalFallback({ sectorRows, pending = false }: { sectorRows: Record<string, unknown>[]; pending?: boolean }) {
-  if (pending) {
+function AumRankingFallback({ state, onRetry }: { state: AumRankingState; onRetry: () => void }) {
+  if (state === "pending") {
     return (
       <div
         data-map-loading-state="true"
+        data-aum-ranking-state="pending"
         className="grid min-h-[360px] content-center gap-5 overflow-hidden bg-[#F4F8FC] px-5 py-8"
         role="status"
         aria-label="Loading Global Capital Map"
@@ -2116,34 +2385,23 @@ function CapitalSignalFallback({ sectorRows, pending = false }: { sectorRows: Re
     );
   }
 
-  const rowsToShow = sectorRows.slice(0, 6);
-  const max = Math.max(1, ...rowsToShow.map(sectorValue));
+  if (state === "empty") {
+    return (
+      <div className="grid min-h-[360px] content-center gap-2 bg-[#F8FAFC] px-5 py-8 text-center" data-aum-ranking-state="empty">
+        <div className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#6A7888]">Verified active scope</div>
+        <div className="text-[15px] font-bold text-[#26394D]">No ranked institutions were returned.</div>
+      </div>
+    );
+  }
+
   return (
-    <div className="grid min-h-[360px] content-center bg-[#071F48] px-5 py-8" role="img" aria-label="Top SWF AUM locations by country">
-      <div className="grid gap-3 border border-white/16 bg-[#071F48]/78 p-4 shadow-[0_16px_38px_rgba(0,0,0,0.22)]">
+    <div className="grid min-h-[360px] content-center bg-[#FFF7F7] px-5 py-8" role="alert" data-aum-ranking-state={state}>
+      <div className="mx-auto grid max-w-md gap-3 border border-[#E6BDBD] bg-white p-4 text-center shadow-[0_8px_22px_rgba(92,24,24,0.08)]">
         <div>
-          <div className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#B9D7F0]">Country distribution unavailable</div>
-          <div className="mt-1 text-[16px] font-extrabold text-white">Showing disclosed market activity instead</div>
+          <div className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#9B3A3A]">Top AUM source unavailable</div>
+          <div className="mt-1 text-[15px] font-extrabold text-[#472424]">The map is withheld rather than populated from a different entity source.</div>
         </div>
-        <div className="grid gap-2">
-          {rowsToShow.length ? rowsToShow.map((row, index) => {
-            const label = brdText(row.name || row.value);
-            const value = sectorValue(row);
-            return (
-              <DashboardLink key={`${label}-${index}`} href={`/deals/?filter=${encodeURIComponent(label)}`} className="grid gap-1 text-inherit no-underline">
-                <span className="flex items-center justify-between gap-2 text-[11px]">
-                  <span className="truncate font-extrabold text-white">{label}</span>
-                  <span className="shrink-0 font-extrabold text-[#D7E8F7]">{capitalOrCountDisplay(row)}</span>
-                </span>
-                <span className="block h-2 overflow-hidden bg-white/14" aria-hidden="true">
-                  <span className="block h-full bg-[#D51E29]" style={{ width: `${Math.max(6, Math.min(100, (value / max) * 100))}%` }} />
-                </span>
-              </DashboardLink>
-            );
-          }) : (
-            <div className="text-[12px] font-semibold text-[#D7E8F7]">{DASHBOARD_EMPTY}</div>
-          )}
-        </div>
+        <button type="button" onClick={onRetry} className="mx-auto border border-[#D7A7A7] bg-white px-3 py-1.5 text-[11px] font-bold text-[#7C1F1F]">Retry ranking</button>
       </div>
     </div>
   );
@@ -2386,18 +2644,20 @@ function MarketIntelligencePanel({ rows: sourceRows }: { rows: Record<string, un
   );
 }
 
-function PipelineFunnelPanel({ packets, topRows, marketRows, fundraisingRows }: {
+function PipelineFunnelPanel({ packets, allocatorCount, allocatorCountState, topRows, marketRows, fundraisingRows }: {
   packets: Packets;
+  allocatorCount: number;
+  allocatorCountState: AllocatorState;
   topRows: Record<string, unknown>[];
   marketRows: Record<string, unknown>[];
   fundraisingRows: Record<string, unknown>[];
 }) {
   const stages = [
     { label: "Institutions", value: metricNumber(packets.metrics, "institutions"), preview: topRows.length, href: "/profiles/", color: "#0A66C2" },
-    { label: "Active Allocators", value: numericSortValue(packetCount(packets.allocators90, "count")), preview: 0, href: "/allocators", color: "#16538C" },
+    { label: "Active Allocators", value: allocatorCount, preview: 0, href: "/allocators", color: "#16538C", sourceState: allocatorCountState },
     { label: "Deals", value: metricNumber(packets.metrics, "transactions"), preview: marketRows.length, href: "/deals", color: "#5C9BD6" },
     { label: "Live RFPs", value: metricNumber(packets.metrics, "rfps"), preview: fundraisingRows.length, href: "/mandates", color: "#7A8A9B" },
-    { label: "Top AUM ranking", value: null, preview: topRows.length, href: "/profiles/?filter=Sovereign%20Wealth%20Fund&entity_type=Sovereign%20Wealth%20Fund", color: "#B90D12" },
+    { label: "Top AUM ranking", value: null, preview: topRows.length, href: "/profiles/?entity_type=Sovereign%20Wealth%20Fund", color: "#B90D12", sourceState: packets.top20 === undefined ? "pending" : topRows.length ? "ready" : "blocked" },
   ];
   return (
     <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_132px]">
@@ -2421,7 +2681,13 @@ function PipelineFunnelPanel({ packets, topRows, marketRows, fundraisingRows }: 
           <DashboardLink key={stage.label} href={stage.href} className="flex items-center justify-between gap-2 rounded-[5px] px-2 py-1.5 text-[11px] text-[#405062] no-underline hover:bg-[#F5F8FB]">
             <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full" style={{ backgroundColor: stage.color }} />{stage.label}</span>
             <span className="font-extrabold text-[#13283D]">
-              {typeof stage.value === "number" && stage.value > 0 ? compactNumber(stage.value) : stage.preview > 0 ? `Preview ${stage.preview}` : "Pending source"}
+              {"sourceState" in stage && (stage.sourceState === "blocked" || stage.sourceState === "invalid" || stage.sourceState === "unavailable")
+                ? "Source blocked"
+                : "sourceState" in stage && stage.sourceState === "empty"
+                  ? "0"
+                  : typeof stage.value === "number" && stage.value > 0
+                    ? compactNumber(stage.value)
+                    : stage.preview > 0 ? `Preview ${stage.preview}` : "Pending source"}
             </span>
           </DashboardLink>
         ))}
@@ -2786,9 +3052,15 @@ function NewsTicker({ rows: sourceRows }: { rows: Record<string, unknown>[] }) {
   );
 }
 
-function dashboardMetricCards(packets: Packets, topAumRows: Record<string, unknown>[], sectorRows: Record<string, unknown>[]) {
+function dashboardMetricCards(
+  packets: Packets,
+  topAumRows: Record<string, unknown>[],
+  sectorRows: Record<string, unknown>[],
+  topAumState: AumRankingState,
+  activeAllocators: number,
+  allocatorCountState: AllocatorState,
+) {
   const totalAum = totalAumValue(packets.top20, topAumRows);
-  const activeAllocators = numericSortValue(packetCount(packets.allocators90, "count")) || 0;
   const sectorCapital = sumNumbers(sectorRows.map(sectorValue));
   const rfps = metricNumber(packets.metrics, "rfps") || packetCountNumber(packets.rfps) || 0;
   const swfs = metricNumber(packets.metrics, "swfs") || 0;
@@ -2801,24 +3073,27 @@ function dashboardMetricCards(packets: Packets, topAumRows: Record<string, unkno
   return [
     {
       label: "TOP-RANKED AUM TOTAL",
-      value: settled(packets.top20, totalAumDisplay(packets.top20, topAumRows)),
+      value: topAumState === "pending" ? LOADING_LABEL : topAumState === "ready" ? totalAumDisplay(packets.top20, topAumRows) : topAumState === "empty" ? "0" : "Unavailable",
       note: "Top AUM ranking",
-      href: "/profiles/?filter=Sovereign%20Wealth%20Fund&entity_type=Sovereign%20Wealth%20Fund",
+      href: "/profiles/?entity_type=Sovereign%20Wealth%20Fund",
       // Rank-order AUM values are a distribution, not a time series — drawn
       // as a line they read as a downtrend that never happened (minutes F).
       series: [],
       color: "#0A66C2",
-      statusLabel: packets.top20 === undefined ? "" : totalAum ? "" : "Not disclosed",
-      explain: "Assets under management summed across SWFI's top-AUM ranking. Shown only when one declared currency backs the sum — mixed-currency totals are suppressed rather than mislabeled. Click → the ranked institutions.",
+      statusLabel: topAumState === "invalid" || topAumState === "unavailable" ? "Source blocked" : topAumState === "ready" && !totalAum ? "Not disclosed" : "",
+      sourceLabel: topAumState,
+      explain: "Shown only when the source proves active scope, canonical identities, stable rank order, comparable currency, and FX provenance. Click → active Sovereign Wealth Fund records; the directory does not preserve ranking order.",
     },
     {
       label: "ACTIVE ALLOCATORS",
-      value: settled(packets.allocators90, activeAllocators ? compactNumber(activeAllocators) : packetCount(packets.allocators90, "count")),
+      value: allocatorCountState === "pending" ? LOADING_LABEL : allocatorCountState === "ready" ? compactNumber(activeAllocators) : allocatorCountState === "empty" ? "0" : "Unavailable",
       note: "Last 90 days",
       href: "/allocators",
       series: seriesFromNumbers([activeAllocators]),
       color: "#16538C",
-      explain: "Institutions with recorded allocation activity in the last 90 days. Click → the active allocators list.",
+      statusLabel: allocatorCountState === "invalid" || allocatorCountState === "unavailable" ? "Source blocked" : "",
+      sourceLabel: allocatorCountState,
+      explain: "Distinct resolved active buyer/acquirer entities with completed transactions in the last 90 days. The count is verified independently from the loaded row preview. Click → the active allocators list.",
     },
     {
       label: "DISCLOSED DEAL VALUE",

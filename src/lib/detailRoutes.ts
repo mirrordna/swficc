@@ -62,8 +62,8 @@ export function getDashboardDetailUrl(type: DashboardDetailType, row: Row = {}, 
     const left = text(options.left || row.left || row.left_id, "");
     const right = text(options.right || row.right || row.right_id, "");
     const params = new URLSearchParams();
-    if (left) params.set("left", left);
-    if (right) params.set("right", right);
+    const ids = [left, right].filter((value) => /^[a-f0-9]{24}$/i.test(value));
+    if (ids.length === 2 && ids[0].toLowerCase() !== ids[1].toLowerCase()) params.set("ids", ids.join(","));
     return `/comparisons/${params.toString() ? `?${params.toString()}` : ""}`;
   }
 

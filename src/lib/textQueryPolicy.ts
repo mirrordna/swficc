@@ -1,5 +1,7 @@
 export const MIN_TEXT_QUERY_CHARACTERS = 3;
 
+export type TextQueryEligibility = "idle" | "short_query" | "ready";
+
 export function normalizeTextQuery(value: string): string {
   return value.trim();
 }
@@ -16,4 +18,10 @@ export function isShortTextQuery(value: string): boolean {
 export function eligibleTextQuery(value: string): string {
   const clean = normalizeTextQuery(value);
   return clean.length >= MIN_TEXT_QUERY_CHARACTERS ? clean : "";
+}
+
+export function textQueryEligibility(value: string): TextQueryEligibility {
+  const clean = normalizeTextQuery(value);
+  if (!clean) return "idle";
+  return clean.length < MIN_TEXT_QUERY_CHARACTERS ? "short_query" : "ready";
 }
