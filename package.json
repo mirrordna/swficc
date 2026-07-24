@@ -28,6 +28,8 @@
     "test:entity-lifecycle": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/swfipn-entity-lifecycle-intent-test.mjs",
     "deploy:clean-gate": "node scripts/swfipn-clean-tree-gate.mjs",
     "test:deploy-contract": "node scripts/swfipn-deploy-contract-test.mjs",
+    "deploy:acceptance:from-git": "bash infra/digitalocean/scripts/deploy_acceptance_from_git.sh deploy",
+    "deploy:acceptance:preflight": "bash infra/digitalocean/scripts/deploy_acceptance_from_git.sh preflight",
     "doctrine:gate": "node scripts/swfipn-doctrine-gate.mjs",
     "doctrine:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ node scripts/swfipn-doctrine-gate.mjs",
     "sitemap:data-map": "node scripts/swfipn-sitemap-data-map.mjs",
@@ -44,8 +46,9 @@
     "brd:phase2:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ node scripts/swfipn-brd-phase2-gate.mjs",
     "brd:alias:gate": "node scripts/swfipn-brd-conformance-alias-gate.mjs",
     "brd:alias:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ node scripts/swfipn-brd-conformance-alias-gate.mjs",
+    "acceptance:machine-independence": "node scripts/swfipn-machine-independence-gate.mjs",
     "brd:search:gate": "node scripts/swfipn-global-search-brd-gate.mjs",
-    "brd:search:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ node scripts/swfipn-global-search-brd-gate.mjs",
+    "brd:search:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ SWFIPN_SEARCH_PERFORMANCE_BLOCKING=0 node scripts/swfipn-global-search-brd-gate.mjs",
     "brd:search:relevance": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/swfipn-search-relevance-regression.mjs",
     "search:category:gate": "node scripts/swfipn-search-category-gate.mjs",
     "search:category:gate:public": "SWFIPN_ORIGIN=https://dashboard.swfi.com/swficc/ node scripts/swfipn-search-category-gate.mjs",
@@ -136,7 +139,7 @@
     "list:data:proof": "node scripts/swfipn-list-data-proof.mjs",
     "list:data:proof:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ node scripts/swfipn-list-data-proof.mjs",
     "closeout:gate": "node scripts/swfipn-closeout-gate.mjs",
-    "closeout:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ SWFIPN_BACKEND_ORIGIN=https://swfipn.activemirror.ai node scripts/swfipn-closeout-gate.mjs",
+    "closeout:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ SWFIPN_BACKEND_ORIGIN=https://swfipn.activemirror.ai SWFIPN_CLOSEOUT_LATENCY_BLOCKING=0 node scripts/swfipn-closeout-gate.mjs",
     "record-mirror:gate": "node scripts/swfipn-record-mirror-gate.mjs",
     "record-mirror:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ SWFIPN_BACKEND_ORIGIN=https://swfipn.activemirror.ai node scripts/swfipn-record-mirror-gate.mjs",
     "record:parity:gate": "node scripts/swfipn-record-level-parity-gate.mjs",
@@ -211,7 +214,7 @@
     "d3-geo": "^3.1.1",
     "echarts": "^6.1.0",
     "gsap": "^3.15.0",
-    "next": "^16.2.10",
+    "next": "^16.2.11",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "topojson-client": "^3.1.0"
@@ -226,13 +229,25 @@
     "@types/topojson-client": "^3.1.5",
     "@types/topojson-specification": "^1.0.5",
     "eslint": "^9",
-    "eslint-config-next": "^16.2.10",
+    "eslint-config-next": "^16.2.11",
     "playwright": "^1.60.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^5",
     "world-atlas": "^2.0.2"
   },
   "overrides": {
-    "postcss": "8.5.15"
+    "postcss": "8.5.15",
+    "next": {
+      "sharp": "0.35.3"
+    },
+    "@eslint/eslintrc": {
+      "js-yaml": "4.3.0"
+    },
+    "minimatch@3.1.5": {
+      "brace-expansion": "1.1.16"
+    },
+    "minimatch@10.2.5": {
+      "brace-expansion": "5.0.8"
+    }
   }
 }

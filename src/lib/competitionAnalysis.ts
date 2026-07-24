@@ -51,7 +51,10 @@ const ALLOCATION_DEFINITIONS: AllocationDefinition[] = [
 export function comparisonSourceUrl(row: Row): string {
   for (const key of ["source_url", "swfi_url", "url"]) {
     const value = cleanText(row[key]);
-    if (/^https?:\/\//i.test(value)) return normalizeSwfiUrl(value);
+    if (/^https?:\/\//i.test(value)) {
+      const normalized = normalizeSwfiUrl(value);
+      if (sourceRecordIdFor(normalized, "entities")) return normalized;
+    }
   }
   return "";
 }
@@ -64,9 +67,7 @@ export function comparisonEntityId(row: Row): string {
 }
 
 export function comparisonPeerKey(row: Row): string {
-  return comparisonEntityId(row)
-    || cleanText(row.slug).toLowerCase()
-    || comparisonName(row).toLowerCase();
+  return comparisonEntityId(row);
 }
 
 export function comparisonName(row: Row): string {
@@ -78,7 +79,7 @@ export function comparisonPeerType(row: Row): string {
 }
 
 export function comparisonPeerTypeKey(row: Row): string {
-  return comparisonPeerType(row).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  return cleanText(row.type || row.entity_type).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
 export function dedupeComparisonRows(sourceRows: Row[]): Row[] {
@@ -96,6 +97,7 @@ export function defaultComparisonPeers(sourceRows: Row[], limit = 3): Row[] {
   const anchor = candidates[0];
   if (!anchor) return [];
   const anchorType = comparisonPeerTypeKey(anchor);
+  if (!anchorType) return [];
   return candidates.filter((row) => comparisonPeerTypeKey(row) === anchorType).slice(0, limit);
 }
 
@@ -262,6 +264,7 @@ function formatAllocation(value: unknown): { display: string; percent: number | 
   const displayText = cleanText(value);
   if (!displayText) return null;
   const percent = allocationPercent(value);
+  if (/^-?\d+(?:\.\d+)?\s*%$/.test(displayText) && percent == null) return null;
   if (/^-?\d+(?:\.\d+)?$/.test(displayText) && percent != null) {
     return { display: formatPercent(percent), percent };
   }
@@ -278,7 +281,7 @@ function allocationPercent(value: unknown): number | null {
   const range = clean.match(/(-?\d+(?:\.\d+)?)\s*(?:-|to)\s*(-?\d+(?:\.\d+)?)\s*%/i);
   if (range) return null;
   const single = clean.match(/(-?\d+(?:\.\d+)?)\s*%/);
-  return single ? Number(single[1]) : null;
+  return single ? normalizePercent(Number(single[1])) : null;
 }
 
 function normalizePercent(value: number): number | null {

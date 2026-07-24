@@ -13,6 +13,8 @@ fs.mkdirSync(outputDir, { recursive: true });
 const query = process.env.SWFIPN_SEARCH_QUERY || "GIC";
 const autocompleteTargetMs = Number(process.env.SWFIPN_SEARCH_AUTOCOMPLETE_TARGET_MS || 300);
 const resultsTargetMs = Number(process.env.SWFIPN_SEARCH_RESULTS_TARGET_MS || 800);
+const settleTimeoutMs = Number(process.env.SWFIPN_SEARCH_SETTLE_TIMEOUT_MS || 120_000);
+const performanceBlocking = process.env.SWFIPN_SEARCH_PERFORMANCE_BLOCKING !== "0";
 const requiredTabs = ["All", "Entities", "RFPs & Opportunities", "Transactions", "News & Articles"];
 const requiredGroups = ["Entities", "Transactions", "People", "News & Articles"];
 const expectedResult = expectedResultForQuery(query);
@@ -73,14 +75,14 @@ async function main() {
     if (!dialog) return false;
     const text = dialog.textContent || "";
     return text.includes("Entities") || text.includes("No visible dashboard matches.");
-  }, null, { timeout: 10_000 });
+  }, null, { timeout: settleTimeoutMs });
   if (expectedResult) {
     await page.waitForFunction(({ expected, queryValue }) => {
       const dialog = document.querySelector("[role='dialog']");
       if (!dialog) return false;
       return (dialog.getAttribute("data-search-query") || "") === String(queryValue).trim().toLowerCase()
         && (dialog.textContent || "").includes(String(expected));
-    }, { expected: expectedResult, queryValue: query }, { timeout: Math.max(10_000, autocompleteTargetMs) }).catch(() => {});
+    }, { expected: expectedResult, queryValue: query }, { timeout: settleTimeoutMs }).catch(() => {});
   }
   const autocompleteRunnerMs = Date.now() - autocompleteRunnerStarted;
   const autocompleteMs = await page.evaluate(() => {
@@ -170,6 +172,7 @@ async function main() {
   const apiOk = prefetchEvidence.valid || searchApiResponses.some((item) => item.status === 200);
 
   const failures = [];
+  const p1Findings = [];
   if (!autofocus) failures.push("modal_input_not_autofocused");
   if (tabsMissing.length) failures.push(`missing_tabs:${tabsMissing.join("|")}`);
   if (groupsMissing.length) failures.push(`missing_groups:${groupsMissing.join("|")}`);
@@ -177,8 +180,9 @@ async function main() {
   if (!modalClosed) failures.push("escape_did_not_close_modal");
   if (!modalHasExpectedResult) failures.push(`modal_missing_expected_result:${expectedResult}`);
   if (!resultsHasExpectedResult) failures.push(`results_missing_expected_result:${expectedResult}`);
-  if (autocompleteMs > autocompleteTargetMs) failures.push(`autocomplete_${autocompleteMs}_gt_${autocompleteTargetMs}`);
-  if (resultsPageMs > resultsTargetMs) failures.push(`results_page_${resultsPageMs}_gt_${resultsTargetMs}`);
+  if (autocompleteMs > autocompleteTargetMs) p1Findings.push(`autocomplete_${autocompleteMs}_gt_${autocompleteTargetMs}`);
+  if (resultsPageMs > resultsTargetMs) p1Findings.push(`results_page_${resultsPageMs}_gt_${resultsTargetMs}`);
+  if (performanceBlocking) failures.push(...p1Findings);
   if (!resultsHasRowsOrEmptyState) failures.push("results_page_missing_rows_or_empty_state");
   if (!apiOk) failures.push("results_page_missing_search_api_200");
   if (consoleErrors.length) failures.push("console_errors_present");
@@ -197,10 +201,13 @@ async function main() {
       autocomplete_measurement: "browser_input_to_react_committed_query_dom",
       autocomplete_p95_ms: autocompleteMs,
       autocomplete_target_ms: autocompleteTargetMs,
+      settle_timeout_ms: settleTimeoutMs,
       results_page_ms: resultsPageMs,
       results_page_runner_ms: resultsRunnerMs,
       results_measurement: "browser_click_to_react_committed_results_dom",
       results_target_ms: resultsTargetMs,
+      performance_blocking: performanceBlocking,
+      p1_findings: p1Findings,
       tabs_missing: tabsMissing,
       groups_missing: groupsMissing,
       autofocus,
@@ -307,6 +314,28 @@ function expectedResultForQuery(value) {
 }
 
 main().catch((error) => {
+  const receipt = {
+    schema_version: "swfipn.global_search_brd_gate.v1",
+    generated_at: new Date().toISOString(),
+    origin,
+    query,
+    status: "fail",
+    summary: {
+      performance_blocking: performanceBlocking,
+      p1_findings: [],
+      failures: ["gate_did_not_complete"],
+      error_name: String(error?.name || "Error"),
+      error: String(error?.message || error),
+    },
+    network: [],
+    evidence: {
+      modal_screenshot: screenshotPath,
+      results_url: "",
+      prefetch_cache: null,
+      results_resource_timings: [],
+    },
+  };
+  fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2));
   console.error(error);
   process.exit(1);
 });

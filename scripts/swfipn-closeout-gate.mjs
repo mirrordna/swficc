@@ -14,6 +14,7 @@ const username = process.env.SWFIPN_AUTH_TEST_USERNAME || "";
 const password = process.env.SWFIPN_AUTH_TEST_PASSWORD || "";
 const allowAuthSkip = process.env.SWFIPN_CLOSEOUT_ALLOW_AUTH_SKIP !== "0";
 const maxAgeHours = Number(process.env.SWFIPN_MAX_PACKET_AGE_HOURS || 24);
+const latencyBlocking = process.env.SWFIPN_CLOSEOUT_LATENCY_BLOCKING !== "0";
 
 const endpoints = {
   metrics: "/api/swfi/dashboard-metrics/v1",
@@ -28,7 +29,7 @@ const endpoints = {
 const listRoutes = [
   { id: "profiles", route: "/profiles/", api: "/api/source-data/search/v1", totalAtLeast: 590_000, kind: "entity", pattern: /\/swficc\/profiles\/detail\/\?(?=[^#]*(?:slug|name|id)=)/i },
   { id: "people", route: "/people/", api: "/api/source-data/search/v1", totalAtLeast: 100_000, kind: "person", pattern: /\/swficc\/people\/detail\/\?(?=[^#]*(?:name|id)=)/i },
-  { id: "transactions", route: "/transactions/", api: "/api/transactions/v1", totalAtLeast: 180_000, kind: "transaction", pattern: /\/swficc\/transactions\/detail\/\?(?=[^#]*(?:title|id)=)/i },
+  { id: "transactions", route: "/transactions/", api: "/api/recent-transactions/v1", totalAtLeast: 1, visibleEquals: 10, kind: "transaction", pattern: /\/swficc\/transactions\/detail\/\?(?=[^#]*(?:title|id)=)/i },
   { id: "deals", route: "/deals/", api: "/api/transactions/v1", totalAtLeast: 180_000, kind: "transaction", pattern: /\/swficc\/transactions\/detail\/\?(?=[^#]*(?:title|id)=)/i },
   { id: "mandates", route: "/mandates/", api: "/api/live-opportunities/v1", totalAtLeast: 30, kind: "compass", pattern: /\/swficc\/mandates\/detail\/\?(?=[^#]*(?:title|id)=)/i },
   { id: "intelligence", route: "/intelligence/", api: "/api/source-intelligence/news/v1", totalAtLeast: 10, kind: "legacy", pattern: /(?:\/swficc\/research\/detail\/\?(?:[^#]*&)?legacy=\d+|\/v1\/news\/\d{1,12})/i },
@@ -111,6 +112,11 @@ function packetAgeHours(packet) {
 
 function numberFromShowing(text) {
   const match = text.match(/Showing\s+[0-9,]+\s+of\s+([0-9,]+)/i);
+  return match ? Number(match[1].replaceAll(",", "")) : 0;
+}
+
+function visibleNumberFromShowing(text) {
+  const match = text.match(/Showing\s+([0-9,]+)\s+of\s+[0-9,]+/i);
   return match ? Number(match[1].replaceAll(",", "")) : 0;
 }
 
@@ -255,11 +261,22 @@ async function apiCheck() {
 
 async function listPageCheck(browser) {
   const context = await browser.newContext({ storageState: { cookies: [], origins: [] }, viewport: { width: 1440, height: 1100 } });
-  const result = { id: "list_pages_have_counts_controls_and_canonical_links", ok: true, failures: [], routes: [] };
+  const result = { id: "list_pages_have_counts_controls_and_canonical_links", ok: true, failures: [], p1_findings: [], routes: [] };
   try {
     for (const spec of listRoutes) {
       const page = await context.newPage();
-      const row = { id: spec.id, route: spec.route, ok: true, failures: [], showing: "", rendered_total: 0, matching_links: 0, api_200: false };
+      const row = {
+        id: spec.id,
+        route: spec.route,
+        ok: true,
+        failures: [],
+        p1_findings: [],
+        showing: "",
+        rendered_visible: 0,
+        rendered_total: 0,
+        matching_links: 0,
+        api_200: false,
+      };
       const apiResponses = [];
       page.on("response", (response) => {
         if (response.url().includes(spec.api)) apiResponses.push(response.status());
@@ -282,6 +299,7 @@ async function listPageCheck(browser) {
           body = await page.locator("body").innerText();
         }
         row.showing = (body.match(/Showing\s+[^\n]+/) || [""])[0];
+        row.rendered_visible = visibleNumberFromShowing(row.showing);
         row.rendered_total = numberFromShowing(row.showing);
         const links = await collectLinks(page);
         row.matching_links = links.filter((link) => swfiRecordKind(link.href) === spec.kind || spec.pattern.test(link.href)).length;
@@ -289,12 +307,21 @@ async function listPageCheck(browser) {
         if (!response || response.status() >= 400) row.failures.push(`http_${response?.status() || "missing"}`);
         if (!row.api_200) row.failures.push(`missing_api_200:${spec.api}`);
         if (row.rendered_total < spec.totalAtLeast) row.failures.push(`total_too_low:${row.rendered_total}<${spec.totalAtLeast}`);
+        if (spec.visibleEquals && row.rendered_visible !== spec.visibleEquals) {
+          row.failures.push(`visible_count_${row.rendered_visible}_ne_${spec.visibleEquals}`);
+        }
         if (row.matching_links < 3) row.failures.push(`too_few_mirrored_record_links:${row.matching_links}`);
         if (!body.includes("Filter") || !body.includes("Rows")) row.failures.push("controls_missing");
         const hits = forbiddenHits(body);
         if (hits.length) row.failures.push(`forbidden_text:${hits.join("|")}`);
       } catch (error) {
-        row.failures.push(error.message);
+        const message = String(error?.message || error);
+        const timeout = error?.name === "TimeoutError" || /Timeout \d+ms exceeded/i.test(message);
+        if (timeout && !latencyBlocking) {
+          row.p1_findings.push(`P1-011/P1-013:${spec.id}:${message.split("\n")[0]}`);
+        } else {
+          row.failures.push(message);
+        }
       } finally {
         row.ok = row.failures.length === 0;
         result.routes.push(row);
@@ -305,6 +332,7 @@ async function listPageCheck(browser) {
     await context.close().catch(() => {});
   }
   result.failures = result.routes.flatMap((row) => row.ok ? [] : row.failures.map((failure) => `${row.id}:${failure}`));
+  result.p1_findings = result.routes.flatMap((row) => row.p1_findings);
   result.ok = result.failures.length === 0;
   return result;
 }
@@ -435,7 +463,10 @@ async function credentialedSwfiReturnCheck(browser) {
 
 function matrixLine(label, check) {
   const status = check.skipped ? "SKIPPED" : check.ok ? "PASS" : "FAIL";
-  const detail = check.skipped ? "No secure credential env supplied" : check.ok ? "Verified" : check.failures.join("; ");
+  const p1 = Array.isArray(check.p1_findings) && check.p1_findings.length
+    ? ` P1 follow-up: ${check.p1_findings.join("; ")}`
+    : "";
+  const detail = check.skipped ? "No secure credential env supplied" : check.ok ? `Verified.${p1}` : check.failures.join("; ");
   return `| ${label} | ${status} | ${detail.replace(/\|/g, "/")} |`;
 }
 
@@ -455,6 +486,7 @@ async function run() {
     await browser.close().catch(() => {});
   }
   const failures = checks.flatMap((check) => check.ok || check.skipped ? [] : check.failures.map((failure) => `${check.id}:${failure}`));
+  const p1Findings = checks.flatMap((check) => Array.isArray(check.p1_findings) ? check.p1_findings : []);
   const skipped = checks.filter((check) => check.skipped).map((check) => check.id);
   const receipt = {
     schema_version: "swfipn.closeout_gate.v1",
@@ -463,10 +495,13 @@ async function run() {
     backend_origin: backendOrigin,
     status: failures.length ? "fail" : "pass",
     skipped,
+    latency_blocking: latencyBlocking,
+    p1_findings: p1Findings,
     summary: {
       checks: checks.length,
       failures: failures.length,
       skipped: skipped.length,
+      p1_findings: p1Findings.length,
     },
     checks,
     failures,

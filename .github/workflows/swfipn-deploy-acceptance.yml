@@ -1,0 +1,114 @@
+name: SWFIPN Deploy Acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Full 40-character frontend commit SHA to deploy
+        required: true
+        type: string
+      approval_phrase:
+        description: Type DEPLOY_SWFIPN_ACCEPTANCE to unlock the protected job
+        required: true
+        type: string
+
+concurrency:
+  group: swfipn-acceptance-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: github.event.inputs.approval_phrase == 'DEPLOY_SWFIPN_ACCEPTANCE'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: swfipn-acceptance
+    steps:
+      - name: Validate requested commit
+        env:
+          CANDIDATE_SHA: ${{ github.event.inputs.candidate_sha }}
+          WORKFLOW_SHA: ${{ github.sha }}
+          APPROVAL_PHRASE: ${{ github.event.inputs.approval_phrase }}
+        run: |
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$CANDIDATE_SHA" = "$WORKFLOW_SHA"
+          test "$APPROVAL_PHRASE" = "DEPLOY_SWFIPN_ACCEPTANCE"
+
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.inputs.candidate_sha }}
+
+      - name: Verify checkout identity
+        env:
+          CANDIDATE_SHA: ${{ github.event.inputs.candidate_sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain --untracked-files=normal)"
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install and verify deploy contracts
+        run: |
+          npm ci
+          npm run lint
+          npm run test:deploy-contract
+          npm run test:record-sort
+          SWFIPN_DB_INDEX_DRY_RUN=1 npm run db:indexes
+          npm run build
+
+      - name: Configure ephemeral SSH identity
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SWFIPN_ACCEPTANCE_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SWFIPN_ACCEPTANCE_KNOWN_HOSTS }}
+        run: |
+          install -m 0700 -d "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 0600 "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 0600 "$HOME/.ssh/known_hosts"
+
+      - name: DigitalOcean immutable preflight
+        env:
+          SWFIPN_HOST: ${{ secrets.SWFIPN_ACCEPTANCE_HOST }}
+          SWFIPN_DOMAIN: ${{ secrets.SWFIPN_ACCEPTANCE_DOMAIN }}
+          SWFIPN_FRONTEND_GIT_SHA: ${{ github.event.inputs.candidate_sha }}
+          SWFIPN_MONGO_POLICY_SHA256: ${{ secrets.SWFIPN_ACCEPTANCE_MONGO_POLICY_SHA256 }}
+        run: |
+          bash infra/digitalocean/scripts/deploy_acceptance_from_git.sh preflight
+
+      - name: Deploy exact GitHub commit
+        env:
+          SWFIPN_HOST: ${{ secrets.SWFIPN_ACCEPTANCE_HOST }}
+          SWFIPN_DOMAIN: ${{ secrets.SWFIPN_ACCEPTANCE_DOMAIN }}
+          SWFIPN_FRONTEND_GIT_SHA: ${{ github.event.inputs.candidate_sha }}
+          SWFIPN_MONGO_POLICY_SHA256: ${{ secrets.SWFIPN_ACCEPTANCE_MONGO_POLICY_SHA256 }}
+        run: |
+          bash infra/digitalocean/scripts/deploy_acceptance_from_git.sh deploy
+
+      - name: Remove ephemeral SSH identity
+        if: always()
+        run: |
+          rm -f "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Post-deploy frozen browser contract
+        run: npm run contract:gate:public
+
+      - name: Post-deploy semantic contract
+        run: npm run test:semantic-search-retest:public
+
+      - name: Upload deployment receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: swfipn-deploy-${{ github.event.inputs.candidate_sha }}
+          path: output/

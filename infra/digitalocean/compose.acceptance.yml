@@ -61,6 +61,11 @@ services:
       SWFI2_ALERT_WEBHOOK_ALLOWED_HOSTS: ${SWFI2_ALERT_WEBHOOK_ALLOWED_HOSTS:-swfipn.activemirror.ai,api.swfi.com}
       SWFI2_REDIS_URL: redis://swfipn-redis:6379/0
       SWFI2_REDIS_CACHE_PREFIX: swfipn
+    # The protected deploy preflight verifies this exact host/IP pair against
+    # the independently pinned Mongo policy. directConnection=true in the
+    # backend URI then prevents replica or SRV topology discovery.
+    extra_hosts:
+      - "${SWFIPN_MONGO_PINNED_HOST:?missing SWFIPN_MONGO_PINNED_HOST}=${SWFIPN_MONGO_PINNED_IP:?missing SWFIPN_MONGO_PINNED_IP}"
     expose:
       - "8362"
     volumes:

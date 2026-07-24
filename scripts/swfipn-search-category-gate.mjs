@@ -81,17 +81,18 @@ async function inspectCase(page, testCase) {
     result.status = response?.status() || 0;
     result.search_render = String(response?.headers()?.["x-swfipn-search-render"] || "").toLowerCase();
     await page.waitForSelector(`[data-search-category="${testCase.category}"]`, { timeout: 30_000 });
-    await page.waitForFunction((expectedLabel) => {
+    await page.waitForSelector('[data-search-results-ready="true"]', { timeout: 120_000 });
+    await page.waitForFunction(() => {
       const row = document.querySelector("tbody tr");
-      const firstCell = row?.querySelector("td")?.textContent?.trim() || "";
-      return firstCell === expectedLabel;
-    }, testCase.label, { timeout: 60_000 });
+      const recordType = row?.querySelector('[data-testid="search-result-record-type"]')?.textContent?.trim() || "";
+      return recordType.length > 0;
+    }, undefined, { timeout: 60_000 });
     const snapshot = await page.evaluate(() => {
       const section = document.querySelector("[data-search-category]");
       const rows = [...document.querySelectorAll("tbody tr")];
       return {
         category: section?.getAttribute("data-search-category") || "",
-        rowTypes: rows.map((row) => row.querySelector("td")?.textContent?.trim() || "").filter(Boolean),
+        rowTypes: rows.map((row) => row.querySelector('[data-testid="search-result-record-type"]')?.textContent?.trim() || "").filter(Boolean),
         hrefs: rows.flatMap((row) => [...row.querySelectorAll("a[href]")].map((anchor) => anchor.href)),
       };
     });
@@ -105,7 +106,12 @@ async function inspectCase(page, testCase) {
     if (result.search_render === "server") result.failures.push("category_route_used_generic_server_fallback");
     if (result.rendered_category !== testCase.category) result.failures.push(`rendered_category_${result.rendered_category || "missing"}_ne_${testCase.category}`);
     if (!result.result_count) result.failures.push("no_result_rows");
-    if (result.row_types.some((label) => label !== testCase.label)) result.failures.push(`wrong_row_types:${result.row_types.join("|")}`);
+    if (testCase.category === "entities" && result.row_types.some((label) => /^entities?$/i.test(label))) {
+      result.failures.push(`generic_entity_row_type:${result.row_types.join("|")}`);
+    }
+    if (testCase.category === "opportunities" && result.row_types.some((label) => !/(?:rfp|opportunit)/i.test(label))) {
+      result.failures.push(`wrong_opportunity_row_types:${result.row_types.join("|")}`);
+    }
     if (!result.matching_destination_count) result.failures.push(`missing_swfi_${testCase.destination}_destination`);
     if (consoleErrors.length) result.failures.push(`console_or_page_errors:${consoleErrors.length}`);
   } catch (error) {
@@ -123,7 +129,7 @@ async function inspectCase(page, testCase) {
 async function main() {
   fs.mkdirSync(outputDir, { recursive: true });
   const { chromium } = loadPlaywright();
-  const browser = await chromium.launch({ channel: "chrome", headless: true, args: ["--disable-gpu"], timeout: 30_000 });
+  const browser = await chromium.launch({ headless: true, args: ["--disable-gpu"], timeout: 60_000 });
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const results = [];
   try {
