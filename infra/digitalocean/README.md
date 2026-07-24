@@ -114,6 +114,56 @@ The deploy script uses an explicit Compose project name:
 swfipn_acceptance
 ```
 
+## GitHub-native acceptance deployment
+
+`scripts/deploy_acceptance_from_git.sh` is the preferred path when the control
+machine is not a dashboard source host. It never copies frontend or backend
+source from the invoking machine:
+
+- the frontend is fetched from `mirrordna/swficc` at one full commit SHA;
+- the active release must exactly match `acceptance-baseline.json`;
+- the active frontend and backend image IDs must match the baseline;
+- the backend tree is copied from that verified release and both tree digests
+  must match;
+- the new release is built under `/opt/swfipn-acceptance/releases`;
+- health and the public release marker must attest the candidate before
+  `current` is switched;
+- activation failure restores the prior release;
+- every preflight or deploy attempt writes a v6 receipt.
+
+Read-only preflight:
+
+```bash
+SWFIPN_HOST=root@161.35.56.218 \
+SWFIPN_DOMAIN=swfipn.activemirror.ai \
+SWFIPN_FRONTEND_GIT_SHA=<full-commit-sha> \
+npm run deploy:acceptance:preflight
+```
+
+The protected `.github/workflows/swfipn-deploy-acceptance.yml` workflow runs
+the same preflight and deploy path from an ephemeral GitHub runner. Configure
+the `swfipn-acceptance` GitHub environment with:
+
+- deployment branches restricted to the approved candidate branch;
+- a required reviewer who did not initiate the run;
+- self-review disabled;
+- administrator bypass disabled;
+- the following environment secrets:
+
+```text
+SWFIPN_ACCEPTANCE_HOST
+SWFIPN_ACCEPTANCE_DOMAIN
+SWFIPN_ACCEPTANCE_SSH_KEY
+SWFIPN_ACCEPTANCE_KNOWN_HOSTS
+```
+
+Dispatch requires the full candidate SHA and the exact
+`DEPLOY_SWFIPN_ACCEPTANCE` approval phrase. The requested SHA must also equal
+the workflow's own `GITHUB_SHA`. Creating the environment secrets, configuring
+the protection rules, and approving a workflow run are privileged external
+actions; the repository does not create credentials or deploy merely by
+containing this workflow.
+
 Older releases may still have orphaned containers from timestamp-derived
 Compose project names. Do not infer live state from `docker compose ps` inside
 the `current` symlink unless the compose project is explicit.

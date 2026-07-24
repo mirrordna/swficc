@@ -1,0 +1,20 @@
+{
+  "schema_version": "swfipn.acceptance_baseline.v1",
+  "captured_at": "2026-07-23T12:36:58Z",
+  "droplet": {
+    "id": 578821960,
+    "name": "swfipn-acceptance",
+    "region": "nyc1",
+    "public_ipv4": "161.35.56.218"
+  },
+  "remote_root": "/opt/swfipn-acceptance",
+  "release": "/opt/swfipn-acceptance/releases/20260723T123342Z",
+  "frontend_git_sha": "99e20ead44caf7a0572054279332869995860366",
+  "backend_git_sha": "140052c70055c103360012af9978464b45ff47f3",
+  "frontend_image_id": "sha256:e21ea11f68c9db2c7782eb16a8b730764d72e6637ee3534b5d41521b80264c16",
+  "backend_image_id": "sha256:65223122aa3f42d27f6d8a88a69eb320e3a20b5537edf6dfc81bf3e48a8e6532",
+  "source_deploy_receipt": {
+    "schema_version": "swfipn.strict_acceptance_deploy.v5",
+    "sha256": "6b94f03491a17339e900a6b425c3e67f44c9b9af30d2571d1d1a295080a38f33"
+  }
+}
