@@ -12,9 +12,23 @@ from pathlib import Path
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 
-POLICY_SCHEMA = "swfipn.mongo_source_policy.v2"
+POLICY_SCHEMA = "swfipn.mongo_source_policy.v3"
+RECEIPT_SCHEMA = "swfipn.backend_env_verification.v4"
 DEFAULT_MONGO_PORT = 27017
-DEFAULT_SRV_SERVICE = "mongodb"
+POLICY_KEYS = {
+    "schema_version",
+    "connection_mode",
+    "allowed_direct_endpoint",
+    "allowed_resolved_ips",
+    "runtime_dns_pin",
+    "required_options",
+}
+TOPOLOGY_OPTIONS = {
+    "loadbalanced",
+    "replicaset",
+    "srvmaxhosts",
+    "srvservicename",
+}
 
 
 def read_dotenv(path: Path) -> dict[str, str]:
@@ -67,7 +81,8 @@ def unsafe_textual_host(host: str) -> bool:
     if not host:
         return True
     try:
-        return unsafe_address(ipaddress.ip_address(host))
+        ipaddress.ip_address(host)
+        return True
     except ValueError:
         pass
     if "." not in host:
@@ -76,8 +91,12 @@ def unsafe_textual_host(host: str) -> bool:
         return True
     if host in {"host.docker.internal", "gateway.docker.internal"}:
         return True
-    # Reject ambiguous all-numeric forms before DNS resolution.
-    return bool(re.fullmatch(r"[0-9.]+", host))
+    if bool(re.fullmatch(r"[0-9.]+", host)) or len(host) > 253:
+        return True
+    return any(
+        not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+        for label in host.split(".")
+    )
 
 
 def normalized_ip(value: str) -> str:
@@ -126,38 +145,38 @@ def parse_direct_endpoint(item: str) -> tuple[str, int]:
     return host, parse_port(raw_port)
 
 
+def normalized_options(raw_options: dict[str, list[str]]) -> dict[str, list[str]]:
+    return {
+        key: sorted(values)
+        for key, values in sorted(raw_options.items())
+    }
+
+
 def parse_mongo_uri(
     uri: str,
-) -> tuple[str, list[str], list[tuple[str, int]], dict[str, list[str]], bool]:
+) -> tuple[str, list[tuple[str, int]], str, dict[str, list[str]], bool]:
     if not uri.startswith(("mongodb://", "mongodb+srv://")):
-        return "", [], [], {}, False
+        return "", [], "", {}, False
     parsed = urlsplit(uri)
     scheme = parsed.scheme.lower()
     authority = parsed.netloc.rsplit("@", 1)[-1]
-    if not authority:
-        return "", [], [], {}, False
+    if not authority or parsed.fragment:
+        return "", [], "", {}, False
     options: dict[str, list[str]] = {}
     canonical_separators = ";" not in parsed.query
     for key, value in parse_qsl(parsed.query, keep_blank_values=True, separator="&"):
         options.setdefault(key.lower(), []).append(value.lower())
-
-    if scheme == "mongodb+srv":
-        if "," in authority or authority.startswith("[") or ":" in authority:
-            return "", [], [], options, canonical_separators
-        seed_host = normalize_host(authority)
-        return (
-            scheme,
-            [seed_host] if seed_host else [],
-            [],
-            options,
-            canonical_separators,
-        )
-
+    options = normalized_options(options)
+    database = unquote(parsed.path).strip("/")
+    if "/" in database:
+        database = ""
+    if scheme != "mongodb":
+        return scheme, [], database, options, canonical_separators
     direct_endpoints = sorted({parse_direct_endpoint(item) for item in authority.split(",")})
-    return scheme, [], direct_endpoints, options, canonical_separators
+    return scheme, direct_endpoints, database, options, canonical_separators
 
 
-def tls_is_secure(scheme: str, options: dict[str, list[str]]) -> bool:
+def tls_is_secure(options: dict[str, list[str]]) -> bool:
     insecure_flags = (
         "tlsinsecure",
         "tlsallowinvalidcertificates",
@@ -167,55 +186,62 @@ def tls_is_secure(scheme: str, options: dict[str, list[str]]) -> bool:
     )
     if any(value == "true" for key in insecure_flags for value in options.get(key, [])):
         return False
-    tls_values = options.get("tls", []) + options.get("ssl", [])
-    if any(value != "true" for value in tls_values):
+    if options.get("ssl"):
         return False
-    return scheme == "mongodb+srv" or bool(tls_values)
+    return options.get("tls") == ["true"]
 
 
-def srv_service_is_default(options: dict[str, list[str]]) -> bool:
-    values = options.get("srvservicename", [])
-    return not values or values == [DEFAULT_SRV_SERVICE]
+def parse_policy_endpoint(policy: dict[str, object]) -> tuple[str, int]:
+    item = policy.get("allowed_direct_endpoint")
+    if not isinstance(item, dict) or set(item) != {"host", "port"}:
+        raise ValueError("invalid_policy_endpoint")
+    raw_host = item["host"] if isinstance(item["host"], str) else ""
+    host = normalize_host(raw_host)
+    port = item["port"]
+    if not host or raw_host != host or not valid_port(port):
+        raise ValueError("invalid_policy_endpoint")
+    return host, port
 
 
-def parse_policy_hosts(policy: dict[str, object], key: str) -> list[str]:
-    raw_items = policy.get(key)
+def parse_policy_ips(policy: dict[str, object]) -> list[str]:
+    raw_items = policy.get("allowed_resolved_ips")
     if not isinstance(raw_items, list) or any(not isinstance(item, str) for item in raw_items):
-        raise ValueError("invalid_policy_hosts")
-    hosts = [normalize_host(item) for item in raw_items]
-    if any(not host for host in hosts):
-        raise ValueError("invalid_policy_hosts")
-    return sorted(set(hosts))
+        raise ValueError("invalid_policy_ips")
+    normalized = [normalized_ip(item) for item in raw_items]
+    if normalized != raw_items or len(normalized) != len(set(normalized)):
+        raise ValueError("invalid_policy_ips")
+    return sorted(normalized)
 
 
-def parse_policy_host_endpoints(policy: dict[str, object], key: str) -> list[tuple[str, int]]:
-    raw_items = policy.get(key)
-    if not isinstance(raw_items, list):
-        raise ValueError("invalid_policy_endpoints")
-    endpoints: list[tuple[str, int]] = []
-    for item in raw_items:
-        if not isinstance(item, dict) or set(item) != {"host", "port"}:
-            raise ValueError("invalid_policy_endpoints")
-        host = normalize_host(item["host"]) if isinstance(item["host"], str) else ""
-        port = item["port"]
-        if not host or not valid_port(port):
-            raise ValueError("invalid_policy_endpoints")
-        endpoints.append((host, port))
-    return sorted(set(endpoints))
+def parse_runtime_pin(policy: dict[str, object]) -> tuple[str, str]:
+    item = policy.get("runtime_dns_pin")
+    if not isinstance(item, dict) or set(item) != {"host", "ip"}:
+        raise ValueError("invalid_runtime_pin")
+    raw_host = item["host"] if isinstance(item["host"], str) else ""
+    raw_ip = item["ip"] if isinstance(item["ip"], str) else ""
+    host = normalize_host(raw_host)
+    ip = normalized_ip(raw_ip) if raw_ip else ""
+    if not host or not ip or raw_host != host or raw_ip != ip:
+        raise ValueError("invalid_runtime_pin")
+    return host, ip
 
 
-def parse_policy_resolved_endpoints(policy: dict[str, object]) -> list[tuple[str, int]]:
-    raw_items = policy.get("allowed_resolved_endpoints")
-    if not isinstance(raw_items, list):
-        raise ValueError("invalid_policy_resolved_endpoints")
-    endpoints: list[tuple[str, int]] = []
-    for item in raw_items:
-        if not isinstance(item, dict) or set(item) != {"ip", "port"}:
-            raise ValueError("invalid_policy_resolved_endpoints")
-        if not isinstance(item["ip"], str) or not valid_port(item["port"]):
-            raise ValueError("invalid_policy_resolved_endpoints")
-        endpoints.append((normalized_ip(item["ip"]), item["port"]))
-    return sorted(set(endpoints))
+def parse_policy_options(policy: dict[str, object]) -> dict[str, list[str]]:
+    raw_options = policy.get("required_options")
+    if not isinstance(raw_options, dict):
+        raise ValueError("invalid_policy_options")
+    options: dict[str, list[str]] = {}
+    for key, values in raw_options.items():
+        if (
+            not isinstance(key, str)
+            or key != key.lower()
+            or not isinstance(values, list)
+            or not values
+            or any(not isinstance(value, str) or value != value.lower() for value in values)
+        ):
+            raise ValueError("invalid_policy_options")
+        options[key] = sorted(values)
+    return normalized_options(options)
 
 
 class EffectiveResolver:
@@ -232,34 +258,6 @@ class EffectiveResolver:
     @property
     def mode(self) -> str:
         return "fixture" if self.fixture is not None else "live"
-
-    def srv_endpoints(self, seed_host: str, service_name: str) -> list[tuple[str, int]]:
-        if self.fixture is not None:
-            raw_endpoints = self.fixture.get("srv", {}).get(seed_host, [])
-            endpoints = []
-            for item in raw_endpoints:
-                if not isinstance(item, dict):
-                    raise ValueError("invalid_srv_fixture")
-                host = normalize_host(item.get("host", ""))
-                port = item.get("port")
-                if not host or not valid_port(port):
-                    raise ValueError("invalid_srv_fixture")
-                endpoints.append((host, port))
-        else:
-            import dns.resolver
-
-            answer = dns.resolver.resolve(
-                f"_{service_name}._tcp.{seed_host}",
-                "SRV",
-                lifetime=10.0,
-            )
-            endpoints = [
-                (normalize_host(str(record.target)), int(record.port))
-                for record in answer
-            ]
-        if not endpoints or any(not host or not valid_port(port) for host, port in endpoints):
-            raise ValueError("srv_resolution_failed")
-        return sorted(set(endpoints))
 
     def addresses(self, host: str) -> list[str]:
         if self.fixture is not None:
@@ -280,7 +278,7 @@ def endpoint_json(endpoints: list[tuple[str, int]]) -> list[list[object]]:
 
 def fail_receipt(failure: str) -> int:
     print(json.dumps({
-        "schema_version": "swfipn.backend_env_verification.v3",
+        "schema_version": RECEIPT_SCHEMA,
         "status": "fail",
         "no_secret_values_written": True,
         "checks": {},
@@ -312,11 +310,11 @@ def main() -> int:
         return fail_receipt("configuration_read_failed")
 
     try:
-        scheme, seed_hosts, direct_endpoints, options, canonical_separators = parse_mongo_uri(
+        scheme, direct_endpoints, uri_database, options, canonical_separators = parse_mongo_uri(
             values.get("SWFI_MONGO_URI", "")
         )
     except ValueError:
-        scheme, seed_hosts, direct_endpoints, options, canonical_separators = "", [], [], {}, False
+        scheme, direct_endpoints, uri_database, options, canonical_separators = "", [], "", {}, False
 
     configured_hosts = sorted({
         host
@@ -324,124 +322,115 @@ def main() -> int:
         if (host := normalize_host(item))
     })
     try:
-        policy_seed_hosts = parse_policy_hosts(policy, "allowed_seed_hosts")
-        policy_direct_endpoints = parse_policy_host_endpoints(policy, "allowed_direct_endpoints")
-        policy_srv_endpoints = parse_policy_host_endpoints(policy, "allowed_srv_endpoints")
-        policy_resolved_endpoints = parse_policy_resolved_endpoints(policy)
-        policy_shape_valid = True
+        policy_direct_endpoint = parse_policy_endpoint(policy)
+        policy_resolved_ips = parse_policy_ips(policy)
+        runtime_pin = parse_runtime_pin(policy)
+        policy_options = parse_policy_options(policy)
+        policy_shape_valid = set(policy) == POLICY_KEYS
     except (TypeError, ValueError):
-        policy_seed_hosts = []
-        policy_direct_endpoints = []
-        policy_srv_endpoints = []
-        policy_resolved_endpoints = []
+        policy_direct_endpoint = ("", 0)
+        policy_resolved_ips = []
+        runtime_pin = ("", "")
+        policy_options = {}
         policy_shape_valid = False
 
-    policy_host_endpoints = policy_direct_endpoints + policy_srv_endpoints
+    policy_host, policy_port = policy_direct_endpoint
+    pin_host, pin_ip = runtime_pin
     policy_entries_valid = (
         policy.get("schema_version") == POLICY_SCHEMA
+        and policy.get("connection_mode") == "direct_single_endpoint"
         and policy_shape_valid
-        and bool(policy_resolved_endpoints)
-        and bool(policy_seed_hosts or policy_direct_endpoints)
-        and all(not unsafe_textual_host(host) for host in policy_seed_hosts)
-        and all(not unsafe_textual_host(host) for host, _ in policy_host_endpoints)
-        and all(
-            not unsafe_address(ipaddress.ip_address(ip))
-            for ip, _ in policy_resolved_endpoints
-        )
+        and not unsafe_textual_host(policy_host)
+        and bool(policy_resolved_ips)
+        and all(not unsafe_address(ipaddress.ip_address(ip)) for ip in policy_resolved_ips)
+        and pin_host == policy_host
+        and pin_ip in policy_resolved_ips
+        and policy_options.get("tls") == ["true"]
+        and policy_options.get("directconnection") == ["true"]
+        and not any(key in policy_options for key in TOPOLOGY_OPTIONS)
     )
 
-    srv_service_name = (
-        options.get("srvservicename", [DEFAULT_SRV_SERVICE])[0]
-        if srv_service_is_default(options)
-        else ""
-    )
-    srv_endpoints: list[tuple[str, int]] = []
-    effective_endpoints: list[tuple[str, int]] = []
-    resolution_ok = bool(seed_hosts or direct_endpoints)
-    try:
-        if scheme == "mongodb+srv" and seed_hosts and srv_service_name:
-            srv_endpoints = resolver.srv_endpoints(seed_hosts[0], srv_service_name)
-            connection_endpoints = srv_endpoints
-        else:
-            connection_endpoints = direct_endpoints
-        for host, port in connection_endpoints:
-            effective_endpoints.extend(
-                (address, port)
-                for address in resolver.addresses(host)
-            )
-        effective_endpoints = sorted(set(effective_endpoints))
-    except Exception:
-        # DNS libraries expose several resolver-specific exception families.
-        # The verifier must fail closed without echoing a queried hostname.
-        resolution_ok = False
-        effective_endpoints = []
+    effective_ips: list[str] = []
+    resolution_ok = len(direct_endpoints) == 1
+    if resolution_ok:
+        try:
+            effective_ips = resolver.addresses(direct_endpoints[0][0])
+        except Exception:
+            resolution_ok = False
+            effective_ips = []
+    effective_endpoints = [(ip, direct_endpoints[0][1]) for ip in effective_ips] if direct_endpoints else []
 
-    uri_hosts = seed_hosts or sorted({host for host, _ in direct_endpoints})
     checks = {
         "fact_source_is_mongo": values.get("SWFI2_FACT_SOURCE") == "mongo",
-        "mongo_database_is_swfi": values.get("SWFI_MONGO_DB") == "swfi",
-        "mongo_uri_is_valid": bool(scheme) and bool(uri_hosts),
+        "mongo_database_is_swfi": (
+            values.get("SWFI_MONGO_DB") == "swfi"
+            and uri_database == "swfi"
+        ),
+        "mongo_uri_is_direct_single_endpoint": (
+            scheme == "mongodb"
+            and len(direct_endpoints) == 1
+        ),
         "mongo_option_separators_are_canonical": canonical_separators,
-        "mongo_tls_is_strict": tls_is_secure(scheme, options),
-        "srv_service_name_is_default": srv_service_is_default(options),
+        "mongo_tls_is_strict": tls_is_secure(options),
+        "mongo_topology_discovery_is_disabled": (
+            options.get("directconnection") == ["true"]
+            and not any(key in options for key in TOPOLOGY_OPTIONS)
+        ),
+        "mongo_options_match_pinned_policy": (
+            bool(policy_options)
+            and options == policy_options
+        ),
         "policy_schema_and_entries_valid": policy_entries_valid,
         "policy_digest_matches_pinned_value": policy_sha256 == expected_policy_sha256,
         "mongo_hosts_match_env_allowlist": (
-            bool(configured_hosts)
-            and bool(uri_hosts)
-            and set(uri_hosts).issubset(configured_hosts)
-            and set(configured_hosts).issubset(
-                set(policy_seed_hosts)
-                | {host for host, _ in policy_direct_endpoints}
-            )
+            len(configured_hosts) == 1
+            and bool(direct_endpoints)
+            and configured_hosts == [direct_endpoints[0][0]]
+            and configured_hosts == [policy_host]
         ),
-        "mongo_uri_endpoints_match_pinned_policy": (
-            set(seed_hosts).issubset(policy_seed_hosts)
-            if scheme == "mongodb+srv"
-            else bool(direct_endpoints) and set(direct_endpoints).issubset(policy_direct_endpoints)
+        "mongo_uri_endpoint_matches_pinned_policy": (
+            direct_endpoints == [policy_direct_endpoint]
         ),
-        "srv_endpoints_match_pinned_policy": (
-            scheme != "mongodb+srv"
-            or (bool(srv_endpoints) and set(srv_endpoints).issubset(policy_srv_endpoints))
-        ),
-        "effective_destinations_resolved": resolution_ok and bool(effective_endpoints),
+        "effective_destinations_resolved": resolution_ok and bool(effective_ips),
         "effective_destinations_are_global": (
-            bool(effective_endpoints)
-            and all(
-                not unsafe_address(ipaddress.ip_address(ip))
-                for ip, _ in effective_endpoints
-            )
+            bool(effective_ips)
+            and all(not unsafe_address(ipaddress.ip_address(ip)) for ip in effective_ips)
         ),
         "effective_destinations_match_pinned_policy": (
-            bool(effective_endpoints)
-            and set(effective_endpoints).issubset(policy_resolved_endpoints)
+            bool(effective_ips)
+            and set(effective_ips).issubset(policy_resolved_ips)
+        ),
+        "runtime_dns_pin_matches_verified_destination": (
+            pin_host == policy_host
+            and pin_ip in effective_ips
         ),
     }
     failures = [name for name, ok in checks.items() if not ok]
+    runtime_pin_identity = [pin_host, pin_ip, policy_port]
     source_identity = {
         "scheme": scheme,
-        "seed_hosts": seed_hosts,
+        "connection_mode": policy.get("connection_mode", ""),
         "direct_endpoints": endpoint_json(direct_endpoints),
-        "srv_service_name": srv_service_name,
-        "srv_endpoints": endpoint_json(srv_endpoints),
         "effective_endpoints": endpoint_json(effective_endpoints),
-        "database": values.get("SWFI_MONGO_DB", ""),
+        "runtime_dns_pin_sha256": canonical_digest(runtime_pin_identity),
+        "database": uri_database,
         "options_sha256": canonical_digest(options),
     }
     receipt = {
-        "schema_version": "swfipn.backend_env_verification.v3",
+        "schema_version": RECEIPT_SCHEMA,
         "status": "pass" if not failures else "fail",
         "no_secret_values_written": True,
         "resolver_mode": resolver.mode,
+        "connection_mode": "direct_single_endpoint",
         "policy_sha256": policy_sha256,
         "configured_allowlist_sha256": canonical_digest(configured_hosts),
         "source_identity_sha256": canonical_digest(source_identity),
         "effective_destinations_sha256": canonical_digest(endpoint_json(effective_endpoints)),
+        "runtime_dns_pin_sha256": canonical_digest(runtime_pin_identity),
         "options_sha256": canonical_digest(options),
+        "required_options_sha256": canonical_digest(policy_options),
         "counts": {
-            "seed_hosts": len(seed_hosts),
             "direct_endpoints": len(direct_endpoints),
-            "srv_endpoints": len(srv_endpoints),
             "effective_destinations": len(effective_endpoints),
         },
         "checks": checks,

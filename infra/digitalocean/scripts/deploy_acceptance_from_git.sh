@@ -62,6 +62,10 @@ MONGO_SOURCE_RECEIPT_SHA256=""
 MONGO_POLICY_RECEIPT_SHA256=""
 MONGO_SOURCE_IDENTITY_SHA256=""
 MONGO_EFFECTIVE_DESTINATIONS_SHA256=""
+MONGO_RUNTIME_DNS_PIN_SHA256=""
+MONGO_RUNTIME_PIN_HOST=""
+MONGO_RUNTIME_PIN_IP=""
+MONGO_RUNTIME_PIN_PORT=""
 
 write_receipt() {
   mkdir -p "$(dirname "$RECEIPT_PATH")"
@@ -108,6 +112,7 @@ write_receipt() {
   SWFIPN_RECEIPT_MONGO_POLICY_SHA256="$MONGO_POLICY_RECEIPT_SHA256" \
   SWFIPN_RECEIPT_MONGO_SOURCE_IDENTITY_SHA256="$MONGO_SOURCE_IDENTITY_SHA256" \
   SWFIPN_RECEIPT_MONGO_EFFECTIVE_DESTINATIONS_SHA256="$MONGO_EFFECTIVE_DESTINATIONS_SHA256" \
+  SWFIPN_RECEIPT_MONGO_RUNTIME_DNS_PIN_SHA256="$MONGO_RUNTIME_DNS_PIN_SHA256" \
   python3 - <<'PY'
 import json
 import os
@@ -117,7 +122,7 @@ def optional(name):
     return os.environ.get(name) or None
 
 receipt = {
-    "schema_version": "swfipn.strict_acceptance_deploy.v8",
+    "schema_version": "swfipn.strict_acceptance_deploy.v9",
     "generated_at": os.environ["SWFIPN_RECEIPT_GENERATED_AT"],
     "status": os.environ["SWFIPN_RECEIPT_STATUS"],
     "mode": os.environ["SWFIPN_RECEIPT_MODE"],
@@ -192,6 +197,7 @@ receipt = {
         "policy_sha256": optional("SWFIPN_RECEIPT_MONGO_POLICY_SHA256"),
         "source_identity_sha256": optional("SWFIPN_RECEIPT_MONGO_SOURCE_IDENTITY_SHA256"),
         "effective_destinations_sha256": optional("SWFIPN_RECEIPT_MONGO_EFFECTIVE_DESTINATIONS_SHA256"),
+        "runtime_dns_pin_sha256": optional("SWFIPN_RECEIPT_MONGO_RUNTIME_DNS_PIN_SHA256"),
         "secrets_recorded": False,
     },
     "production_mutation_attempted": (
@@ -309,7 +315,7 @@ ssh "${SSH_OPTS[@]}" "$HOST" "set -eu; \
   docker compose version >/dev/null; \
   docker image inspect '$BASELINE_FRONTEND_IMAGE_ID' '$BASELINE_BACKEND_IMAGE_ID' >/dev/null; \
   docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges \
-    '$BASELINE_BACKEND_IMAGE_ID' python -c 'import dns.resolver' >/dev/null"
+    '$BASELINE_BACKEND_IMAGE_ID' python -c 'import socket; socket.getaddrinfo(\"example.com\", 443)' >/dev/null"
 if ! MONGO_SOURCE_RECEIPT="$(ssh "${SSH_OPTS[@]}" "$HOST" \
   "docker run --rm -i --read-only --cap-drop ALL --security-opt no-new-privileges \
     --pids-limit 64 --memory 128m --network bridge --user 0:0 \
@@ -326,16 +332,26 @@ import json
 import sys
 
 receipt = json.load(sys.stdin)
-assert receipt["schema_version"] == "swfipn.backend_env_verification.v3"
+assert receipt["schema_version"] == "swfipn.backend_env_verification.v4"
 assert receipt["status"] == "pass"
 assert receipt["resolver_mode"] == "live"
+assert receipt["connection_mode"] == "direct_single_endpoint"
 assert receipt["no_secret_values_written"] is True
-for field in ("policy_sha256", "source_identity_sha256", "effective_destinations_sha256"):
+for field in (
+    "policy_sha256",
+    "source_identity_sha256",
+    "effective_destinations_sha256",
+    "runtime_dns_pin_sha256",
+    "options_sha256",
+    "required_options_sha256",
+):
     value = receipt[field]
     assert isinstance(value, str) and len(value) == 64
+assert receipt["options_sha256"] == receipt["required_options_sha256"]
 print(receipt["policy_sha256"])
 print(receipt["source_identity_sha256"])
 print(receipt["effective_destinations_sha256"])
+print(receipt["runtime_dns_pin_sha256"])
 ')"; then
   die "backend Mongo source receipt validation failed"
 fi
@@ -343,7 +359,23 @@ readarray -t MONGO_SOURCE_FIELD_LINES <<<"$MONGO_SOURCE_FIELDS"
 MONGO_POLICY_RECEIPT_SHA256="${MONGO_SOURCE_FIELD_LINES[0]:-}"
 MONGO_SOURCE_IDENTITY_SHA256="${MONGO_SOURCE_FIELD_LINES[1]:-}"
 MONGO_EFFECTIVE_DESTINATIONS_SHA256="${MONGO_SOURCE_FIELD_LINES[2]:-}"
+MONGO_RUNTIME_DNS_PIN_SHA256="${MONGO_SOURCE_FIELD_LINES[3]:-}"
 [[ "$MONGO_POLICY_RECEIPT_SHA256" == "$MONGO_POLICY_SHA256" ]] || die "backend Mongo policy digest mismatch"
+if ! MONGO_RUNTIME_PIN_FIELDS="$(ssh "${SSH_OPTS[@]}" "$HOST" \
+  "python3 -c 'import hashlib,ipaddress,json,sys; b=open(sys.argv[1],\"rb\").read(); assert hashlib.sha256(b).hexdigest() == sys.argv[2]; p=json.loads(b); e=p[\"allowed_direct_endpoint\"]; r=p[\"runtime_dns_pin\"]; assert p[\"schema_version\"] == \"swfipn.mongo_source_policy.v3\"; assert p[\"connection_mode\"] == \"direct_single_endpoint\"; assert e[\"host\"] == r[\"host\"]; ipaddress.ip_address(r[\"ip\"]); print(r[\"host\"]); print(r[\"ip\"]); print(e[\"port\"])' '$REMOTE_ROOT/shared/mongo-source-policy.json' '$MONGO_POLICY_SHA256'")"; then
+  die "backend Mongo runtime DNS pin extraction failed"
+fi
+readarray -t MONGO_RUNTIME_PIN_LINES <<<"$MONGO_RUNTIME_PIN_FIELDS"
+MONGO_RUNTIME_PIN_HOST="${MONGO_RUNTIME_PIN_LINES[0]:-}"
+MONGO_RUNTIME_PIN_IP="${MONGO_RUNTIME_PIN_LINES[1]:-}"
+MONGO_RUNTIME_PIN_PORT="${MONGO_RUNTIME_PIN_LINES[2]:-}"
+[[ "$MONGO_RUNTIME_PIN_HOST" =~ ^[A-Za-z0-9.-]+$ ]] || die "invalid Mongo runtime pin host"
+python3 -c 'import ipaddress,sys; ipaddress.ip_address(sys.argv[1])' "$MONGO_RUNTIME_PIN_IP" \
+  || die "invalid Mongo runtime pin IP"
+if [[ ! "$MONGO_RUNTIME_PIN_PORT" =~ ^[0-9]+$ ]] \
+  || (( MONGO_RUNTIME_PIN_PORT < 1 || MONGO_RUNTIME_PIN_PORT > 65535 )); then
+  die "invalid Mongo runtime pin port"
+fi
 mkdir -p output
 printf '%s' "$MONGO_SOURCE_RECEIPT" > output/swfipn-mongo-source-verification-latest.json
 MONGO_SOURCE_RECEIPT_SHA256="$(printf '%s' "$MONGO_SOURCE_RECEIPT" | shasum -a 256 | awk '{print $1}')"
@@ -385,7 +417,7 @@ ssh "${SSH_OPTS[@]}" "$HOST" "set -eu; \
 FRONTEND_TREE_JSON="$(ssh "${SSH_OPTS[@]}" "$HOST" "python3 '$REMOTE_RELEASE/swfi-dashboard/infra/digitalocean/scripts/tree_digest.py' '$REMOTE_RELEASE/swfi-dashboard'")"
 FRONTEND_TREE_SHA256="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["sha256"])' <<<"$FRONTEND_TREE_JSON")"
 
-ssh "${SSH_OPTS[@]}" "$HOST" "set -eu; \
+ssh "${SSH_OPTS[@]}" "$HOST" "set -eu; umask 077; \
   printf '%s\n' \
     'SWFIPN_IMAGE_TAG=$STAMP' \
     'SWFIPN_ASSET_VERSION=$ASSET_VERSION' \
@@ -393,7 +425,11 @@ ssh "${SSH_OPTS[@]}" "$HOST" "set -eu; \
     'SWFIPN_GIT_DIRTY=0' \
     'SWFIPN_BACKEND_GIT_SHA=$BASELINE_BACKEND_GIT_SHA' \
     'SWFIPN_SOURCE_MODE=github_exact_commit_plus_pinned_backend_image' \
+    'SWFIPN_MONGO_PINNED_HOST=$MONGO_RUNTIME_PIN_HOST' \
+    'SWFIPN_MONGO_PINNED_IP=$MONGO_RUNTIME_PIN_IP' \
+    'SWFIPN_MONGO_PINNED_PORT=$MONGO_RUNTIME_PIN_PORT' \
     > '$REMOTE_RELEASE/.release.env'; \
+  test \"\$(stat -c '%U:%G:%a' '$REMOTE_RELEASE/.release.env')\" = 'root:root:600'; \
   FRONTEND_GIT_URL='$FRONTEND_GIT_URL' \
   FRONTEND_GIT_SHA='$FRONTEND_GIT_SHA' \
   FRONTEND_GIT_TREE='$FRONTEND_GIT_TREE' \

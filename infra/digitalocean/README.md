@@ -124,8 +124,9 @@ source from the invoking machine:
 - the active release must exactly match `acceptance-baseline.json`;
 - the active frontend and backend image IDs must match the baseline;
 - read-only preflight verifies `SWFI2_FACT_SOURCE=mongo`, database `swfi`,
-  strict TLS, the configured host allowlist, live direct/SRV DNS targets, and
-  every effective IP against a separately pinned Mongo source policy;
+  strict TLS, the exact URI option set, direct-only topology, the configured
+  host allowlist, live DNS results, and the runtime DNS pin against a separately
+  pinned Mongo source policy;
 - Mongo receipts bind the exact policy and resolved source identity with
   SHA-256 digests without writing credentials, URI values, hostnames, or IPs;
 - the pinned backend image is retagged for the candidate release and is not
@@ -137,7 +138,7 @@ source from the invoking machine:
   prior release;
 - a remote systemd rollback guard restores the prior release if the invoking
   runner disappears after activation begins;
-- every preflight or deploy attempt writes a v8 receipt.
+- every preflight or deploy attempt writes a v9 receipt.
 
 Read-only preflight:
 
@@ -201,32 +202,45 @@ credentials. It is checked against the independently pinned
 
 ```json
 {
-  "schema_version": "swfipn.mongo_source_policy.v2",
-  "allowed_seed_hosts": ["<approved-srv-seed-host>"],
-  "allowed_direct_endpoints": [
-    {"host": "<approved-direct-host>", "port": 27017}
-  ],
-  "allowed_srv_endpoints": [
-    {"host": "<approved-srv-target-host>", "port": 27017}
-  ],
-  "allowed_resolved_endpoints": [
-    {"ip": "<approved-public-ip>", "port": 27017}
-  ]
+  "schema_version": "swfipn.mongo_source_policy.v3",
+  "connection_mode": "direct_single_endpoint",
+  "allowed_direct_endpoint": {
+    "host": "<approved-direct-host>",
+    "port": 27017
+  },
+  "allowed_resolved_ips": ["<approved-public-ip>"],
+  "runtime_dns_pin": {
+    "host": "<approved-direct-host>",
+    "ip": "<approved-public-ip>"
+  },
+  "required_options": {
+    "directconnection": ["true"],
+    "tls": ["true"]
+  }
 }
 ```
 
-For a standard `mongodb://` URI, use `allowed_direct_endpoints` and leave both
-SRV arrays empty. For `mongodb+srv://`, use `allowed_seed_hosts` and
-`allowed_srv_endpoints`, and leave `allowed_direct_endpoints` empty. Every
-effective IP and port pair must appear in `allowed_resolved_endpoints`.
-Non-default `srvServiceName`, legacy semicolon option separators, invalid
-ports, TLS downgrade, certificate-validation relaxations, loopback, private,
-link-local, multicast, reserved, unspecified, mapped loopback, numeric-alias,
-and DNS-alias destinations fail closed. Pin the exact byte-level SHA-256 of
-this root-owned file in the GitHub environment secret
+The protected deployment supports only a standard `mongodb://` URI with one
+hostname, one port, explicit `directConnection=true`, strict TLS, and exactly
+the normalized options listed in `required_options`. `mongodb+srv://`,
+replica-set discovery, load-balanced discovery, SRV polling, legacy semicolon
+option separators, invalid ports, TLS downgrade, certificate-validation
+relaxations, loopback, private, link-local, multicast, reserved, unspecified,
+mapped loopback, numeric-alias, and DNS-alias destinations fail closed.
+
+`runtime_dns_pin` selects one currently verified public address for the
+approved hostname. The deploy writes that pair to the root-only release
+environment and Compose injects it into the backend container's `/etc/hosts`.
+This prevents a later DNS change from routing the backend beyond the pinned
+source. Additional non-routing URI options such as `authSource` or
+`retryWrites` are permitted only when their normalized lower-case keys and
+values are included exactly in `required_options`.
+
+Pin the exact byte-level SHA-256 of this root-owned file in the GitHub
+environment secret
 `SWFIPN_ACCEPTANCE_MONGO_POLICY_SHA256`; changing either side independently
-must fail preflight. The pinned backend image performs live SRV and A/AAAA
-resolution in a read-only, capability-dropped container.
+must fail preflight. The pinned backend image performs live A/AAAA resolution
+in a read-only, capability-dropped container.
 
 Both environment files and the Mongo source policy must be owned by
 `root:root` with mode `0600`. The policy IP set is intentionally fail-closed:
