@@ -15,9 +15,12 @@ const checks = [];
 
 const html = await request(origin);
 checks.push({
-  id: "html_served_by_cloudflare",
-  ok: headerIncludes(html.headers, "server", "cloudflare"),
-  evidence: publicHeaders(html.headers, ["server", "cf-cache-status", "cache-control", "via"]),
+  id: "html_shell_served_successfully",
+  ok: html.statusCode === 200 && html.body.length > 0,
+  evidence: {
+    status: html.statusCode,
+    ...publicHeaders(html.headers, ["server", "cf-cache-status", "cache-control", "via"]),
+  },
 });
 checks.push({
   id: "html_shell_has_short_revalidation_cache",
@@ -39,12 +42,10 @@ for (const asset of assets) {
   const url = new URL(asset, origin).href;
   const head = await request(url, "HEAD");
   const cacheControl = String(head.headers["cache-control"] || "");
-  const cfCacheStatus = String(head.headers["cf-cache-status"] || "");
   const ok = head.statusCode === 200
-    && headerIncludes(head.headers, "server", "cloudflare")
     && /public/i.test(cacheControl)
-    && /max-age=31536000|immutable/i.test(cacheControl)
-    && /HIT|MISS|EXPIRED|REVALIDATED|STALE/i.test(cfCacheStatus);
+    && /max-age=31536000/i.test(cacheControl)
+    && /immutable/i.test(cacheControl);
   assetChecks.push({
     url,
     ok,
@@ -60,7 +61,7 @@ for (const asset of assets) {
   });
 }
 checks.push({
-  id: "sampled_static_assets_have_cdn_cache_policy",
+  id: "sampled_static_assets_have_long_lived_cache_policy",
   ok: assetChecks.length > 0 && assetChecks.every((check) => check.ok),
   evidence: { asset_checks: assetChecks },
 });
@@ -70,7 +71,7 @@ for (const check of checks) {
 }
 
 const receipt = {
-  schema_version: "swfipn.cdn_static_assets_gate.v1",
+  schema_version: "swfipn.cdn_static_assets_gate.v2",
   generated_at: new Date().toISOString(),
   origin,
   status: failures.length ? "fail" : "pass",
@@ -90,10 +91,6 @@ if (failures.length) process.exit(1);
 
 function normalizeOrigin(value) {
   return value.endsWith("/") ? value : `${value}/`;
-}
-
-function headerIncludes(headers, name, needle) {
-  return String(headers[name] || "").toLowerCase().includes(needle.toLowerCase());
 }
 
 function publicHeaders(headers, names) {

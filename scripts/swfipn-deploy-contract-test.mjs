@@ -167,6 +167,7 @@ for (const marker of [
   "SWFIPN_CONTRACT_OUT=output/swfipn-dashboard20-e2e-contract-candidate.json",
   "SWFIPN_SEMANTIC_RECEIPT=output/swfipn-semantic-search-retest-candidate.json",
   "SWFIPN_SEARCH_PERFORMANCE_BLOCKING=0",
+  "SWFIPN_SEARCH_SETTLE_TIMEOUT_MS=120000",
   "SWFIPN_CLOSEOUT_LATENCY_BLOCKING=0",
 ]) {
   assert.ok(acceptanceWorkflow.includes(marker), `acceptance workflow missing: ${marker}`);

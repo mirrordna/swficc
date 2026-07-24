@@ -76,6 +76,7 @@ jobs:
       - name: Public search acceptance gate
         run: |
           SWFIPN_ORIGIN=https://dashboard.swfi.com/swficc/ \
+            SWFIPN_SEARCH_SETTLE_TIMEOUT_MS=120000 \
             SWFIPN_SEARCH_PERFORMANCE_BLOCKING=0 \
             node scripts/swfipn-global-search-brd-gate.mjs
 

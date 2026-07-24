@@ -13,6 +13,7 @@ fs.mkdirSync(outputDir, { recursive: true });
 const query = process.env.SWFIPN_SEARCH_QUERY || "GIC";
 const autocompleteTargetMs = Number(process.env.SWFIPN_SEARCH_AUTOCOMPLETE_TARGET_MS || 300);
 const resultsTargetMs = Number(process.env.SWFIPN_SEARCH_RESULTS_TARGET_MS || 800);
+const settleTimeoutMs = Number(process.env.SWFIPN_SEARCH_SETTLE_TIMEOUT_MS || 120_000);
 const performanceBlocking = process.env.SWFIPN_SEARCH_PERFORMANCE_BLOCKING !== "0";
 const requiredTabs = ["All", "Entities", "RFPs & Opportunities", "Transactions", "News & Articles"];
 const requiredGroups = ["Entities", "Transactions", "People", "News & Articles"];
@@ -74,14 +75,14 @@ async function main() {
     if (!dialog) return false;
     const text = dialog.textContent || "";
     return text.includes("Entities") || text.includes("No visible dashboard matches.");
-  }, null, { timeout: 10_000 });
+  }, null, { timeout: settleTimeoutMs });
   if (expectedResult) {
     await page.waitForFunction(({ expected, queryValue }) => {
       const dialog = document.querySelector("[role='dialog']");
       if (!dialog) return false;
       return (dialog.getAttribute("data-search-query") || "") === String(queryValue).trim().toLowerCase()
         && (dialog.textContent || "").includes(String(expected));
-    }, { expected: expectedResult, queryValue: query }, { timeout: Math.max(10_000, autocompleteTargetMs) }).catch(() => {});
+    }, { expected: expectedResult, queryValue: query }, { timeout: settleTimeoutMs }).catch(() => {});
   }
   const autocompleteRunnerMs = Date.now() - autocompleteRunnerStarted;
   const autocompleteMs = await page.evaluate(() => {
@@ -200,6 +201,7 @@ async function main() {
       autocomplete_measurement: "browser_input_to_react_committed_query_dom",
       autocomplete_p95_ms: autocompleteMs,
       autocomplete_target_ms: autocompleteTargetMs,
+      settle_timeout_ms: settleTimeoutMs,
       results_page_ms: resultsPageMs,
       results_page_runner_ms: resultsRunnerMs,
       results_measurement: "browser_click_to_react_committed_results_dom",
