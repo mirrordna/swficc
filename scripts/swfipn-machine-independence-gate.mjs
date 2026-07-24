@@ -19,6 +19,7 @@ const checks = [
   check("swfi_dashboard_is_public_target", /SWFIPN_ORIGIN=https:\/\/dashboard\.swfi\.com\/swficc\//.test(workflow)),
   check("swfi_dashboard_is_backend_target", /--backend https:\/\/dashboard\.swfi\.com/.test(workflow)),
   check("candidate_built_on_runner", /npm run build/.test(workflow)),
+  check("duplicate_candidate_push_runs_forbidden", !/-\s*["']?codex\/\*\*/.test(workflow)),
   check("production_ssh_forbidden", !/^\s*(?:ssh|scp|rsync)\b/m.test(workflow)),
   check("production_deploy_forbidden", !/deploy_acceptance_from_git|docker compose|ln -sfn/.test(workflow)),
   check("receipts_uploaded_by_runner", /uses:\s*actions\/upload-artifact@/.test(workflow) && /path:\s*output\//.test(workflow)),
