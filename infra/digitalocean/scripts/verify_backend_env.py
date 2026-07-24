@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 import json
+import ipaddress
 import re
 import sys
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 
 def read_dotenv(path: Path) -> dict[str, str]:
@@ -24,16 +25,48 @@ def read_dotenv(path: Path) -> dict[str, str]:
     return values
 
 
-def remote_mongo_uri(uri: str) -> bool:
+def normalize_host(value: str) -> str:
+    return unquote(value).strip().strip("[]").rstrip(".").lower()
+
+
+def local_or_unsafe_host(host: str) -> bool:
+    if not host or "." not in host or any(character in host for character in "/\\%"):
+        return True
+    if host == "localhost" or host.endswith((".localhost", ".local", ".internal")):
+        return True
+    if host in {"host.docker.internal", "gateway.docker.internal"}:
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return bool(re.fullmatch(r"[0-9.]+", host))
+    return any((
+        address.is_loopback,
+        address.is_private,
+        address.is_link_local,
+        address.is_multicast,
+        address.is_reserved,
+        address.is_unspecified,
+    ))
+
+
+def mongo_hosts(uri: str) -> list[str]:
     if not uri or not uri.startswith(("mongodb://", "mongodb+srv://")):
-        return False
+        return []
     parsed = urlsplit(uri)
     authority = parsed.netloc.rsplit("@", 1)[-1].lower()
     if not authority:
-        return False
-    forbidden = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"}
-    hosts = [item.rsplit(":", 1)[0].strip("[]") for item in authority.split(",")]
-    return bool(hosts) and all(host and host not in forbidden for host in hosts)
+        return []
+    hosts = []
+    for item in authority.split(","):
+        item = item.strip()
+        if item.startswith("["):
+            closing = item.find("]")
+            raw_host = item[1:closing] if closing > 0 else ""
+        else:
+            raw_host = item.rsplit(":", 1)[0] if item.count(":") == 1 else item
+        hosts.append(normalize_host(raw_host))
+    return hosts
 
 
 def main() -> int:
@@ -42,10 +75,17 @@ def main() -> int:
         return 2
 
     values = read_dotenv(Path(sys.argv[1]))
+    hosts = mongo_hosts(values.get("SWFI_MONGO_URI", ""))
+    allowed_hosts = {
+        normalize_host(item)
+        for item in values.get("SWFI_MONGO_ALLOWED_HOSTS", "").split(",")
+        if normalize_host(item)
+    }
     checks = {
         "fact_source_is_mongo": values.get("SWFI2_FACT_SOURCE") == "mongo",
         "mongo_database_is_swfi": values.get("SWFI_MONGO_DB") == "swfi",
-        "mongo_uri_is_present_and_remote": remote_mongo_uri(values.get("SWFI_MONGO_URI", "")),
+        "mongo_uri_hosts_are_remote": bool(hosts) and all(not local_or_unsafe_host(host) for host in hosts),
+        "mongo_hosts_match_explicit_allowlist": bool(allowed_hosts) and bool(hosts) and set(hosts).issubset(allowed_hosts),
     }
     failures = [name for name, ok in checks.items() if not ok]
     receipt = {

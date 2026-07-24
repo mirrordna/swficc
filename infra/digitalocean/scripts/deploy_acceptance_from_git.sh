@@ -290,7 +290,7 @@ ssh "${SSH_OPTS[@]}" "$HOST" "set -eu; \
   test -s '$REMOTE_ROOT/shared/.env.swfipn-web'; \
   test -x /usr/local/sbin/swfipn-freshness-audit; \
   test \"\$(systemctl is-active swfipn-freshness-audit.timer)\" = active; \
-  command -v git >/dev/null; command -v python3 >/dev/null; command -v docker >/dev/null; \
+  command -v git >/dev/null; command -v python3 >/dev/null; command -v docker >/dev/null; command -v flock >/dev/null; command -v systemd-run >/dev/null; \
   docker compose version >/dev/null; \
   docker image inspect '$BASELINE_FRONTEND_IMAGE_ID' '$BASELINE_BACKEND_IMAGE_ID' >/dev/null"
 if ! MONGO_SOURCE_RECEIPT="$(ssh "${SSH_OPTS[@]}" "$HOST" \
@@ -367,14 +367,22 @@ ssh "${SSH_OPTS[@]}" "$HOST" "cd '$REMOTE_RELEASE' && \
 
 restore_previous_release() {
   ROLLBACK_ATTEMPTED=1
-  if ssh "${SSH_OPTS[@]}" "$HOST" "cd '$REMOTE_RELEASE' && docker compose --env-file .release.env -p '$COMPOSE_PROJECT' -f compose.acceptance.yml down --remove-orphans || true" \
-    && ssh "${SSH_OPTS[@]}" "$HOST" "set -eu; cd '$PREVIOUS_RELEASE'; \
+  if ssh "${SSH_OPTS[@]}" "$HOST" "set -eu; \
+    exec 9>'$REMOTE_ROOT/.rollback.lock'; flock -x 9; \
+    cd '$REMOTE_RELEASE'; docker compose --env-file .release.env -p '$COMPOSE_PROJECT' -f compose.acceptance.yml down --remove-orphans || true; \
+    cd '$PREVIOUS_RELEASE'; \
+    previous_tag=\$(sed -n 's/^SWFIPN_IMAGE_TAG=//p' .release.env | tail -1); \
+    case \"\$previous_tag\" in (*[!A-Za-z0-9._-]*|'') exit 1;; esac; \
+    docker image tag '$PREVIOUS_FRONTEND_IMAGE_ID' \"swfipn/web:\$previous_tag\"; \
+    docker image tag '$PREVIOUS_BACKEND_IMAGE_ID' \"swfipn/swfi2-backend:\$previous_tag\"; \
     SWFIPN_DOMAIN='$DOMAIN' \
     SWFIPN_SITE_ADDRESSES='$SITE_ADDRESSES' \
     SWFIPN_API_DOMAIN='$API_DOMAIN' \
-    docker compose --env-file .release.env -p '$COMPOSE_PROJECT' -f compose.acceptance.yml up -d --wait --wait-timeout 240; \
+    docker compose --env-file .release.env -p '$COMPOSE_PROJECT' -f compose.acceptance.yml up -d --wait --wait-timeout 240 --pull never --no-build; \
     ln -sfn '$PREVIOUS_RELEASE' '$REMOTE_ROOT/current'; \
     test \"\$(readlink -f '$REMOTE_ROOT/current')\" = '$PREVIOUS_RELEASE'; \
+    test \"\$(docker inspect --format '{{.Image}}' '$COMPOSE_PROJECT-swfipn-web-1')\" = '$PREVIOUS_FRONTEND_IMAGE_ID'; \
+    test \"\$(docker inspect --format '{{.Image}}' '$COMPOSE_PROJECT-swfi2-backend-1')\" = '$PREVIOUS_BACKEND_IMAGE_ID'; \
     rm -f '$REMOTE_RELEASE/.activation-pending'; \
     systemctl stop '$ROLLBACK_GUARD_UNIT.timer' '$ROLLBACK_GUARD_UNIT.service' >/dev/null 2>&1 || true"; then
     ROLLBACK_SUCCEEDED=1
@@ -391,7 +399,8 @@ ssh "${SSH_OPTS[@]}" "$HOST" "set -eu; \
   systemd-run --quiet --unit '$ROLLBACK_GUARD_UNIT' --on-active=15m --property=Type=oneshot \
     '$REMOTE_RELEASE/swfi-dashboard/infra/digitalocean/scripts/rollback_guard.sh' \
     '$REMOTE_RELEASE' '$PREVIOUS_RELEASE' '$REMOTE_ROOT' '$COMPOSE_PROJECT' \
-    '$DOMAIN' '$SITE_ADDRESSES' '$API_DOMAIN'"
+    '$DOMAIN' '$SITE_ADDRESSES' '$API_DOMAIN' \
+    '$PREVIOUS_FRONTEND_IMAGE_ID' '$PREVIOUS_BACKEND_IMAGE_ID'"
 
 STAGE="activation"
 ACTIVATION_STARTED=1
@@ -483,6 +492,10 @@ if ! ssh "${SSH_OPTS[@]}" "$HOST" "set -eu; \
   exit 1
 fi
 if ! ssh "${SSH_OPTS[@]}" "$HOST" "set -eu; \
+  exec 9>'$REMOTE_ROOT/.rollback.lock'; flock -x 9; \
+  test \"\$(readlink -f '$REMOTE_ROOT/current')\" = '$REMOTE_RELEASE'; \
+  test \"\$(docker inspect --format '{{.Image}}' '$COMPOSE_PROJECT-swfipn-web-1')\" = '$FRONTEND_IMAGE_ID'; \
+  test \"\$(docker inspect --format '{{.Image}}' '$COMPOSE_PROJECT-swfi2-backend-1')\" = '$BASELINE_BACKEND_IMAGE_ID'; \
   rm -f '$REMOTE_RELEASE/.activation-pending'; \
   systemctl stop '$ROLLBACK_GUARD_UNIT.timer' '$ROLLBACK_GUARD_UNIT.service' >/dev/null 2>&1 || true"; then
   FAILURE="rollback guard disarm failed; restoring previous release"

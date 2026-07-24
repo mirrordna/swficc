@@ -21,6 +21,7 @@ const machineGatePath = "scripts/swfipn-machine-independence-gate.mjs";
 const composePath = "infra/digitalocean/compose.acceptance.yml";
 const freshnessAuditPath = "infra/digitalocean/scripts/run_freshness_audit.sh";
 const backendEnvVerifierPath = "infra/digitalocean/scripts/verify_backend_env.py";
+const rollbackGuardPath = "infra/digitalocean/scripts/rollback_guard.sh";
 const deploy = readFileSync(deployPath, "utf8");
 const gitDeploy = readFileSync(gitDeployPath, "utf8");
 const baseline = JSON.parse(readFileSync(baselinePath, "utf8"));
@@ -28,6 +29,7 @@ const workflow = readFileSync(workflowPath, "utf8");
 const acceptanceWorkflow = readFileSync(acceptanceWorkflowPath, "utf8");
 const compose = readFileSync(composePath, "utf8");
 const freshnessAudit = readFileSync(freshnessAuditPath, "utf8");
+const rollbackGuard = readFileSync(rollbackGuardPath, "utf8");
 
 const digestFixture = mkdtempSync(path.join(tmpdir(), "swfipn-tree-digest-"));
 try {
@@ -67,12 +69,14 @@ try {
     "SWFI2_FACT_SOURCE=mongo",
     "SWFI_MONGO_DB=swfi",
     "SWFI_MONGO_URI=mongodb+srv://user:secret@cluster.example.net/swfi",
+    "SWFI_MONGO_ALLOWED_HOSTS=cluster.example.net",
     "",
   ].join("\n"));
   writeFileSync(localEnv, [
     "SWFI2_FACT_SOURCE=mongo",
     "SWFI_MONGO_DB=swfi",
     "SWFI_MONGO_URI=mongodb://localhost:27017/swfi",
+    "SWFI_MONGO_ALLOWED_HOSTS=localhost",
     "",
   ].join("\n"));
   const remoteResult = spawnSync("python3", [backendEnvVerifierPath, remoteEnv], { encoding: "utf8" });
@@ -81,6 +85,29 @@ try {
   assert.equal(localResult.status, 1, "local Mongo source must fail");
   assert.equal(remoteResult.stdout.includes("user:secret"), false, "Mongo verifier must not expose credentials");
   assert.equal(localResult.stdout.includes("localhost"), false, "Mongo verifier must not expose host values");
+
+  const unsafeHosts = [
+    "localhost.",
+    "127.0.0.2",
+    "127.1",
+    "[::ffff:127.0.0.1]",
+    "%2Ftmp%2Fmongodb.sock",
+    "mongo",
+    "host.docker.internal",
+  ];
+  for (const unsafeHost of unsafeHosts) {
+    const unsafeEnv = path.join(backendEnvFixture, `unsafe-${unsafeHosts.indexOf(unsafeHost)}.env`);
+    writeFileSync(unsafeEnv, [
+      "SWFI2_FACT_SOURCE=mongo",
+      "SWFI_MONGO_DB=swfi",
+      `SWFI_MONGO_URI=mongodb://${unsafeHost}:27017/swfi`,
+      `SWFI_MONGO_ALLOWED_HOSTS=${unsafeHost}`,
+      "",
+    ].join("\n"));
+    const unsafeResult = spawnSync("python3", [backendEnvVerifierPath, unsafeEnv], { encoding: "utf8" });
+    assert.equal(unsafeResult.status, 1, `unsafe Mongo host must fail: ${unsafeHost}`);
+    assert.equal(unsafeResult.stdout.includes(`mongodb://${unsafeHost}`), false, "Mongo verifier must not expose rejected URI values");
+  }
 } finally {
   rmSync(backendEnvFixture, { recursive: true, force: true });
 }
@@ -182,6 +209,10 @@ const requiredGitDeployContracts = [
   ["receipt on every exit", "trap on_exit EXIT"],
   ["exit-trap rollback", 'if [[ "$code" != "0" && "$ACTIVATION_STARTED" == "1"'],
   ["remote rollback guard", "systemd-run --quiet --unit '$ROLLBACK_GUARD_UNIT'"],
+  ["serialized rollback lock", "flock -x 9"],
+  ["rollback disables pulls and builds", "--pull never --no-build"],
+  ["rollback frontend image verification", "PREVIOUS_FRONTEND_IMAGE_ID"],
+  ["rollback backend image verification", "PREVIOUS_BACKEND_IMAGE_ID"],
   ["rollback guard disarm", "rollback guard disarm failed; restoring previous release"],
   ["Mongo source receipt binding", '"mongo_source"'],
   ["versioned deploy receipt", "swfipn.strict_acceptance_deploy.v7"],
@@ -194,6 +225,16 @@ const requiredGitDeployContracts = [
 
 for (const [label, marker] of requiredGitDeployContracts) {
   assert.ok(gitDeploy.includes(marker), `${label} GitHub deploy contract missing`);
+}
+
+for (const marker of [
+  'flock -x 9',
+  'docker image tag "$PREVIOUS_FRONTEND_IMAGE_ID"',
+  'docker image tag "$PREVIOUS_BACKEND_IMAGE_ID"',
+  '--pull never --no-build',
+  "{{.Image}}",
+]) {
+  assert.ok(rollbackGuard.includes(marker), `remote rollback guard missing: ${marker}`);
 }
 
 assert.equal(baseline.schema_version, "swfipn.acceptance_baseline.v1");
