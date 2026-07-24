@@ -201,18 +201,29 @@ credentials. It is checked against the independently pinned
 
 ```json
 {
-  "schema_version": "swfipn.mongo_source_policy.v1",
-  "allowed_uri_hosts": ["<approved-uri-seed-host>"],
-  "allowed_srv_hosts": ["<approved-srv-target-host>"],
-  "allowed_resolved_ips": ["<approved-public-ip>"]
+  "schema_version": "swfipn.mongo_source_policy.v2",
+  "allowed_seed_hosts": ["<approved-srv-seed-host>"],
+  "allowed_direct_endpoints": [
+    {"host": "<approved-direct-host>", "port": 27017}
+  ],
+  "allowed_srv_endpoints": [
+    {"host": "<approved-srv-target-host>", "port": 27017}
+  ],
+  "allowed_resolved_endpoints": [
+    {"ip": "<approved-public-ip>", "port": 27017}
+  ]
 }
 ```
 
-For a standard `mongodb://` URI, `allowed_srv_hosts` is an empty array. For
-`mongodb+srv://`, enumerate every approved SRV target. The policy rejects
-loopback, private, link-local, multicast, reserved, unspecified, mapped
-loopback, numeric-alias, and DNS-alias destinations. Pin the exact byte-level
-SHA-256 of this root-owned file in the GitHub environment secret
+For a standard `mongodb://` URI, use `allowed_direct_endpoints` and leave both
+SRV arrays empty. For `mongodb+srv://`, use `allowed_seed_hosts` and
+`allowed_srv_endpoints`, and leave `allowed_direct_endpoints` empty. Every
+effective IP and port pair must appear in `allowed_resolved_endpoints`.
+Non-default `srvServiceName`, legacy semicolon option separators, invalid
+ports, TLS downgrade, certificate-validation relaxations, loopback, private,
+link-local, multicast, reserved, unspecified, mapped loopback, numeric-alias,
+and DNS-alias destinations fail closed. Pin the exact byte-level SHA-256 of
+this root-owned file in the GitHub environment secret
 `SWFIPN_ACCEPTANCE_MONGO_POLICY_SHA256`; changing either side independently
 must fail preflight. The pinned backend image performs live SRV and A/AAAA
 resolution in a read-only, capability-dropped container.

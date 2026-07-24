@@ -67,26 +67,26 @@ try {
   const fixturePath = path.join(backendEnvFixture, "dns-fixture.json");
   const policyPath = path.join(backendEnvFixture, "mongo-policy.json");
   const policy = {
-    schema_version: "swfipn.mongo_source_policy.v1",
-    allowed_uri_hosts: [
-      "cluster.example.net",
-      "cluster-a.example.net",
-      "cluster-b.example.net",
+    schema_version: "swfipn.mongo_source_policy.v2",
+    allowed_seed_hosts: ["cluster.example.net"],
+    allowed_direct_endpoints: [
+      { host: "cluster-a.example.net", port: 27017 },
+      { host: "cluster-b.example.net", port: 27017 },
     ],
-    allowed_srv_hosts: [
-      "node-a.example.net",
-      "node-b.example.net",
+    allowed_srv_endpoints: [
+      { host: "node-a.example.net", port: 27017 },
+      { host: "node-b.example.net", port: 27017 },
     ],
-    allowed_resolved_ips: [
-      "1.1.1.1",
-      "8.8.8.8",
+    allowed_resolved_endpoints: [
+      { ip: "1.1.1.1", port: 27017 },
+      { ip: "8.8.8.8", port: 27017 },
     ],
   };
   const fixture = {
     srv: {
       "cluster.example.net": [
-        "node-a.example.net",
-        "node-b.example.net",
+        { host: "node-a.example.net", port: 27017 },
+        { host: "node-b.example.net", port: 27017 },
       ],
     },
     addresses: {
@@ -129,7 +129,7 @@ try {
     `pinned remote Mongo source contract must pass: ${remoteResult.stdout || remoteResult.stderr}`,
   );
   const remoteReceipt = JSON.parse(remoteResult.stdout);
-  assert.equal(remoteReceipt.schema_version, "swfipn.backend_env_verification.v2");
+  assert.equal(remoteReceipt.schema_version, "swfipn.backend_env_verification.v3");
   assert.equal(remoteReceipt.policy_sha256, policyDigest);
   assert.equal(remoteReceipt.resolver_mode, "fixture");
   assert.equal(remoteResult.stdout.includes("user:secret"), false, "Mongo verifier must not expose credentials");
@@ -155,6 +155,68 @@ try {
     "receipt digest must bind the verified Mongo source identity",
   );
 
+  const portPolicyPath = path.join(backendEnvFixture, "port-policy.json");
+  const portPolicyJson = `${JSON.stringify({
+    schema_version: "swfipn.mongo_source_policy.v2",
+    allowed_seed_hosts: [],
+    allowed_direct_endpoints: [
+      { host: "cluster-a.example.net", port: 22 },
+      { host: "cluster-a.example.net", port: 27017 },
+    ],
+    allowed_srv_endpoints: [],
+    allowed_resolved_endpoints: [
+      { ip: "8.8.8.8", port: 22 },
+      { ip: "8.8.8.8", port: 27017 },
+    ],
+  }, null, 2)}\n`;
+  writeFileSync(portPolicyPath, portPolicyJson);
+  const portPolicyDigest = createHash("sha256").update(portPolicyJson).digest("hex");
+  const port27017 = runVerifier(
+    "port-27017",
+    [
+      "SWFI2_FACT_SOURCE=mongo",
+      "SWFI_MONGO_DB=swfi",
+      "SWFI_MONGO_URI=mongodb://user:secret@cluster-a.example.net:27017/swfi?tls=true",
+      "SWFI_MONGO_ALLOWED_HOSTS=cluster-a.example.net",
+    ],
+    portPolicyPath,
+    portPolicyDigest,
+  );
+  const port22 = runVerifier(
+    "port-22",
+    [
+      "SWFI2_FACT_SOURCE=mongo",
+      "SWFI_MONGO_DB=swfi",
+      "SWFI_MONGO_URI=mongodb://user:secret@cluster-a.example.net:22/swfi?tls=true",
+      "SWFI_MONGO_ALLOWED_HOSTS=cluster-a.example.net",
+    ],
+    portPolicyPath,
+    portPolicyDigest,
+  );
+  assert.equal(port27017.status, 0);
+  assert.equal(port22.status, 0);
+  assert.notEqual(
+    JSON.parse(port27017.stdout).source_identity_sha256,
+    JSON.parse(port22.stdout).source_identity_sha256,
+    "source identity must bind the direct Mongo port",
+  );
+  for (const invalidPort of ["0", "65536", "notaport"]) {
+    const invalidPortResult = runVerifier(`invalid-port-${invalidPort}`, [
+      "SWFI2_FACT_SOURCE=mongo",
+      "SWFI_MONGO_DB=swfi",
+      `SWFI_MONGO_URI=mongodb://user:secret@cluster-a.example.net:${invalidPort}/swfi?tls=true`,
+      "SWFI_MONGO_ALLOWED_HOSTS=cluster-a.example.net",
+    ]);
+    assert.equal(invalidPortResult.status, 1, `invalid Mongo port must fail: ${invalidPort}`);
+  }
+  const unapprovedPort = runVerifier("unapproved-port", [
+    "SWFI2_FACT_SOURCE=mongo",
+    "SWFI_MONGO_DB=swfi",
+    "SWFI_MONGO_URI=mongodb://user:secret@cluster-a.example.net:22/swfi?tls=true",
+    "SWFI_MONGO_ALLOWED_HOSTS=cluster-a.example.net",
+  ]);
+  assert.equal(unapprovedPort.status, 1, "valid but unpinned Mongo port must fail");
+
   const wrongDigest = runVerifier(
     "wrong-policy-digest",
     [
@@ -175,13 +237,34 @@ try {
   ]);
   assert.equal(missingEnvAllowlist.status, 1, "missing environment host allowlist must fail");
 
-  const insecureTls = runVerifier("insecure-tls", [
+  const insecureQueries = [
+    "tls=false",
+    "tlsInsecure=true",
+    "tlsAllowInvalidCertificates=true",
+    "tlsAllowInvalidHostnames=true",
+    "tlsDisableCertificateRevocationCheck=true",
+    "tlsDisableOCSPEndpointCheck=true",
+    "tlsInsecure=true;tls=false",
+    "tlsAllowInvalidCertificates=true;tls=false",
+    "tlsAllowInvalidHostnames=true;tls=false",
+  ];
+  for (const [index, query] of insecureQueries.entries()) {
+    const insecureTls = runVerifier(`insecure-tls-${index}`, [
+      "SWFI2_FACT_SOURCE=mongo",
+      "SWFI_MONGO_DB=swfi",
+      `SWFI_MONGO_URI=mongodb+srv://user:secret@cluster.example.net/swfi?${query}`,
+      "SWFI_MONGO_ALLOWED_HOSTS=cluster.example.net",
+    ]);
+    assert.equal(insecureTls.status, 1, `Mongo TLS relaxation must fail: ${query}`);
+  }
+
+  const customSrvService = runVerifier("custom-srv-service", [
     "SWFI2_FACT_SOURCE=mongo",
     "SWFI_MONGO_DB=swfi",
-    "SWFI_MONGO_URI=mongodb+srv://user:secret@cluster.example.net/swfi?tls=false",
+    "SWFI_MONGO_URI=mongodb+srv://user:secret@cluster.example.net/swfi?srvServiceName=attacker",
     "SWFI_MONGO_ALLOWED_HOSTS=cluster.example.net",
   ]);
-  assert.equal(insecureTls.status, 1, "Mongo TLS downgrade must fail");
+  assert.equal(customSrvService.status, 1, "custom Mongo SRV service name must fail");
 
   const missingDirectTls = runVerifier("missing-direct-tls", [
     "SWFI2_FACT_SOURCE=mongo",
@@ -215,7 +298,9 @@ try {
   const unauthorizedSrvFixturePath = path.join(backendEnvFixture, "unauthorized-srv.dns.json");
   writeFileSync(unauthorizedSrvFixturePath, `${JSON.stringify({
     srv: {
-      "cluster.example.net": ["unauthorized.example.net"],
+      "cluster.example.net": [
+        { host: "unauthorized.example.net", port: 27017 },
+      ],
     },
     addresses: {
       "unauthorized.example.net": ["8.8.8.8"],
@@ -234,6 +319,31 @@ try {
     unauthorizedSrvFixturePath,
   );
   assert.equal(unauthorizedSrv.status, 1, "SRV target outside pinned policy must fail");
+
+  const unauthorizedSrvPortFixturePath = path.join(backendEnvFixture, "unauthorized-srv-port.dns.json");
+  writeFileSync(unauthorizedSrvPortFixturePath, `${JSON.stringify({
+    srv: {
+      "cluster.example.net": [
+        { host: "node-a.example.net", port: 22 },
+      ],
+    },
+    addresses: {
+      "node-a.example.net": ["8.8.8.8"],
+    },
+  }, null, 2)}\n`);
+  const unauthorizedSrvPort = runVerifier(
+    "unauthorized-srv-port",
+    [
+      "SWFI2_FACT_SOURCE=mongo",
+      "SWFI_MONGO_DB=swfi",
+      "SWFI_MONGO_URI=mongodb+srv://user:secret@cluster.example.net/swfi",
+      "SWFI_MONGO_ALLOWED_HOSTS=cluster.example.net",
+    ],
+    policyPath,
+    policyDigest,
+    unauthorizedSrvPortFixturePath,
+  );
+  assert.equal(unauthorizedSrvPort.status, 1, "SRV-returned port outside pinned policy must fail");
 
   const fixtureBypassEnv = path.join(backendEnvFixture, "fixture-bypass.env");
   writeFileSync(fixtureBypassEnv, [
@@ -268,10 +378,15 @@ try {
     const unsafeFixturePath = `${unsafePolicyPath}.dns.json`;
     const normalizedUnsafeHost = unsafeHost.replace(/^\[|\]$/g, "");
     const unsafePolicyJson = `${JSON.stringify({
-      schema_version: "swfipn.mongo_source_policy.v1",
-      allowed_uri_hosts: [normalizedUnsafeHost],
-      allowed_srv_hosts: [],
-      allowed_resolved_ips: [resolvedIp],
+      schema_version: "swfipn.mongo_source_policy.v2",
+      allowed_seed_hosts: [],
+      allowed_direct_endpoints: [
+        { host: normalizedUnsafeHost, port: 27017 },
+      ],
+      allowed_srv_endpoints: [],
+      allowed_resolved_endpoints: [
+        { ip: resolvedIp, port: 27017 },
+      ],
     }, null, 2)}\n`;
     writeFileSync(unsafePolicyPath, unsafePolicyJson);
     writeFileSync(unsafeFixturePath, `${JSON.stringify({

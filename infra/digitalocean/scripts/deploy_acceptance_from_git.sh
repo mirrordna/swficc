@@ -326,7 +326,7 @@ import json
 import sys
 
 receipt = json.load(sys.stdin)
-assert receipt["schema_version"] == "swfipn.backend_env_verification.v2"
+assert receipt["schema_version"] == "swfipn.backend_env_verification.v3"
 assert receipt["status"] == "pass"
 assert receipt["resolver_mode"] == "live"
 assert receipt["no_secret_values_written"] is True
