@@ -45,7 +45,8 @@ const receipt = {
     mac_required_for_receipts: false,
     production_mutation_allowed: false,
     public_data_boundary: "dashboard.swfi.com",
-    canonical_backend_contract: "SWFI Mongo-backed service through dashboard.swfi.com",
+    mongo_backing_verified_by_this_gate: false,
+    mongo_backing_required_by_deploy_preflight: true,
   },
   workflow: path.relative(cwd, workflowPath),
   git: {

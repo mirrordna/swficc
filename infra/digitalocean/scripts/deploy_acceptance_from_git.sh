@@ -56,6 +56,8 @@ DEPLOY_COMMITTED=0
 ROLLBACK_ATTEMPTED=0
 ROLLBACK_SUCCEEDED=0
 ROLLBACK_GUARD_UNIT=""
+MONGO_SOURCE_VERIFIED=0
+MONGO_SOURCE_RECEIPT_SHA256=""
 
 write_receipt() {
   mkdir -p "$(dirname "$RECEIPT_PATH")"
@@ -97,6 +99,8 @@ write_receipt() {
   SWFIPN_RECEIPT_ROLLBACK_ATTEMPTED="$ROLLBACK_ATTEMPTED" \
   SWFIPN_RECEIPT_ROLLBACK_SUCCEEDED="$ROLLBACK_SUCCEEDED" \
   SWFIPN_RECEIPT_ROLLBACK_GUARD_UNIT="$ROLLBACK_GUARD_UNIT" \
+  SWFIPN_RECEIPT_MONGO_SOURCE_VERIFIED="$MONGO_SOURCE_VERIFIED" \
+  SWFIPN_RECEIPT_MONGO_SOURCE_RECEIPT_SHA256="$MONGO_SOURCE_RECEIPT_SHA256" \
   python3 - <<'PY'
 import json
 import os
@@ -175,6 +179,11 @@ receipt = {
     "rollback_attempted": os.environ["SWFIPN_RECEIPT_ROLLBACK_ATTEMPTED"] == "1",
     "rollback_succeeded": os.environ["SWFIPN_RECEIPT_ROLLBACK_SUCCEEDED"] == "1",
     "rollback_guard_unit": optional("SWFIPN_RECEIPT_ROLLBACK_GUARD_UNIT"),
+    "mongo_source": {
+        "verified": os.environ["SWFIPN_RECEIPT_MONGO_SOURCE_VERIFIED"] == "1",
+        "verification_receipt_sha256": optional("SWFIPN_RECEIPT_MONGO_SOURCE_RECEIPT_SHA256"),
+        "secrets_recorded": False,
+    },
     "production_mutation_attempted": (
         os.environ["SWFIPN_RECEIPT_MODE"] == "deploy"
         and os.environ["SWFIPN_RECEIPT_STAGE"] not in {
@@ -284,6 +293,13 @@ ssh "${SSH_OPTS[@]}" "$HOST" "set -eu; \
   command -v git >/dev/null; command -v python3 >/dev/null; command -v docker >/dev/null; \
   docker compose version >/dev/null; \
   docker image inspect '$BASELINE_FRONTEND_IMAGE_ID' '$BASELINE_BACKEND_IMAGE_ID' >/dev/null"
+if ! MONGO_SOURCE_RECEIPT="$(ssh "${SSH_OPTS[@]}" "$HOST" \
+  "python3 - '$REMOTE_ROOT/shared/.env.swfi2-backend'" \
+  < infra/digitalocean/scripts/verify_backend_env.py)"; then
+  die "backend Mongo source verification failed"
+fi
+MONGO_SOURCE_RECEIPT_SHA256="$(printf '%s' "$MONGO_SOURCE_RECEIPT" | shasum -a 256 | awk '{print $1}')"
+MONGO_SOURCE_VERIFIED=1
 
 PREVIOUS_FRONTEND_IMAGE_ID="$(ssh "${SSH_OPTS[@]}" "$HOST" "docker inspect --format '{{.Image}}' '$COMPOSE_PROJECT-swfipn-web-1'")"
 PREVIOUS_BACKEND_IMAGE_ID="$(ssh "${SSH_OPTS[@]}" "$HOST" "docker inspect --format '{{.Image}}' '$COMPOSE_PROJECT-swfi2-backend-1'")"

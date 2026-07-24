@@ -20,6 +20,7 @@ const acceptanceWorkflowPath = ".github/workflows/swfipn-acceptance.yml";
 const machineGatePath = "scripts/swfipn-machine-independence-gate.mjs";
 const composePath = "infra/digitalocean/compose.acceptance.yml";
 const freshnessAuditPath = "infra/digitalocean/scripts/run_freshness_audit.sh";
+const backendEnvVerifierPath = "infra/digitalocean/scripts/verify_backend_env.py";
 const deploy = readFileSync(deployPath, "utf8");
 const gitDeploy = readFileSync(gitDeployPath, "utf8");
 const baseline = JSON.parse(readFileSync(baselinePath, "utf8"));
@@ -56,6 +57,32 @@ try {
   assert.notEqual(digestOnce.sha256, changedDigest.sha256, "tree digest must detect content changes");
 } finally {
   rmSync(digestFixture, { recursive: true, force: true });
+}
+
+const backendEnvFixture = mkdtempSync(path.join(tmpdir(), "swfipn-backend-env-"));
+try {
+  const remoteEnv = path.join(backendEnvFixture, "remote.env");
+  const localEnv = path.join(backendEnvFixture, "local.env");
+  writeFileSync(remoteEnv, [
+    "SWFI2_FACT_SOURCE=mongo",
+    "SWFI_MONGO_DB=swfi",
+    "SWFI_MONGO_URI=mongodb+srv://user:secret@cluster.example.net/swfi",
+    "",
+  ].join("\n"));
+  writeFileSync(localEnv, [
+    "SWFI2_FACT_SOURCE=mongo",
+    "SWFI_MONGO_DB=swfi",
+    "SWFI_MONGO_URI=mongodb://localhost:27017/swfi",
+    "",
+  ].join("\n"));
+  const remoteResult = spawnSync("python3", [backendEnvVerifierPath, remoteEnv], { encoding: "utf8" });
+  const localResult = spawnSync("python3", [backendEnvVerifierPath, localEnv], { encoding: "utf8" });
+  assert.equal(remoteResult.status, 0, "remote Mongo source contract must pass");
+  assert.equal(localResult.status, 1, "local Mongo source must fail");
+  assert.equal(remoteResult.stdout.includes("user:secret"), false, "Mongo verifier must not expose credentials");
+  assert.equal(localResult.stdout.includes("localhost"), false, "Mongo verifier must not expose host values");
+} finally {
+  rmSync(backendEnvFixture, { recursive: true, force: true });
 }
 
 const failureReceiptDir = mkdtempSync(path.join(tmpdir(), "swfipn-deploy-receipt-"));
@@ -138,6 +165,7 @@ const requiredGitDeployContracts = [
   ["pinned baseline release", "current release differs from pinned baseline"],
   ["pinned active frontend image", "active frontend image differs from pinned baseline"],
   ["pinned active backend image", "active backend image differs from pinned baseline"],
+  ["secret-safe Mongo source preflight", "backend Mongo source verification failed"],
   ["host-side exact commit fetch", "fetch -q --depth=1 origin '$FRONTEND_GIT_SHA'"],
   ["host-side commit verification", "rev-parse FETCH_HEAD"],
   ["host-side git tree verification", "show -s --format=%T FETCH_HEAD"],
@@ -155,6 +183,7 @@ const requiredGitDeployContracts = [
   ["exit-trap rollback", 'if [[ "$code" != "0" && "$ACTIVATION_STARTED" == "1"'],
   ["remote rollback guard", "systemd-run --quiet --unit '$ROLLBACK_GUARD_UNIT'"],
   ["rollback guard disarm", "rollback guard disarm failed; restoring previous release"],
+  ["Mongo source receipt binding", '"mongo_source"'],
   ["versioned deploy receipt", "swfipn.strict_acceptance_deploy.v7"],
   ["preflight receipt isolation", "swfipn-git-deploy-preflight-latest.json"],
   ["legacy receipt compatibility", '"backend_git_sha"'],

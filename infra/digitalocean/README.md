@@ -123,6 +123,8 @@ source from the invoking machine:
 - the frontend is fetched from `mirrordna/swficc` at one full commit SHA;
 - the active release must exactly match `acceptance-baseline.json`;
 - the active frontend and backend image IDs must match the baseline;
+- read-only preflight verifies `SWFI2_FACT_SOURCE=mongo`, database `swfi`, and
+  a non-local Mongo URI without writing the URI into receipts;
 - the pinned backend image is retagged for the candidate release and is not
   rebuilt from an unverified source tree;
 - the new release is built under `/opt/swfipn-acceptance/releases`;
