@@ -16,12 +16,14 @@ const deployPath = "infra/digitalocean/scripts/deploy_acceptance.sh";
 const gitDeployPath = "infra/digitalocean/scripts/deploy_acceptance_from_git.sh";
 const baselinePath = "infra/digitalocean/acceptance-baseline.json";
 const workflowPath = ".github/workflows/swfipn-deploy-acceptance.yml";
+const acceptanceWorkflowPath = ".github/workflows/swfipn-acceptance.yml";
 const composePath = "infra/digitalocean/compose.acceptance.yml";
 const freshnessAuditPath = "infra/digitalocean/scripts/run_freshness_audit.sh";
 const deploy = readFileSync(deployPath, "utf8");
 const gitDeploy = readFileSync(gitDeployPath, "utf8");
 const baseline = JSON.parse(readFileSync(baselinePath, "utf8"));
 const workflow = readFileSync(workflowPath, "utf8");
+const acceptanceWorkflow = readFileSync(acceptanceWorkflowPath, "utf8");
 const compose = readFileSync(composePath, "utf8");
 const freshnessAudit = readFileSync(freshnessAuditPath, "utf8");
 
@@ -160,6 +162,21 @@ for (const marker of [
   assert.ok(workflow.includes(marker), `protected deployment workflow missing: ${marker}`);
 }
 
+for (const marker of [
+  "--backend https://dashboard.swfi.com",
+  "SWFIPN_CONTRACT_OUT=output/swfipn-dashboard20-e2e-contract-candidate.json",
+  "SWFIPN_SEMANTIC_RECEIPT=output/swfipn-semantic-search-retest-candidate.json",
+  "SWFIPN_SEARCH_PERFORMANCE_BLOCKING=0",
+  "SWFIPN_CLOSEOUT_LATENCY_BLOCKING=0",
+]) {
+  assert.ok(acceptanceWorkflow.includes(marker), `acceptance workflow missing: ${marker}`);
+}
+assert.equal(
+  acceptanceWorkflow.includes("swfipn.activemirror.ai"),
+  false,
+  "frozen acceptance workflow must use only the SWFI-owned public boundary",
+);
+
 assert.ok(
   compose.includes("swfipn/swfi2-backend:${SWFIPN_IMAGE_TAG:-acceptance}"),
   "backend image must be release-versioned",
@@ -209,6 +226,7 @@ console.log(JSON.stringify({
   current_switch: "after_health_wait",
   github_current_switch: "after_health_and_public_marker",
   workflow: "manual_environment_approval_required",
+  acceptance_source_boundary: "dashboard.swfi.com_only",
   tree_digest: "deterministic_and_change_sensitive",
   fail_closed_receipt: "verified_without_remote_mutation",
 }));

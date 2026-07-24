@@ -43,14 +43,53 @@ jobs:
       - name: Mongo index dry-run receipt
         run: SWFIPN_DB_INDEX_DRY_RUN=1 npm run db:indexes
 
+      - name: Candidate browser and semantic gates through SWFI source
+        run: |
+          set -euo pipefail
+          python3 scripts/serve-static-with-headers.py \
+            --host 127.0.0.1 \
+            --port 4317 \
+            --root out \
+            --backend https://dashboard.swfi.com \
+            --backend-timeout 120 \
+            > output/swfipn-candidate-server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:4317/swficc/ >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              echo "candidate server did not become ready" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          SWFIPN_ORIGIN=http://127.0.0.1:4317/swficc/ \
+            SWFIPN_CONTRACT_OUT=output/swfipn-dashboard20-e2e-contract-candidate.json \
+            npm run contract:gate
+          SWFIPN_ORIGIN=http://127.0.0.1:4317 \
+            SWFIPN_SEMANTIC_TIMEOUT_MS=120000 \
+            SWFIPN_SEMANTIC_RECEIPT=output/swfipn-semantic-search-retest-candidate.json \
+            npm run test:semantic-search-retest
+
       - name: Public search acceptance gate
-        run: npm run brd:search:gate:public
+        run: |
+          SWFIPN_ORIGIN=https://dashboard.swfi.com/swficc/ \
+            SWFIPN_SEARCH_PERFORMANCE_BLOCKING=0 \
+            node scripts/swfipn-global-search-brd-gate.mjs
 
       - name: CDN static asset public gate
-        run: npm run brd:cdn:gate:public
+        run: |
+          SWFIPN_ORIGIN=https://dashboard.swfi.com/swficc/ \
+            node scripts/swfipn-cdn-static-assets-gate.mjs
 
       - name: Public closeout gate
-        run: npm run closeout:gate:public
+        run: |
+          SWFIPN_ORIGIN=https://dashboard.swfi.com/swficc/ \
+            SWFIPN_BACKEND_ORIGIN=https://dashboard.swfi.com \
+            SWFIPN_CLOSEOUT_LATENCY_BLOCKING=0 \
+            node scripts/swfipn-closeout-gate.mjs
 
       - name: Upload receipts
         if: always()
