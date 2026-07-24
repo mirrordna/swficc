@@ -222,7 +222,9 @@ credentials. It is checked against the independently pinned
 
 The protected deployment supports only a standard `mongodb://` URI with one
 hostname, one port, explicit `directConnection=true`, strict TLS, and exactly
-the normalized options listed in `required_options`. `mongodb+srv://`,
+the decoded scalar values listed in `required_options`. Option names are
+case-insensitive, but values are case-sensitive; duplicate option names are
+rejected instead of relying on driver precedence. `mongodb+srv://`,
 replica-set discovery, load-balanced discovery, SRV polling, legacy semicolon
 option separators, proxy routing, non-canonical host spellings, invalid ports,
 TLS downgrade, certificate-validation relaxations, loopback, private,
@@ -235,7 +237,7 @@ environment and Compose injects it into the backend container's `/etc/hosts`.
 This prevents a later DNS change from routing the backend beyond the pinned
 source. Additional non-routing URI options such as `authSource` or
 `retryWrites` are permitted only when their normalized lower-case keys and
-values are included exactly in `required_options`.
+case-sensitive decoded values are included exactly once in `required_options`.
 
 Pin the exact byte-level SHA-256 of this root-owned file in the GitHub
 environment secret

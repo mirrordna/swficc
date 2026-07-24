@@ -13,7 +13,7 @@ from urllib.parse import parse_qsl, unquote, urlsplit
 
 
 POLICY_SCHEMA = "swfipn.mongo_source_policy.v3"
-RECEIPT_SCHEMA = "swfipn.backend_env_verification.v4"
+RECEIPT_SCHEMA = "swfipn.backend_env_verification.v5"
 DEFAULT_MONGO_PORT = 27017
 POLICY_KEYS = {
     "schema_version",
@@ -56,6 +56,15 @@ def read_dotenv(path: Path) -> dict[str, str]:
 def canonical_digest(value: object) -> str:
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate_json_key")
+        result[key] = value
+    return result
 
 
 def normalize_host(value: str) -> str:
@@ -151,33 +160,44 @@ def parse_direct_endpoint(item: str) -> tuple[str, int]:
 
 def normalized_options(raw_options: dict[str, list[str]]) -> dict[str, list[str]]:
     return {
-        key: sorted(values)
+        key: list(values)
         for key, values in sorted(raw_options.items())
     }
 
 
 def parse_mongo_uri(
     uri: str,
-) -> tuple[str, list[tuple[str, int]], str, dict[str, list[str]], bool]:
+) -> tuple[str, list[tuple[str, int]], str, dict[str, list[str]], bool, bool]:
     if not uri.startswith(("mongodb://", "mongodb+srv://")):
-        return "", [], "", {}, False
+        return "", [], "", {}, False, False
     parsed = urlsplit(uri)
     scheme = parsed.scheme.lower()
     authority = parsed.netloc.rsplit("@", 1)[-1]
     if not authority or parsed.fragment:
-        return "", [], "", {}, False
+        return "", [], "", {}, False, False
     options: dict[str, list[str]] = {}
+    option_names_unique = True
     canonical_separators = ";" not in parsed.query
     for key, value in parse_qsl(parsed.query, keep_blank_values=True, separator="&"):
-        options.setdefault(key.lower(), []).append(value.lower())
+        normalized_key = key.lower()
+        if normalized_key in options:
+            option_names_unique = False
+        options.setdefault(normalized_key, []).append(value)
     options = normalized_options(options)
     database = unquote(parsed.path).strip("/")
     if "/" in database:
         database = ""
     if scheme != "mongodb":
-        return scheme, [], database, options, canonical_separators
-    direct_endpoints = sorted({parse_direct_endpoint(item) for item in authority.split(",")})
-    return scheme, direct_endpoints, database, options, canonical_separators
+        return scheme, [], database, options, canonical_separators, option_names_unique
+    direct_endpoints = sorted(parse_direct_endpoint(item) for item in authority.split(","))
+    return (
+        scheme,
+        direct_endpoints,
+        database,
+        options,
+        canonical_separators,
+        option_names_unique,
+    )
 
 
 def tls_is_secure(options: dict[str, list[str]]) -> bool:
@@ -240,11 +260,11 @@ def parse_policy_options(policy: dict[str, object]) -> dict[str, list[str]]:
             not isinstance(key, str)
             or key != key.lower()
             or not isinstance(values, list)
-            or not values
-            or any(not isinstance(value, str) or value != value.lower() for value in values)
+            or len(values) != 1
+            or any(not isinstance(value, str) for value in values)
         ):
             raise ValueError("invalid_policy_options")
-        options[key] = sorted(values)
+        options[key] = list(values)
     return normalized_options(options)
 
 
@@ -305,7 +325,7 @@ def main() -> int:
     try:
         values = read_dotenv(env_path)
         policy_bytes = policy_path.read_bytes()
-        policy = json.loads(policy_bytes)
+        policy = json.loads(policy_bytes, object_pairs_hook=reject_duplicate_json_keys)
         if not isinstance(policy, dict):
             raise ValueError("invalid_policy_shape")
         policy_sha256 = hashlib.sha256(policy_bytes).hexdigest()
@@ -314,11 +334,23 @@ def main() -> int:
         return fail_receipt("configuration_read_failed")
 
     try:
-        scheme, direct_endpoints, uri_database, options, canonical_separators = parse_mongo_uri(
-            values.get("SWFI_MONGO_URI", "")
-        )
+        (
+            scheme,
+            direct_endpoints,
+            uri_database,
+            options,
+            canonical_separators,
+            option_names_unique,
+        ) = parse_mongo_uri(values.get("SWFI_MONGO_URI", ""))
     except ValueError:
-        scheme, direct_endpoints, uri_database, options, canonical_separators = "", [], "", {}, False
+        (
+            scheme,
+            direct_endpoints,
+            uri_database,
+            options,
+            canonical_separators,
+            option_names_unique,
+        ) = "", [], "", {}, False, False
 
     configured_hosts = sorted({
         host
@@ -375,6 +407,7 @@ def main() -> int:
             and len(direct_endpoints) == 1
         ),
         "mongo_option_separators_are_canonical": canonical_separators,
+        "mongo_option_names_are_unique": option_names_unique,
         "mongo_tls_is_strict": tls_is_secure(options),
         "mongo_topology_discovery_is_disabled": (
             options.get("directconnection") == ["true"]

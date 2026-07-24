@@ -127,7 +127,7 @@ try {
     `pinned remote Mongo source contract must pass: ${remoteResult.stdout || remoteResult.stderr}`,
   );
   const remoteReceipt = JSON.parse(remoteResult.stdout);
-  assert.equal(remoteReceipt.schema_version, "swfipn.backend_env_verification.v4");
+  assert.equal(remoteReceipt.schema_version, "swfipn.backend_env_verification.v5");
   assert.equal(remoteReceipt.connection_mode, "direct_single_endpoint");
   assert.equal(remoteReceipt.policy_sha256, policyDigest);
   assert.equal(remoteReceipt.options_sha256, remoteReceipt.required_options_sha256);
@@ -307,6 +307,113 @@ try {
     allowedExtraOptionsDigest,
   );
   assert.equal(allowedExtraOptions.status, 0, "exactly policy-bound non-routing options should pass");
+
+  const wrongCaseOptionValue = runVerifier(
+    "wrong-case-option-value",
+    [
+      "SWFI2_FACT_SOURCE=mongo",
+      "SWFI_MONGO_DB=swfi",
+      "SWFI_MONGO_URI=mongodb://user:secret@cluster-a.example.net:27017/swfi?retryWrites=true&tls=true&authSource=ADMIN&directConnection=true",
+      "SWFI_MONGO_ALLOWED_HOSTS=cluster-a.example.net",
+    ],
+    allowedExtraOptionsPath,
+    allowedExtraOptionsDigest,
+  );
+  assert.equal(
+    wrongCaseOptionValue.status,
+    1,
+    "case-sensitive Mongo option values must match the pinned policy exactly",
+  );
+
+  for (const [index, query] of [
+    "tls=true&directConnection=true&retryWrites=true&retryWrites=true",
+    "tls=true&directConnection=true&retryWrites=true&retryWrites=false",
+    "tls=true&directConnection=true&retryWrites=false&retryWrites=true",
+  ].entries()) {
+    const duplicateOption = runVerifier(`duplicate-scalar-option-${index}`, [
+      "SWFI2_FACT_SOURCE=mongo",
+      "SWFI_MONGO_DB=swfi",
+      `SWFI_MONGO_URI=mongodb://user:secret@cluster-a.example.net:27017/swfi?${query}`,
+      "SWFI_MONGO_ALLOWED_HOSTS=cluster-a.example.net",
+    ]);
+    assert.equal(
+      duplicateOption.status,
+      1,
+      `duplicate scalar Mongo options must fail regardless of value or order: ${query}`,
+    );
+  }
+
+  const duplicateSeed = runVerifier("duplicate-seed", [
+    "SWFI2_FACT_SOURCE=mongo",
+    "SWFI_MONGO_DB=swfi",
+    "SWFI_MONGO_URI=mongodb://user:secret@cluster-a.example.net:27017,cluster-a.example.net:27017/swfi?tls=true&directConnection=true",
+    "SWFI_MONGO_ALLOWED_HOSTS=cluster-a.example.net",
+  ]);
+  assert.equal(
+    duplicateSeed.status,
+    1,
+    "direct Mongo mode must contain exactly one raw seed entry",
+  );
+
+  const invalidDuplicateOptionsPolicyPath = path.join(
+    backendEnvFixture,
+    "invalid-duplicate-options-policy.json",
+  );
+  const invalidDuplicateOptionsPolicyDigest = writePolicy(
+    invalidDuplicateOptionsPolicyPath,
+    makePolicy({
+      options: {
+        directconnection: ["true"],
+        retrywrites: ["false", "true"],
+        tls: ["true"],
+      },
+    }),
+  );
+  const invalidDuplicateOptionsPolicy = runVerifier(
+    "invalid-duplicate-options-policy",
+    [
+      "SWFI2_FACT_SOURCE=mongo",
+      "SWFI_MONGO_DB=swfi",
+      "SWFI_MONGO_URI=mongodb://user:secret@cluster-a.example.net:27017/swfi?tls=true&directConnection=true&retryWrites=true",
+      "SWFI_MONGO_ALLOWED_HOSTS=cluster-a.example.net",
+    ],
+    invalidDuplicateOptionsPolicyPath,
+    invalidDuplicateOptionsPolicyDigest,
+  );
+  assert.equal(
+    invalidDuplicateOptionsPolicy.status,
+    1,
+    "Mongo option policy must define exactly one value for each scalar option",
+  );
+
+  const duplicateJsonKeyPolicyPath = path.join(
+    backendEnvFixture,
+    "duplicate-json-key-policy.json",
+  );
+  const duplicateJsonKeyPolicy = `${JSON.stringify(makePolicy(), null, 2).replace(
+    /  "connection_mode": "direct_single_endpoint",/,
+    '  "connection_mode": "direct_single_endpoint",\n  "connection_mode": "direct_single_endpoint",',
+  )}\n`;
+  writeFileSync(duplicateJsonKeyPolicyPath, duplicateJsonKeyPolicy);
+  const duplicateJsonKeyPolicyDigest = createHash("sha256")
+    .update(duplicateJsonKeyPolicy)
+    .digest("hex");
+  const duplicateJsonKeyResult = runVerifier(
+    "duplicate-json-key-policy",
+    [
+      "SWFI2_FACT_SOURCE=mongo",
+      "SWFI_MONGO_DB=swfi",
+      "SWFI_MONGO_URI=mongodb://user:secret@cluster-a.example.net:27017/swfi?tls=true&directConnection=true",
+      "SWFI_MONGO_ALLOWED_HOSTS=cluster-a.example.net",
+    ],
+    duplicateJsonKeyPolicyPath,
+    duplicateJsonKeyPolicyDigest,
+  );
+  assert.equal(
+    duplicateJsonKeyResult.status,
+    1,
+    "duplicate Mongo policy JSON keys must fail instead of using last-value precedence",
+  );
 
   const missingDirectTls = runVerifier("missing-direct-tls", [
     "SWFI2_FACT_SOURCE=mongo",
