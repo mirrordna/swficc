@@ -1,0 +1,1004 @@
+{
+  "schema_version": "swfipn.brd_v1_3_acceptance_matrix.v1",
+  "generated_from": "/Users/mirror-pro/Downloads/SWFI_BRD_v1_3_june2026.docx",
+  "source_text": "output/SWFI_BRD_v1_3_june2026.extracted.txt",
+  "doctrine": [
+    "BRD v1.3 is the contract for Phase 2.",
+    "No generated, inferred, fallback, stale, or internal diagnostic values should be counted as accepted.",
+    "Green HTTP status is not acceptance; each row below needs a current receipt or an explicit blocker."
+  ],
+  "requirements": [
+    {
+      "id": "BRD-DASH-001",
+      "priority": "P0",
+      "area": "Dashboard",
+      "requirement": "Dashboard shell matches the BRD Figure 1 SWFI terminal landing structure: SWFI logo, Dashboard/News/Entities/People/Transactions/Compass/Reports nav, Discover search, feed tabs, Upcoming Events, Market Focus, Newest Data, and Top 10.",
+      "brd_refs": [
+        "P0022-P0026",
+        "P0029-P0034",
+        "P0040-P0051",
+        "T23R003-T23R007"
+      ],
+      "evidence": {
+        "receipt": "output/swfipn-brd-dashboard-receipt-latest.json",
+        "allowed_statuses": [
+          "pass",
+          "pass_with_caveats"
+        ],
+        "max_age_hours": 48,
+        "checks": [
+          {
+            "path": "result.requiredMissing",
+            "op": "empty_array"
+          },
+          {
+            "path": "result.stillLoading",
+            "op": "equals",
+            "value": false
+          },
+          {
+            "path": "result.internalLeaks",
+            "op": "empty_array"
+          }
+        ]
+      }
+    },
+    {
+      "id": "BRD-DASH-002",
+      "priority": "P0",
+      "area": "Dashboard Data",
+      "requirement": "Dashboard packets are source-backed, hide internal details, and do not expose generated or hard-coded values as production data.",
+      "brd_refs": [
+        "T23R005",
+        "T23R006",
+        "T23R054"
+      ],
+      "evidence": {
+        "receipt": "output/swfipn-source-truth-gate-latest.json",
+        "allowed_statuses": [
+          "pass"
+        ],
+        "max_age_hours": 48,
+        "checks": [
+          {
+            "path": "failures",
+            "op": "empty_or_zero"
+          }
+        ]
+      }
+    },
+    {
+      "id": "BRD-SEARCH-001",
+      "priority": "P0",
+      "area": "Global Search",
+      "requirement": "Ctrl/Cmd+K opens a modal with autofocus, immediate grouped results, result links, keyboard close behavior, and no internal leakage.",
+      "brd_refs": [
+        "P0065-P0079",
+        "T23R008"
+      ],
+      "evidence": {
+        "receipt": "output/swfipn-brd-dashboard-receipt-latest.json",
+        "allowed_statuses": [
+          "pass",
+          "pass_with_caveats"
+        ],
+        "max_age_hours": 48,
+        "checks": [
+          {
+            "path": "result.modalOpened",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "result.modalHasGroups",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "result.modalClosed",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "result.internalLeaks",
+            "op": "empty_array"
+          }
+        ]
+      }
+    },
+    {
+      "id": "BRD-SEARCH-002",
+      "priority": "P0",
+      "area": "Global Search Performance",
+      "requirement": "Global Search autocomplete responds under 300ms and the full search results page loads under 800ms.",
+      "brd_refs": [
+        "T25R002",
+        "T25R003"
+      ],
+      "evidence": {
+        "receipt": "output/swfipn-global-search-brd-gate-latest.json",
+        "allowed_statuses": [
+          "pass"
+        ],
+        "max_age_hours": 24,
+        "checks": [
+          {
+            "path": "summary.autocomplete_p95_ms",
+            "op": "lte",
+            "value": 300
+          },
+          {
+            "path": "summary.results_page_ms",
+            "op": "lte",
+            "value": 800
+          }
+        ],
+        "missing_status": "fail"
+      }
+    },
+    {
+      "id": "BRD-LIST-001",
+      "priority": "P0",
+      "area": "List Pages",
+      "requirement": "Entities, People, Transactions, Compass/RFPs, and News list pages show counts, server-backed rows, pagination, row links, and no permanent Loading state.",
+      "brd_refs": [
+        "P0249-P0253",
+        "P0264-P0268",
+        "P0214-P0219",
+        "P0282-P0284",
+        "P0296-P0298"
+      ],
+      "evidence": {
+        "receipt": "output/swfipn-list-data-proof-latest.json",
+        "allowed_statuses": [
+          "pass"
+        ],
+        "max_age_hours": 24,
+        "checks": [
+          {
+            "path": "failures",
+            "op": "empty_or_zero"
+          }
+        ],
+        "missing_status": "fail"
+      }
+    },
+    {
+      "id": "BRD-LIST-002",
+      "priority": "P0",
+      "area": "Table Controls",
+      "requirement": "Applicable data tables support filtering, search, sorting, pagination, and counts.",
+      "brd_refs": [
+        "P0218",
+        "P0222-P0228",
+        "P0250-P0251",
+        "P0265-P0266",
+        "P0284",
+        "P0297-P0298"
+      ],
+      "evidence": {
+        "receipt": "output/swfipn-table-controls-proof-latest.json",
+        "allowed_statuses": [
+          "pass"
+        ],
+        "max_age_hours": 24,
+        "checks": [
+          {
+            "path": "summary.failures",
+            "op": "equals",
+            "value": 0
+          },
+          {
+            "path": "summary.console_issues",
+            "op": "equals",
+            "value": 0
+          },
+          {
+            "path": "summary.page_errors",
+            "op": "equals",
+            "value": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": "BRD-ROUTE-001",
+      "priority": "P0",
+      "area": "Route And Link Parity",
+      "requirement": "Visible links resolve to approved internal SWFIPN record surfaces or allowed external destinations; no raw SWFI record-link leakage on user-visible rows.",
+      "brd_refs": [
+        "T23R003",
+        "T23R005",
+        "T23R008",
+        "T23R011"
+      ],
+      "evidence": {
+        "receipt": "output/swfipn-link-mapping-leakage-gate-latest.json",
+        "allowed_statuses": [
+          "pass"
+        ],
+        "max_age_hours": 24,
+        "checks": [
+          {
+            "path": "failures",
+            "op": "empty_or_zero"
+          },
+          {
+            "path": "summary.failures",
+            "op": "equals",
+            "value": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": "BRD-COMPASS-001",
+      "priority": "P0",
+      "area": "Compass / RFPs",
+      "requirement": "Compass provides Data and Visualization views, counts, filters, RFPs by investment type, RFPs by region, last-12-month line chart, and summary cards.",
+      "brd_refs": [
+        "P0095-P0098",
+        "P0282-P0284",
+        "T23R011-T23R012"
+      ],
+      "evidence": {
+        "receipt": "output/swfipn-compass-brd-gate-latest.json",
+        "allowed_statuses": [
+          "pass"
+        ],
+        "max_age_hours": 24,
+        "missing_status": "blocked"
+      }
+    },
+    {
+      "id": "BRD-PEOPLE-PROFILE-001",
+      "priority": "P1",
+      "area": "People Profiles",
+      "requirement": "People profile detail pages keep the SWFI profile layout and include sub-nav, copy email, LinkedIn, follow, and export actions where source data permits.",
+      "brd_refs": [
+        "P0108-P0129",
+        "T23R013"
+      ],
+      "evidence": {
+        "receipt": "output/swfipn-people-profile-brd-gate-latest.json",
+        "allowed_statuses": [
+          "pass"
+        ],
+        "max_age_hours": 24,
+        "missing_status": "blocked"
+      }
+    },
+    {
+      "id": "BRD-VIZ-001",
+      "priority": "P1",
+      "area": "Visualizations",
+      "requirement": "Transactions, Entities, People, Compass, and League Tables expose Data and Visualization views, clickable charts, filter-synchronized charts, PNG export, CSV export, responsive behavior, and meaningful empty states.",
+      "brd_refs": [
+        "P0140-P0145",
+        "T23R014",
+        "T23R016",
+        "T23R017",
+        "P0219",
+        "P0233-P0236"
+      ],
+      "evidence": {
+        "receipt": "output/swfipn-section-visualization-brd-gate-latest.json",
+        "allowed_statuses": [
+          "pass"
+        ],
+        "max_age_hours": 24,
+        "missing_status": "blocked"
+      }
+    },
+    {
+      "id": "BRD-BACKEND-001",
+      "priority": "P0",
+      "area": "Backend Contracts",
+      "requirement": "Server-side read-only backend contracts expose approved fields for entities, people, transactions, Compass/RFPs, and news with filters, sort, pagination, and freshness receipts.",
+      "brd_refs": [
+        "P0153-P0158",
+        "T23R054",
+        "T23R058"
+      ],
+      "evidence": {
+        "receipt": "output/swfipn-phase2-backend-acceptance-latest.json",
+        "allowed_statuses": [
+          "pass"
+        ],
+        "max_age_hours": 48,
+        "checks": [
+          {
+            "path": "failures",
+            "op": "empty_or_zero"
+          }
+        ]
+      }
+    },
+    {
+      "id": "BRD-UNIVERSE-001",
+      "priority": "P0",
+      "area": "Full Universe Coverage",
+      "requirement": "All source-backed backend records in the accepted universe have a resolvable internal or canonical route; this proves mapping coverage only and must not be represented as full universe parity.",
+      "brd_refs": [
+        "P0153-P0158",
+        "T23R025"
+      ],
+      "evidence": {
+        "receipt": "output/swfipn-full-universe-mapping-latest.json",
+        "allowed_statuses": [
+          "pass"
+        ],
+        "max_age_hours": 24,
+        "checks": [
+          {
+            "path": "failures",
+            "op": "empty_or_zero"
+          }
+        ],
+        "missing_status": "fail"
+      }
+    },
+    {
+      "id": "BRD-UNIVERSE-002",
+      "priority": "P0",
+      "area": "Full Universe Parity",
+      "requirement": "Full universe parity may only be claimed when mapping coverage, exhaustive detail rendering, exhaustive required-field parity, exhaustive browser route parity, current visual baseline, and current adversarial review are all receipt-backed. If any layer is sampled, stale, missing, blocked, harness-failed, or not implemented, full universe parity is UNPROVEN.",
+      "brd_refs": [
+        "P0153-P0158",
+        "T23R025"
+      ],
+      "evidence": {
+        "receipt": "output/swfipn-brd-contract-truth-gate-latest.json",
+        "allowed_statuses": [
+          "pass"
+        ],
+        "max_age_hours": 24,
+        "checks": [
+          {
+            "path": "full_universe_parity_status",
+            "op": "equals",
+            "value": "PASS"
+          },
+          {
+            "path": "bad_news_first",
+            "op": "empty_or_zero"
+          }
+        ],
+        "missing_status": "fail"
+      }
+    },
+    {
+      "id": "BRD-PERF-001",
+      "priority": "P0",
+      "area": "Performance",
+      "requirement": "Dashboard time-to-interactive is under 2s and KPI/data packets render under 500ms.",
+      "brd_refs": [
+        "T25R004",
+        "T25R005"
+      ],
+      "evidence": {
+        "receipt": "output/swfipn-brd-performance-gate-latest.json",
+        "allowed_statuses": [
+          "pass"
+        ],
+        "max_age_hours": 24,
+        "checks": [
+          {
+            "path": "summary.dashboard_tti_ms",
+            "op": "lte",
+            "value": 2000
+          },
+          {
+            "path": "summary.dashboard_data_ms",
+            "op": "lte",
+            "value": 500
+          }
+        ],
+        "missing_status": "fail"
+      }
+    },
+    {
+      "id": "BRD-AGGREGATES-001",
+      "priority": "P1",
+      "area": "Entities Aggregates",
+      "requirement": "Entities Aggregates exposes historical AUM charts by entity class and region, Graph/Data views, smoothing controls for linear, forward fill, rolling 3Y, and raw, plus PNG and CSV export. Smoothing is server-side and raw AUM source rows are not modified.",
+      "brd_refs": [
+        "P0326-P0378",
+        "T23R037-T23R042",
+        "T62R001-T62R008"
+      ],
+      "evidence": {
+        "receipt": "output/swfipn-aggregates-brd-gate-latest.json",
+        "allowed_statuses": [
+          "pass"
+        ],
+        "max_age_hours": 24,
+        "checks": [
+          {
+            "path": "summary.failures",
+            "op": "empty_array"
+          },
+          {
+            "path": "summary.api_status",
+            "op": "equals",
+            "value": "pass"
+          },
+          {
+            "path": "summary.page_status",
+            "op": "equals",
+            "value": "pass"
+          },
+          {
+            "path": "summary.point_count",
+            "op": "gte",
+            "value": 1
+          },
+          {
+            "path": "summary.raw_point_count",
+            "op": "gte",
+            "value": 1
+          },
+          {
+            "path": "summary.chart_present",
+            "op": "gte",
+            "value": 1
+          },
+          {
+            "path": "summary.export_csv",
+            "op": "gte",
+            "value": 1
+          },
+          {
+            "path": "summary.export_png",
+            "op": "gte",
+            "value": 1
+          },
+          {
+            "path": "summary.internal_leaks",
+            "op": "empty_array"
+          },
+          {
+            "path": "summary.console_errors",
+            "op": "empty_array"
+          }
+        ],
+        "missing_status": "blocked"
+      }
+    },
+    {
+      "id": "BRD-API-001",
+      "priority": "P1",
+      "area": "API Product Spine",
+      "requirement": "Versioned JSON API spine exposes docs, X-API-Key authentication, limit/offset pagination, representative filters, product-safe whitelisted list fields, aggregate data, and documented per-key rate limiting against the same approved SWFI data store.",
+      "brd_refs": [
+        "T21R002-T21R010",
+        "T23R018-T23R020"
+      ],
+      "evidence": {
+        "receipt": "output/swfipn-api-product-gate-latest.json",
+        "allowed_statuses": [
+          "pass"
+        ],
+        "max_age_hours": 24,
+        "checks": [
+          {
+            "path": "summary.failures",
+            "op": "empty_array"
+          },
+          {
+            "path": "summary.checked_api_key",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "summary.docs_status",
+            "op": "equals",
+            "value": "pass"
+          },
+          {
+            "path": "summary.unauthenticated_status",
+            "op": "equals",
+            "value": 401
+          },
+          {
+            "path": "summary.aggregates_status",
+            "op": "equals",
+            "value": "pass"
+          }
+        ],
+        "missing_status": "blocked"
+      }
+    },
+    {
+      "id": "BRD-API-KEY-001",
+      "priority": "P1",
+      "area": "API Product Key Lifecycle",
+      "requirement": "Service-token protected API-key lifecycle can create a managed key, return the generated secret once, use the managed key against product endpoints, list metadata without exposing key material or key hashes, revoke the key, and reject the revoked key.",
+      "brd_refs": [
+        "API Product DNS / Key Lifecycle",
+        "T21R002-T21R010"
+      ],
+      "evidence": {
+        "receipt": "output/swfipn-api-key-lifecycle-latest.json",
+        "allowed_statuses": [
+          "pass"
+        ],
+        "max_age_hours": 24,
+        "checks": [
+          {
+            "path": "failures",
+            "op": "empty_array"
+          },
+          {
+            "path": "created_key_returned_once",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "no_secret_values_written",
+            "op": "equals",
+            "value": true
+          }
+        ],
+        "missing_status": "blocked"
+      }
+    },
+    {
+      "id": "BRD-ADMIN-API-UI-001",
+      "priority": "P1",
+      "area": "Admin API Product Console",
+      "requirement": "Admin API Product Console provides a protected operator UI for listing, creating, and revoking product API keys with one-time secret display and no secret/hash leakage in receipts; broader users/orgs/roles/content admin remains deferred.",
+      "brd_refs": [
+        "Admin",
+        "API Product DNS / Key Lifecycle",
+        "T21R002-T21R010"
+      ],
+      "evidence": {
+        "receipt": "output/swfipn-admin-api-ui-brd-gate-latest.json",
+        "allowed_statuses": [
+          "pass"
+        ],
+        "max_age_hours": 24,
+        "checks": [
+          {
+            "path": "failures",
+            "op": "empty_array"
+          },
+          {
+            "path": "blockers",
+            "op": "empty_array"
+          },
+          {
+            "path": "no_secret_values_written",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "no_key_hash_values_written",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "real_swfi_auth_integration_claimed",
+            "op": "equals",
+            "value": false
+          },
+          {
+            "path": "broader_admin_users_orgs_roles_claimed",
+            "op": "equals",
+            "value": false
+          }
+        ],
+        "missing_status": "blocked"
+      }
+    },
+    {
+      "id": "BRD-ADMIN-GOVERNANCE-001",
+      "priority": "P1",
+      "area": "Admin Governance",
+      "requirement": "Admin Governance provides protected organization, user, role-permission, and content workflow contracts with validation, one-time API-key generation for API-enabled organizations, no secret/hash leakage, and no SendGrid or real SWFI auth claims.",
+      "brd_refs": [
+        "T23R021-T23R035",
+        "T29R002-T29R003",
+        "T31R002-T31R011",
+        "T32R004-T32R011",
+        "T55R001-T55R005"
+      ],
+      "evidence": {
+        "receipt": "output/swfipn-admin-governance-brd-gate-latest.json",
+        "allowed_statuses": [
+          "pass"
+        ],
+        "max_age_hours": 24,
+        "checks": [
+          {
+            "path": "failures",
+            "op": "empty_array"
+          },
+          {
+            "path": "blockers",
+            "op": "empty_array"
+          },
+          {
+            "path": "organizations_api_checked",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "users_api_checked",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "role_permissions_checked",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "content_workflow_checked",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "created_api_key_seen_once",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "no_secret_values_written",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "no_key_hash_values_written",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "welcome_email_claimed",
+            "op": "equals",
+            "value": false
+          },
+          {
+            "path": "sendgrid_onboarding_claimed",
+            "op": "equals",
+            "value": false
+          },
+          {
+            "path": "real_swfi_auth_integration_claimed",
+            "op": "equals",
+            "value": false
+          }
+        ],
+        "missing_status": "blocked"
+      }
+    },
+    {
+      "id": "BRD-SAVED-SEARCHES-001",
+      "priority": "P1",
+      "area": "Saved Searches Backend/API",
+      "requirement": "Saved Searches backend/API supports BRD CRUD endpoints, per-user isolation, alert-update confirmation, delete-with-linked-alert behavior, current-results rerun from approved data, linked in-app alert delivery receipts, and product-store persistence without fact-row snapshots.",
+      "brd_refs": [
+        "T81",
+        "T82",
+        "T83"
+      ],
+      "evidence": {
+        "receipt": "output/swfipn-saved-searches-brd-gate-latest.json",
+        "allowed_statuses": [
+          "pass"
+        ],
+        "max_age_hours": 24,
+        "checks": [
+          {
+            "path": "failures",
+            "op": "empty_array"
+          },
+          {
+            "path": "blockers",
+            "op": "empty_array"
+          },
+          {
+            "path": "user_isolation_checked",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "no_secret_values_written",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "no_fact_rows_persisted_in_receipt",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "saved_search_alert_delivery_integrated",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "linked_alert_delivery_receipt_written",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "email_delivery_claimed",
+            "op": "equals",
+            "value": false
+          },
+          {
+            "path": "sendgrid_onboarding_claimed",
+            "op": "equals",
+            "value": false
+          }
+        ],
+        "missing_status": "blocked"
+      }
+    },
+    {
+      "id": "BRD-SAVED-SEARCHES-UI-001",
+      "priority": "P1",
+      "area": "Saved Searches UI",
+      "requirement": "Saved Searches provides a user-facing API-client workspace that can load, create, update with alert confirmation, test linked in-app alert delivery, rerun current source-backed results, and delete saved searches without exposing service tokens, fact-row payloads, or real-auth claims.",
+      "brd_refs": [
+        "P0394-P0399",
+        "T23R049-T23R053"
+      ],
+      "evidence": {
+        "receipt": "output/swfipn-saved-searches-ui-brd-gate-latest.json",
+        "allowed_statuses": [
+          "pass"
+        ],
+        "max_age_hours": 24,
+        "checks": [
+          {
+            "path": "failures",
+            "op": "empty_array"
+          },
+          {
+            "path": "blockers",
+            "op": "empty_array"
+          },
+          {
+            "path": "no_secret_values_written",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "no_fact_rows_persisted_in_receipt",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "real_swfi_auth_integration_claimed",
+            "op": "equals",
+            "value": false
+          },
+          {
+            "path": "saved_search_alert_delivery_ui_available",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "linked_alert_delivery_receipt_written",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "email_delivery_claimed",
+            "op": "equals",
+            "value": false
+          },
+          {
+            "path": "sendgrid_onboarding_claimed",
+            "op": "equals",
+            "value": false
+          }
+        ],
+        "missing_status": "blocked"
+      }
+    },
+    {
+      "id": "BRD-ALERTS-API-001",
+      "priority": "P1",
+      "area": "Alerts Backend/API",
+      "requirement": "Alerts backend/API supports authenticated rule storage, per-user isolation, alert type/channel/frequency validation, plain-English rule preview, 90-day history endpoint, empty-state copy, and in-app/webhook delivery receipts while keeping email delivery unclaimed until SendGrid onboarding.",
+      "brd_refs": [
+        "T65",
+        "T66",
+        "T67",
+        "T68",
+        "T69",
+        "T70",
+        "T71",
+        "T72",
+        "T73"
+      ],
+      "evidence": {
+        "receipt": "output/swfipn-alerts-brd-gate-latest.json",
+        "allowed_statuses": [
+          "pass"
+        ],
+        "max_age_hours": 24,
+        "checks": [
+          {
+            "path": "failures",
+            "op": "empty_array"
+          },
+          {
+            "path": "blockers",
+            "op": "empty_array"
+          },
+          {
+            "path": "user_isolation_checked",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "no_secret_values_written",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "no_delivery_claimed_without_receipts",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "webhook_delivery_receipts_enabled",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "email_delivery_claimed",
+            "op": "equals",
+            "value": false
+          },
+          {
+            "path": "sendgrid_onboarding_claimed",
+            "op": "equals",
+            "value": false
+          }
+        ],
+        "missing_status": "blocked"
+      }
+    },
+    {
+      "id": "BRD-ALERTS-UI-001",
+      "priority": "P1",
+      "area": "Alerts Page UI",
+      "requirement": "Alerts page UI provides an operator/subscriber API client for loading, creating, testing delivery for, disabling, reviewing history for, and deleting alert rules through the protected Alerts API, without embedding secrets, exposing internal record payloads, or claiming email delivery before SendGrid onboarding.",
+      "brd_refs": [
+        "T65",
+        "T66",
+        "T67",
+        "T68",
+        "T69",
+        "T70",
+        "T71",
+        "T72",
+        "T73"
+      ],
+      "evidence": {
+        "receipt": "output/swfipn-alerts-ui-brd-gate-latest.json",
+        "allowed_statuses": [
+          "pass"
+        ],
+        "max_age_hours": 24,
+        "checks": [
+          {
+            "path": "failures",
+            "op": "empty_array"
+          },
+          {
+            "path": "blockers",
+            "op": "empty_array"
+          },
+          {
+            "path": "no_secret_values_written",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "no_delivery_claimed_without_receipts",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "real_swfi_auth_integration_claimed",
+            "op": "equals",
+            "value": false
+          },
+          {
+            "path": "email_delivery_claimed",
+            "op": "equals",
+            "value": false
+          },
+          {
+            "path": "test_delivery_ui_available",
+            "op": "equals",
+            "value": true
+          }
+        ],
+        "missing_status": "blocked"
+      }
+    },
+    {
+      "id": "BRD-ALERT-DELIVERY-001",
+      "priority": "P1",
+      "area": "Alert Delivery Receipts",
+      "requirement": "Alert delivery worker stores in-app and webhook delivery receipts, proves webhook test delivery end-to-end, keeps email delivery unclaimed until SendGrid onboarding, and exposes 90-day history from stored receipts.",
+      "brd_refs": [
+        "T65",
+        "T66",
+        "T67",
+        "T68",
+        "T69",
+        "T70",
+        "T71",
+        "T72",
+        "T73"
+      ],
+      "evidence": {
+        "receipt": "output/swfipn-alert-delivery-brd-gate-latest.json",
+        "allowed_statuses": [
+          "pass"
+        ],
+        "max_age_hours": 24,
+        "checks": [
+          {
+            "path": "failures",
+            "op": "empty_array"
+          },
+          {
+            "path": "blockers",
+            "op": "empty_array"
+          },
+          {
+            "path": "webhook_delivery_receipt_written",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "in_app_delivery_receipt_written",
+            "op": "equals",
+            "value": true
+          },
+          {
+            "path": "email_delivery_claimed",
+            "op": "equals",
+            "value": false
+          },
+          {
+            "path": "sendgrid_onboarding_claimed",
+            "op": "equals",
+            "value": false
+          },
+          {
+            "path": "real_swfi_auth_integration_claimed",
+            "op": "equals",
+            "value": false
+          }
+        ],
+        "missing_status": "blocked"
+      }
+    },
+    {
+      "id": "BRD-DEFERRED-001",
+      "priority": "P2",
+      "area": "Explicitly Deferred Product Areas",
+      "requirement": "Explicit deferred P2 areas are tracked honestly and not claimed complete: email delivery/SendGrid onboarding, target-runtime SWFI session bridge configuration, and api.swfi.com DNS cutover.",
+      "brd_refs": [
+        "Alerts",
+        "Saved Searches",
+        "API Product DNS"
+      ],
+      "evidence": {
+        "manual_status": "blocked",
+        "reason": "These P2 areas remain outside the current accepted scope until target-runtime receipts pass. API-key lifecycle UI, Admin Governance, Saved Searches backend/API with linked in-app alert delivery receipts, Saved Searches UI API client with linked alert delivery test, Alerts backend/API, Alerts page UI API client, alert in-app/webhook delivery receipts, and local SWFI session bridge mechanics are separately receipt-backed."
+      }
+    }
+  ]
+}

@@ -1,0 +1,101 @@
+name: swfi2-remote-source
+
+services:
+  swfi2-key-store-init:
+    image: alpine:3.21
+    restart: "no"
+    command: ["sh", "-c", "mkdir -p /app/product-state && chown -R 10002:10002 /app/product-state"]
+    volumes:
+      - swfi2_api_product_key_store:/app/product-state
+
+  swfi2-backend:
+    build:
+      context: ${SWFI2_BACKEND_CONTEXT:-../../../SWFI2.0-final}
+      dockerfile: Dockerfile
+    image: swfi2/backend:remote-source
+    restart: unless-stopped
+    depends_on:
+      swfi2-key-store-init:
+        condition: service_completed_successfully
+    environment:
+      SWFI2_SERVICE_NAME: swfi2-remote-source-backend
+      SWFI2_HOST: 0.0.0.0
+      SWFI2_PORT: 8362
+      SWFI2_FACT_SOURCE: mongo
+      SWFI2_STRICT_BOOT: "1"
+      SWFI2_ALLOW_UNAUTH_LOCAL: "0"
+      SWFI2_MONGO_CUTOVER_GUARD: "1"
+      SWFI2_PRODUCT_API_KEY_STORE_PATH: /app/product-state/api-product-keys.json
+      SWFI2_ADMIN_STORE_PATH: /app/product-state/admin-governance.json
+      SWFI2_SAVED_SEARCH_STORE_PATH: /app/product-state/saved-searches.json
+      SWFI2_ALERT_STORE_PATH: /app/product-state/alerts.json
+      SWFI_MONGO_DB: ${SWFI_MONGO_DB:-swfi}
+      # Explicit governed remote Atlas URI. Local and in-stack Mongo are forbidden.
+      SWFI_MONGO_URI: ${SWFI_ATLAS_URI:?SWFI_ATLAS_URI must be an approved remote Atlas URI}
+      SWFI2_API_TOKEN: ${SWFI2_API_TOKEN:?SWFI2_API_TOKEN is required}
+    volumes:
+      - swfi2_api_product_key_store:/app/product-state
+    expose:
+      - "8362"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8362/healthz', timeout=5).read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  swfipn-web:
+    build:
+      context: ${SWFIPN_FRONTEND_CONTEXT:-../..}
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_SWFI_BACKEND_URL: same-origin
+        NEXT_PUBLIC_BACKEND_URL: same-origin
+    image: swfi2/web:remote-source
+    restart: unless-stopped
+    depends_on:
+      swfi2-backend:
+        condition: service_healthy
+    environment:
+      SWFIPN_HOST: 0.0.0.0
+      SWFIPN_PORT: 8353
+      SWFIPN_ROOT: /app/out
+      SWFIPN_BACKEND: http://swfi2-backend:8362
+      SWFIPN_BACKEND_TIMEOUT: "75"
+      SWFIPN_BACKEND_TOKEN_USE_KEYCHAIN: "0"
+      SWFIPN_REQUIRE_RECORD_AUTH: "1"
+      SWFIPN_BACKEND_TOKEN: ${SWFIPN_BACKEND_TOKEN:?SWFIPN_BACKEND_TOKEN must match SWFI2_API_TOKEN}
+      SWFIPN_AUTH_USERNAME: ${SWFIPN_AUTH_USERNAME:?SWFIPN_AUTH_USERNAME is required}
+      SWFIPN_AUTH_PASSWORD: ${SWFIPN_AUTH_PASSWORD:?SWFIPN_AUTH_PASSWORD is required}
+      SWFIPN_AUTH_SESSION_SECRET: ${SWFIPN_AUTH_SESSION_SECRET:?SWFIPN_AUTH_SESSION_SECRET is required}
+    expose:
+      - "8353"
+    healthcheck:
+      test: ["CMD", "python", "/app/swfipn-container-healthcheck.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    depends_on:
+      swfipn-web:
+        condition: service_healthy
+    environment:
+      SWFIPN_DOMAIN: ${SWFIPN_DOMAIN:?SWFIPN_DOMAIN is required}
+      SWFIPN_API_DOMAIN: ${SWFIPN_API_DOMAIN:-api.swfi.com}
+      ACME_EMAIL: ${ACME_EMAIL:-admin@activemirror.ai}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - swfi2_caddy_data:/data
+      - swfi2_caddy_config:/config
+
+volumes:
+  swfi2_api_product_key_store:
+  swfi2_caddy_data:
+  swfi2_caddy_config:

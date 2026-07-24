@@ -1,0 +1,487 @@
+Key Enhancements (High Impact)
+
+
+
+1 Dashboard
+A single screen where users can discover, analyze, and act on institutional capital flows in under 60 seconds
+
+1.1 Top Section (Snapshot KPIs)
+        Total Institutions tracked (Entity Numbers)
+        Active Allocators (last 90 days)
+        Live RFPs / Mandates
+        Recent Transactions
+
+1.2 Smart Search Bar (VERY IMPORTANT)
+Search: Institution, Person, Strategy
+Add AI suggestion
+       “Top SWFs investing in Real Estate ”
+
+1.3 Quick Insights Panels
+        Top Active Investors (last 30 days)
+        Recently Fundraising Institutions
+        News
+
+
+
+
+                                                                                                                1
+SWFI LOGO      🔍 Smart Search Bar                                    Profile          Alerts 🔔
+
+
+Sidebar                                      Main Dashboard Area                      Action
+Dashboard           📊 KPI CARDS                                                       Saved
+Institutions        Active Allocators         Live RFPs                Transactions   Alerts
+People                                                                                Recent
+Transactions                                                                          Viewed
+RFPs
+Reports
+Saved Lists         📈 INSIGHTS
+                       -   Top Investors (Last 30 Days)
+                       -   New Market Entries
+                       -   Fundraising Activity
+
+
+                    📌 QUICK ACTIONS
+                         [Find LPs] [View Mandates] [Search Deals]
+
+
+
+
+                                                                                                 2
+2 Intelligence Visualization Layer
+Objective: Create Immediate User-Facing “Wow” Factor Using Existing Data
+
+2.1 Historical Performance Dashboard
+Allow users to view historical trends across supported data fields.
+User Flow
+
+   •   Select the Entity Type from a dropdown
+   •   Select the Entity Name using autocomplete search
+   •   Once selected, the user can either:
+   •   View the entity’s existing Profile Page from the system, or
+   •   Select the relevant Chart Type to analyze historical trends
+   •   Where applicable, the dashboard also displays benchmark / percentile positioning against relevant peer groups
+
+
+Available Chart Views
+
+   •   AUM over time
+   •   Growth / decline trends
+   •   Historical performance metrics
+   •   Time-series visualization of other tracked financial/statistical metrics
+
+
+
+Benchmark / Percentile Positioning
+   •   Provide percentile-based contextual ranking against relevant peer groups
+   •   Compare entities by supported metrics such as long-term performance, AUM growth, or other tracked
+       financial/statistical indicators
+   •   Display ranking outputs in clear, business-friendly language
+
+                                                                                                                   3
+   •   Illustrative Benchmark Outputs
+           o “This sovereign wealth fund ranks in the top 12% of peers by 10-year performance.”
+           o “This pension fund ranks in the 85th percentile for AUM growth among North American pensions.
+
+
+Dashboard Actions
+   •   Download/export functionality
+
+2.2 Peer Comparison Engine
+Enable side-by-side comparison of peer institutions within entity classes.
+Illustrative Comparisons
+      Sovereign Wealth Funds
+
+          o   ADIA vs GIC vs Temasek
+
+      Public Pensions
+          o   CPP vs OMERS vs OTPP
+
+      Endowments
+
+          o   Yale vs Harvard vs Princeton
+
+Supported Metrics
+      AUM
+
+      CAGR
+
+      Historical performance
+      Other tracked comparative metrics
+
+
+                                                                                                             4
+2.3 Dynamic Rankings Engine
+Generate dynamic rankings across supported datasets and metrics.
+Illustrative Rankings
+      Largest AUM
+
+      Fastest AUM Growth
+
+      Best Historical Returns
+
+      Other supported ranking criteria
+
+
+
+
+                                                                   5
+3 KPI Definitions
+3.1 Total Institutions Tracked
+     Definition: Total unique entities in database
+     Includes:
+         o SWFs
+         o Pension Funds
+         o Asset Managers
+         o Family Offices
+
+3.2 Live RFPs / Mandates
+     Open mandates (not expired)
+     Filter:
+          o Sector
+          o Ticket size
+
+3.3 Recent Transactions
+     Deals in last:
+        o 30 / 60 / 90 days
+
+3.4 Active Allocators (Last 90 Days)
+     Investors with:
+         o ≥ 1 deal
+         o OR ≥1 mandate
+
+
+
+
+                                                      6
+4 QUICK INSIGHTS PANELS (INTELLIGENCE LAYER)
+INSIGHTS
+
+Top Investors                    Fundraising            Market Activity       News
+
+
+
+
+4.1 Top Active Investors (Last 30 Days)
+Institution                   Deals            Sector                     Region
+
+
+
+
+4.2 News / Intelligence Feed
+Examples
+      ADIA invests in AI fund
+      GIC launches new infrastructure fund
+      Limad holding
+
+
+
+
+                                                                                     7
+5 Alerts System
+Trigger alerts for:
+      New deals
+      New mandates
+      Investor activity
+
+
+6 Saved Views
+Users can save:
+      Filters
+      Search queries
+      Custom dashboards
+
+
+7 Dashboard Requirements
+7.1 User Experience Requirements
+User should be able to:
+   1. See institutional investor overview through key KPIs
+   2. Identify active investors
+   3. Understand market and investment trends
+   4. Drill into relevant opportunities
+   5. Take action directly from the dashboard
+All of the above should be achievable within a single dashboard screen.
+
+
+                                                                          8
+7.2 Platform Integration Requirements
+The dashboard shall not reinvent the wheel. It shall function as both an institutional investor intelligence layer and a
+gateway into the existing SWFI platform.
+The dashboard shall not simply regurgitate information that already exists elsewhere in the system. Instead, it should
+highlight, synthesize, and contextualize existing SWFI data in a way that helps users quickly understand institutional
+investor activity, identify relevant institutions, and navigate to deeper platform assets when needed.
+Information presented in the dashboard should remain tightly integrated with existing SWFI platform assets, such as
+profile pages.
+For example, ranked lists such as sovereign wealth funds by assets under management should be displayed in tabular
+form, with each row hyperlinked directly to its corresponding SWFI profile page.
+The same principle should apply to charts and visualizations. Chart elements, data points, labels, or underlying records
+should link back to relevant SWFI profile pages, lists, datasets, transactions, or other existing platform assets where
+applicable.
+
+
+
+
+                                                                                                                           9
+8 Key Enhancements (High Impact)
+Top-Funded Business Models Dashboard: Clear visibility into where sovereign wealth funds are deploying capital
+(AI,Real Estate, Infrastructure, Private Credit, Energy, etc.)
+Competitor Intelligence Module: Side-by-side comparison of SWFs, asset managers, and investment strategies to help
+clients identify positioning and opportunities
+Investment Trend Analytics: Real-time insights into capital flows, sector shifts, and regional allocation trends
+Deal & Transaction Intelligence: Deeper visibility into ticket sizes, co-investments, and investment patterns
+
+8.1 Top-Funded Business Models Dashboard
+8.1.1 What to Build
+      Dedicated dashboard showing:
+         o AI
+         o Infrastructure
+         o Private Credit
+         o Real Estate
+         o Emerging sectors
+8.1.2 What It Solves
+      Identifies where sovereign capital is actively being deployed
+      Helps clients align investment strategies with market direction
+
+
+
+
+                                                                                                                   10
+8.1.3 Investment Trends by Sector (Example)
+Sector                          Capital Deployed              Growth %   Active Investors
+
+AI                              $120B                         +35%       45 Investors
+
+Real Estate                     $90B                          +12%       60 Investors
+
+Infrastructure                  $110B                         +15%       50 Investors
+
+Private Credit                  $80B                          +18%       40 Investors
+
+Energy                          $70B                          +5%        35 Investors
+
+
+
+
+8.2 Competitor Intelligence Module (Game Changer)
+8.2.1 What to Build
+Side-by-side comparison of:
+        SWFs
+        Asset Managers
+        Family office
+Key Metrics AUM, Strategy allocation, Deal activity, Regional focus
+
+8.2.2 What It Solves
+Enables clients to Benchmark themselves
+Identify gaps & opportunities
+
+                                                                                            11
+8.2.3 Competition Analysis (Example)
+Compare: [ADIA] vs [GIC] vs [CPP]                        Add Institution [+]
+
+Metric                 ADIA            GIC     CPP
+
+AUM                    $800B           $600B   $500B
+
+Strategy               Multi           Multi   Pension
+
+Regions                Global          Asia    NA
+
+Total Transactions     120             90      70
+
+Asset Allocation
+
+
+
+
+                                                                               12
+8.3 Investment Trend Analytics
+8.3.1 What to Build
+        Real-time dashboards showing:
+        Capital flows
+        Sector shifts
+        Regional allocation trends
+8.3.2 What It Solves
+        Provides macro + micro market intelligence
+        Helps clients anticipate where capital is moving next
+8.3.3 Business Impact
+        Positions SWFI as a strategic intelligence platform
+        Improves client retention & engagement
+8.3.4 Examples
+       “Where are SWFs deploying capital in the last 12 months?”
+8.3.4.1 Output
+Sector                                  Capital Deployed           Growth
+AI                                      $120B                      +35%
+Infrastructure                          $90B                       +12%
+Energy                                  $70B                       +5%
+
+
+8.4 Sector Shift Intelligence (Key Differentiator)
+📊 Sector Shift Heatmap
+
+
+
+
+                                                                            13
+Sector                         2022                            2023                          2024
+
+AI                             10%                             18%                           28%
+
+Infrastructure                 30%                             28%                           25%
+
+
+
+
+8.4.1 Example Insight
+SWFs are shifting from traditional infrastructure to AI & tech-driven investments
+
+8.5 Regional Allocation Trends
+� Global Allocation Map
+Region                                    Capital                                   % Allocation
+North America                             $150B                                     40%
+Asia                                      $120B                                     32%
+Europe                                    $80B                                      21%
+
+
+
+
+                                                                                                    14
+8.6 Investor Activity Intelligence
+🔥 Most Active Investors (Last 6 Months)
+Institution                 Deals                            Sector Focus       Region
+ADIA                        25                               Infra, AI          Global
+GIC                         20                               Tech               Asia
+
+
+ADIA has increased AI exposure by 40% in the last 6 months
+
+8.7 Co-Investment Tracking
+A Co-Investment Intelligence Layer that shows:
+      Who invests together
+      In which sectors
+      At what ticket sizes
+      How frequently
+
+Filters: Sector                  Region                      Ticket Size        Time Range
+
+
+📊 KPI Cards
+Total Co-Invest Deals            Avg Deal Size               Active Investors
+� Network Graph (Core Visual)
+Nodes: Investors (SWFs, AMs)
+Links: Co-invest relationships
+
+
+
+
+                                                                                             15
+Table View
+Investor A               Investor B               Sector                  Deal                 Amount
+ADIA                     GIC                      Infrastructure          Port Project         $1.2B
+ADIA                     CPP                      Energy                  Renewables           $800M
+
+
+ADIA frequently co-invests with GIC in infrastructure deals
+
+8.7.1 Institution Profile Integration
+
+
+� Co-Investment Partners
+Partner                        Deals Together                  Sector Focus              Last Deal
+GIC                            12                              Infra                     2024
+CPP                            8                               Energy                    2023
+
+
+
+
+                                                                                                        16
+9 Deal & Transaction Intelligence
+9.1 Investor Behavior & Co-Investment Intelligence
+9.1.1 What to Build
+     Deep visibility into:
+        o Ticket sizes
+        o Co-investments
+        o Investment frequency
+        o Partner networks
+9.1.2 What It Solves
+     Helps clients:
+         o Understand deal patterns
+         o Identify co-investment opportunities
+9.1.3 Business Impact
+     Direct revenue use case
+     Enhances LP targeting and deal sourcing
+
+9.2 Investor Discovery & Recommendation
+9.2.1 What to Build
+     Natural language queries:
+         o “Which SWFs are investing in infrastructure in Asia?”
+     Predictive recommendations:
+         o Suggested investors
+         o Relevant mandates
+
+
+                                                                   17
+9.2.2 What It Solves
+        Converts data -> actionable intelligence & Reduces dependency on manual research
+
+9.3 Investor Fit Targeting
+9.3.1 What to Build
+Distribution of deal sizes:
+        <$100M
+        $100M-$500M
+        $500M+
+Average ticket size per investor
+Sector-wise ticket trends
+9.3.1.1 Example (SWFI Client Use Case)
+Client: Private Equity Fund
+       “Which SWFs invest in $200M-$500M deals in Infrastructure?”
+Output:
+        ADIA -> Avg $350M
+        GIC -> Avg $280M
+        Temasek -> Avg $400M
+9.3.2 Benefit to Customer
+Targets right investors with right cheque size
+Avoids mismatched outreach
+
+
+
+
+                                                                                            18
+9.4 Co-Investment Intelligence
+9.4.1 What to Build
+Who invests together
+Frequency of partnerships
+Sector-based co-investment clusters
+9.4.1.1 Example
+       “Who co-invests with ADIA in infrastructure?”
+Output:
+        GIC (12 deals)
+        CPP (8 deals)
+        Mubadala (6 deals)
+9.4.2 Benefit to Customer
+Identifies:
+        Strong investor relationships
+        Potential entry points
+
+9.5 Investment Frequency (Behavioral Insight)
+9.5.1 What to Build
+Deals per year
+Sector frequency
+Investment cycles
+Investor                         Deals/Year            Sector Focus
+
+                                                                      19
+ADIA                         20           Infra, Energy
+GIC                          15           Tech, AI
+
+
+
+9.5.2 Benefit to Customer
+      Identifies:
+          o Active vs passive investors
+          o Timing for outreach
+
+
+
+
+                                                          20
+

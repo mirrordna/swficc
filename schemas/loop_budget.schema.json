@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LoopBudget",
+  "type": "object",
+  "required": [
+    "scope_id",
+    "max_builder_passes",
+    "max_prosecutor_passes",
+    "max_internal_refinements_per_pass",
+    "extra_passes_allowed_only_if"
+  ],
+  "properties": {
+    "scope_id": {
+      "type": "string"
+    },
+    "scope_description": {
+      "type": "string"
+    },
+    "max_builder_passes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "max_prosecutor_passes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "max_internal_refinements_per_pass": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "extra_passes_allowed_only_if": {
+      "type": "string"
+    },
+    "stop_when": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "required_receipts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

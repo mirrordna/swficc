@@ -130,7 +130,7 @@ export interface TrendItem {
   note?: string;
 }
 
-export interface BusinessModelItem extends TrendItem {}
+export type BusinessModelItem = TrendItem;
 
 export interface SectorShiftCell {
   label: string;

@@ -1,0 +1,77 @@
+{
+  "schema_version": "swfi.data_quality_contract.v1",
+  "owner": "SWFI",
+  "principles": [
+    "No generated or inferred values may appear as source truth.",
+    "Public dashboard fields must be whitelisted.",
+    "Internal IDs, backend diagnostics, source_gap flags, and model labels are not public fields.",
+    "Normalization must preserve raw source evidence internally while exposing one canonical presentation value."
+  ],
+  "field_rules": [
+    {
+      "id": "state_canonicalization",
+      "scope": ["entities", "people"],
+      "fields": ["state"],
+      "severity": "high",
+      "rule": "State values exposed by API must use one canonical display format per country and retain source/raw state internally.",
+      "examples": [
+        { "raw": "NY", "canonical": "New York" },
+        { "raw": "New York State", "canonical": "New York" }
+      ],
+      "acceptance": [
+        "canonical_state or state_canonical is available for API clients when state is present",
+        "raw source value is not discarded in internal provenance",
+        "public dashboard does not mix abbreviations and long forms for the same jurisdiction"
+      ]
+    },
+    {
+      "id": "money_numeric_sorting",
+      "scope": ["transactions", "entities"],
+      "fields": ["amount", "amount_usd", "aum"],
+      "severity": "high",
+      "rule": "Money fields used for sorting must expose a numeric normalized value and display value separately.",
+      "acceptance": [
+        "numeric value sorts numerically, not lexicographically",
+        "currency/display label remains source-backed",
+        "missing or undisclosed values sort after disclosed numeric values unless a filter explicitly includes undisclosed"
+      ]
+    },
+    {
+      "id": "date_iso_format",
+      "scope": ["transactions", "compass", "news", "reports"],
+      "fields": ["closed_at", "published_at", "updated_at", "deadline"],
+      "severity": "medium",
+      "rule": "Dates exposed by API must be ISO-8601 date or datetime strings, with source/raw dates retained internally.",
+      "acceptance": [
+        "invalid BSON or out-of-range dates are blocked from display",
+        "records without disclosed dates are labeled by business copy or omitted from date-ranked modules",
+        "date-ranked modules sort from parsed normalized dates"
+      ]
+    },
+    {
+      "id": "source_receipt_required",
+      "scope": ["dashboard_modules", "mcp_tools", "partner_api"],
+      "fields": ["source_lineage", "data_timestamp", "query_receipt"],
+      "severity": "critical",
+      "rule": "Every visible metric, tool response, and partner API packet must have a source lineage, timestamp, and query receipt.",
+      "acceptance": [
+        "source_lineage is non-empty for fact packets",
+        "data_timestamp is present",
+        "query_receipt is present and audit-scoped",
+        "stale packets are blocked or explicitly marked unavailable internally"
+      ]
+    },
+    {
+      "id": "public_field_whitelist",
+      "scope": ["dashboard_modules", "partner_api"],
+      "fields": ["all_public_fields"],
+      "severity": "critical",
+      "rule": "Public payloads must not expose object IDs, source_gap, backend names, model names, stack traces, or service diagnostics.",
+      "acceptance": [
+        "public payload scanner finds zero forbidden fields",
+        "dashboard leakage scanner finds zero forbidden labels",
+        "partner API schema documents allowed fields and deprecations"
+      ]
+    }
+  ]
+}

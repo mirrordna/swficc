@@ -1,0 +1,225 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: swfi2
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: swfi2-secrets
+  namespace: swfi2
+type: Opaque
+stringData:
+  # Remote Atlas only. This stack never provisions or accepts a local Mongo.
+  swfiAtlasUri: mongodb+srv://REPLACE_ME
+  swfi2ApiToken: REPLACE_ME
+  swfipnBackendToken: REPLACE_ME
+  swfipnAuthUsername: swfi1
+  swfipnAuthPassword: REPLACE_ME
+  swfipnAuthSessionSecret: REPLACE_ME
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: swfi2-config
+  namespace: swfi2
+data:
+  SWFI_MONGO_DB: swfi
+  SWFI2_FACT_SOURCE: mongo
+  SWFI2_STRICT_BOOT: "1"
+  SWFI2_ALLOW_UNAUTH_LOCAL: "0"
+  SWFI2_MONGO_CUTOVER_GUARD: "1"
+  SWFIPN_BACKEND: http://swfi2-backend:8362
+  SWFIPN_BACKEND_TIMEOUT: "75"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: swfi2-backend
+  namespace: swfi2
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: swfi2-backend
+  template:
+    metadata:
+      labels:
+        app: swfi2-backend
+    spec:
+      containers:
+        - name: backend
+          image: registry.example.com/swfi2/backend@sha256:REPLACE_BACKEND_DIGEST
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8362
+          env:
+            - name: SWFI2_SERVICE_NAME
+              value: swfi2-k8s-backend
+            - name: SWFI2_HOST
+              value: 0.0.0.0
+            - name: SWFI2_PORT
+              value: "8362"
+            - name: SWFI_MONGO_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: swfi2-config
+                  key: SWFI_MONGO_DB
+            - name: SWFI2_FACT_SOURCE
+              valueFrom:
+                configMapKeyRef:
+                  name: swfi2-config
+                  key: SWFI2_FACT_SOURCE
+            - name: SWFI2_STRICT_BOOT
+              valueFrom:
+                configMapKeyRef:
+                  name: swfi2-config
+                  key: SWFI2_STRICT_BOOT
+            - name: SWFI2_ALLOW_UNAUTH_LOCAL
+              valueFrom:
+                configMapKeyRef:
+                  name: swfi2-config
+                  key: SWFI2_ALLOW_UNAUTH_LOCAL
+            - name: SWFI2_MONGO_CUTOVER_GUARD
+              valueFrom:
+                configMapKeyRef:
+                  name: swfi2-config
+                  key: SWFI2_MONGO_CUTOVER_GUARD
+            - name: SWFI_MONGO_URI
+              valueFrom:
+                secretKeyRef:
+                  name: swfi2-secrets
+                  key: swfiAtlasUri
+            - name: SWFI2_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: swfi2-secrets
+                  key: swfi2ApiToken
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8362
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8362
+            initialDelaySeconds: 30
+            periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: swfi2-backend
+  namespace: swfi2
+spec:
+  ports:
+    - name: http
+      port: 8362
+      targetPort: 8362
+  selector:
+    app: swfi2-backend
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: swfipn-web
+  namespace: swfi2
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: swfipn-web
+  template:
+    metadata:
+      labels:
+        app: swfipn-web
+    spec:
+      containers:
+        - name: web
+          image: registry.example.com/swfi2/web@sha256:REPLACE_WEB_DIGEST
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8353
+          env:
+            - name: SWFIPN_HOST
+              value: 0.0.0.0
+            - name: SWFIPN_PORT
+              value: "8353"
+            - name: SWFIPN_ROOT
+              value: /app/out
+            - name: SWFIPN_BACKEND
+              valueFrom:
+                configMapKeyRef:
+                  name: swfi2-config
+                  key: SWFIPN_BACKEND
+            - name: SWFIPN_BACKEND_TIMEOUT
+              valueFrom:
+                configMapKeyRef:
+                  name: swfi2-config
+                  key: SWFIPN_BACKEND_TIMEOUT
+            - name: SWFIPN_BACKEND_TOKEN_USE_KEYCHAIN
+              value: "0"
+            - name: SWFIPN_BACKEND_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: swfi2-secrets
+                  key: swfipnBackendToken
+            - name: SWFIPN_AUTH_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: swfi2-secrets
+                  key: swfipnAuthUsername
+            - name: SWFIPN_AUTH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: swfi2-secrets
+                  key: swfipnAuthPassword
+            - name: SWFIPN_AUTH_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: swfi2-secrets
+                  key: swfipnAuthSessionSecret
+          readinessProbe:
+            httpGet:
+              path: /swficc/__origin/ready
+              port: 8353
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /swficc/
+              port: 8353
+            initialDelaySeconds: 30
+            periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: swfipn-web
+  namespace: swfi2
+spec:
+  ports:
+    - name: http
+      port: 8353
+      targetPort: 8353
+  selector:
+    app: swfipn-web
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: swfipn
+  namespace: swfi2
+spec:
+  rules:
+    - host: swfipn.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: swfipn-web
+                port:
+                  number: 8353

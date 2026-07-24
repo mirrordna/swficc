@@ -1,0 +1,11 @@
+[Unit]
+Description=Run SWFIPN source freshness audit daily
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 UTC
+Persistent=true
+RandomizedDelaySec=300
+Unit=swfipn-freshness-audit.service
+
+[Install]
+WantedBy=timers.target

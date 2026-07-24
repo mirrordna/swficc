@@ -1,0 +1,17 @@
+[Unit]
+Description=SWFIPN daily source freshness audit
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/swfipn-freshness-audit
+User=root
+Group=root
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/swfipn/freshness

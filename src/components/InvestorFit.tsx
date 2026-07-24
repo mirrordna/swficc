@@ -1,52 +1,79 @@
 "use client";
 
 import type { InvestorFitTargeting } from "@/lib/types";
+import { selfContainedHref, sourceProvenanceHref } from "@/lib/selfContainedLinks";
+import SourceGap from "./SourceGap";
 
 export default function InvestorFit({ data }: { data: InvestorFitTargeting }) {
   return (
-    <article className="bg-white border border-gray-200 rounded-[10px] shadow-sm p-[18px]">
-      <div className="mb-3.5">
-        <p className="m-0 mb-1 text-[#1a5276] text-[0.66rem] font-bold font-mono uppercase tracking-wider">Investor Fit</p>
-        <h3 className="m-0 text-[1.08rem] font-bold text-gray-900">Ticket-Size Targeting</h3>
+    <article className="border border-gray-300 bg-white p-3">
+      <div className="mb-3">
+        <h3 className="m-0 text-base font-semibold text-black">Investor Fit Targeting</h3>
       </div>
 
-      {/* Question + benefit */}
-      <a href={data.href || "/ask-swfi"} className="grid gap-1 p-3 border border-gray-200 rounded-lg no-underline text-inherit hover:border-[#1a5276] transition-colors mb-3">
+      <a
+        href={selfContainedHref(data.href, "/search/")}
+        data-source-state={sourceProvenanceHref(data.href) ? "on-file" : undefined}
+        title={sourceProvenanceHref(data.href) ? "View details" : undefined}
+        className="grid gap-1 border border-gray-300 p-3 no-underline text-inherit hover:bg-gray-50 mb-3"
+      >
         <strong className="text-gray-900">{data.question}</strong>
         <p className="m-0 text-gray-600 text-sm">{data.benefit}</p>
       </a>
 
-      {/* Criteria chips */}
       <div className="flex flex-wrap gap-2 mb-3">
         {data.criteria.map((c) => (
-          <span key={c} className="px-3 py-1 bg-gray-100 rounded-full text-xs text-gray-700">{c}</span>
+          <span key={c} className="border border-gray-300 px-3 py-1 text-xs text-gray-700">{c}</span>
         ))}
       </div>
 
-      {/* Ticket size distribution */}
       <div className="flex gap-2 mb-3.5">
-        {data.ticket_size_distribution.map((b) => (
-          <a key={b.label} href={b.href || "/ask-swfi"} className="px-4 py-2 bg-gray-100 border border-gray-200 rounded-md text-gray-800 text-[0.82rem] font-semibold no-underline hover:border-[#1a5276] hover:bg-white transition-colors">
+        {!data.ticket_size_distribution.length && <SourceGap message="Ticket-size distribution requires approved SWFI deal-size rows. No illustrative ticket bands are shown." />}
+        {data.ticket_size_distribution.map((b) => {
+          const provenance = sourceProvenanceHref(b.href);
+          return (
+          <a
+            key={b.label}
+            href={selfContainedHref(b.href, "/search/")}
+            data-source-state={provenance ? "on-file" : undefined}
+            title={provenance ? "View details" : undefined}
+            className="border border-gray-300 px-3 py-1.5 text-sm text-black no-underline hover:bg-gray-50"
+          >
             {b.label}
           </a>
-        ))}
+          );
+        })}
       </div>
 
-      {/* Table */}
       <div className="overflow-x-auto">
-        <div className="grid bg-gray-50 rounded-t-md" style={{ gridTemplateColumns: "1fr 1fr 0.8fr 0.6fr" }}>
-          {["Institution", "Sector Focus", "Avg Ticket", "Fit"].map((h) => (
-            <span key={h} className="px-3 py-2.5 text-[0.72rem] font-bold text-gray-600 uppercase tracking-wider border-b border-gray-100">{h}</span>
-          ))}
-        </div>
-        {data.rows.slice(0, 5).map((row, i) => (
-          <a key={i} href={row.href || "/ask-swfi"} className="grid no-underline text-inherit hover:bg-gray-50" style={{ gridTemplateColumns: "1fr 1fr 0.8fr 0.6fr" }}>
-            <span className="px-3 py-2.5 text-sm text-gray-700 border-b border-gray-100">{row.institution}</span>
-            <span className="px-3 py-2.5 text-sm text-gray-700 border-b border-gray-100">{row.sector_focus}</span>
-            <span className="px-3 py-2.5 text-sm text-gray-700 border-b border-gray-100">{row.average_ticket_size}</span>
-            <span className="px-3 py-2.5 text-sm text-gray-700 border-b border-gray-100">{row.fit}</span>
-          </a>
-        ))}
+        {!data.rows.length && <SourceGap message="Investor-fit rows require approved SWFI investor, sector, and ticket-size records." />}
+        {data.rows.length > 0 && (
+          <>
+            <div className="grid bg-gray-50" style={{ gridTemplateColumns: "1fr 1fr 0.8fr 0.6fr" }}>
+              {["Institution", "Sector Focus", "Avg Ticket", "Fit"].map((h) => (
+                <span key={h} className="border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700">{h}</span>
+              ))}
+            </div>
+            {data.rows.slice(0, 5).map((row, i) => {
+              const provenance = sourceProvenanceHref(row.href);
+              return (
+              <a
+                key={i}
+                href={selfContainedHref(row.href, "/profiles/")}
+                data-source-state={provenance ? "on-file" : undefined}
+                title={provenance ? "View details" : undefined}
+                className="grid no-underline text-inherit hover:bg-gray-50"
+                style={{ gridTemplateColumns: "1fr 1fr 0.8fr 0.6fr" }}
+              >
+                <span className="border border-gray-300 px-3 py-2 text-sm text-gray-700">{row.institution}</span>
+                <span className="border border-gray-300 px-3 py-2 text-sm text-gray-700">{row.sector_focus}</span>
+                <span className="border border-gray-300 px-3 py-2 text-sm text-gray-700">{row.average_ticket_size}</span>
+                <span className="border border-gray-300 px-3 py-2 text-sm text-gray-700">{row.fit}</span>
+              </a>
+              );
+            })}
+          </>
+        )}
       </div>
     </article>
   );

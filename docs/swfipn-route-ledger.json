@@ -1,0 +1,350 @@
+{
+  "schema_version": "swfipn.route_ledger.v1",
+  "surface": "/swficc",
+  "product_truth": {
+    "fact_rail": "Mongo/backend SWFI records",
+    "provenance_rail": "SWFI.com source URLs",
+    "navigation_rule": "Dashboard discovery, chart, filter, and ranking actions may stay within /swficc; dashboard record rows and protected record actions hand off to SWFI sign-in with the intended /v1/... SWFI core platform target preserved.",
+    "public_rule": "Top-level dashboard, discovery lists, Terminal-native detail pages, and brand pages may render publicly when backed by internal records."
+  },
+  "forbidden_visible_text": [
+    "Source gap",
+    "Endpoint:",
+    "Active Mirror",
+    "Mongo Record ID",
+    "Backend ID",
+    "Backend identifier",
+    "Source-backed fact",
+    "Source Record ID",
+    "Truth State",
+    "Result Qualifier",
+    "Runtime Source",
+    "Object ID",
+    "Object _id",
+    "schema_version",
+    "source_gap_reason",
+    "result_qualifier",
+    "source_filter",
+    "resolved_intent",
+    "resolved_endpoint",
+    "No internal record mapping",
+    "citation-only",
+    "SWFI Provenance Workbench",
+    "Parser status",
+    "Capture ID",
+    "SourceVault",
+    "Write Barrier",
+    "ClaimLedger",
+    "ReviewQueue",
+    "ReplayBench",
+    "Proposal-only evidence rail"
+  ],
+  "routes": [
+    {
+      "id": "dashboard",
+      "status": "live",
+      "class": "public_dashboard",
+      "path": "/",
+      "source": "backend_mongo_records",
+      "required_text": ["SWFI", "ACTIVE ALLOCATORS", "DEALS & TRANSACTIONS", "REPORTS", "Data source: SWFI records"],
+      "requires_internal_links_only": false
+    },
+    {
+      "id": "about",
+      "status": "live",
+      "class": "swfi_source_page_port",
+      "path": "/about/",
+      "source": "ported_swfi_brand_content",
+      "required_text": ["Who Are We?", "The Sovereign Wealth Fund Institute", "Founded by Michael Maduell", "2008"]
+    },
+    {
+      "id": "about_overview",
+      "status": "live",
+      "class": "swfi_source_page_port",
+      "path": "/about-us/overview/",
+      "source": "ported_swfi_brand_content",
+      "required_text": ["Who Are We?", "The Sovereign Wealth Fund Institute", "Founded by Michael Maduell", "2008"]
+    },
+    {
+      "id": "our_team",
+      "status": "live",
+      "class": "swfi_source_page_port",
+      "path": "/about-us/our-team/",
+      "source": "ported_swfi_brand_content",
+      "required_text": ["Our Team", "Lakshmi Narayanan", "Michael Maduell", "Kong Posh Bhat", "Ajay Thota"]
+    },
+    {
+      "id": "products",
+      "status": "live",
+      "class": "swfi_source_page_port",
+      "path": "/products/",
+      "source": "ported_swfi_product_content",
+      "required_text": ["SWFI PRODUCTS", "Capital Intelligence OS", "ONE WORKSPACE, MANY RECORD CLASSES", "Open the dashboard"]
+    },
+    {
+      "id": "solutions",
+      "status": "live",
+      "class": "swfi_source_page_port",
+      "path": "/solutions/",
+      "source": "ported_swfi_brand_content",
+      "required_text": ["Fundraising & Finding Buyers", "Industry Intelligence & Rankings", "Due Diligence & KYC", "Asset Owner Intelligence & Data Flow"]
+    },
+    {
+      "id": "demo",
+      "status": "live",
+      "class": "swfi_source_page_port",
+      "path": "/demo/",
+      "source": "ported_swfi_brand_content",
+      "required_text": ["Request a Demo", "Business type", "Deep insights into active deals and fund commitments"],
+      "selects": [
+        { "name": "businessType", "min_options": 80 },
+        { "name": "country", "min_options": 240 }
+      ]
+    },
+    {
+      "id": "contact",
+      "status": "live",
+      "class": "swfi_source_page_port",
+      "path": "/contact/",
+      "source": "ported_swfi_brand_content",
+      "required_text": ["Contact Us", "Corporate offices", "2300 West Sahara Avenue", "support@swfinstitute.org"],
+      "selects": [
+        { "name": "country", "min_options": 240 },
+        { "name": "referral", "min_options": 5 }
+      ]
+    },
+    {
+      "id": "newsletter_subscription",
+      "status": "live",
+      "class": "swfi_source_page_port",
+      "path": "/newsletter-subscription/",
+      "source": "ported_swfi_public_content",
+      "required_text": ["Subscribe to Our Newsletter", "Email", "Subscribe"]
+    },
+    {
+      "id": "privacy_policy",
+      "status": "live",
+      "class": "swfi_source_page_port",
+      "path": "/privacy-policy/",
+      "source": "ported_swfi_public_content",
+      "required_text": ["Privacy Policy", "What we collect", "Sensitive personal information", "Consent"]
+    },
+    {
+      "id": "terms_of_use",
+      "status": "live",
+      "class": "swfi_source_page_port",
+      "path": "/terms-of-use/",
+      "source": "ported_swfi_public_content",
+      "required_text": ["Terms of Use", "Last updated: November 10, 2022.", "1. General information", "16. Email alerts and newsletters"]
+    },
+    {
+      "id": "cookie_policy",
+      "status": "live",
+      "class": "swfi_source_page_port",
+      "path": "/cookie-policy/",
+      "source": "ported_swfi_public_content",
+      "required_text": ["Cookie Policy", "What is a cookie?", "Cookies we may use and why?", "Changes to this cookie notice"]
+    },
+    {
+      "id": "accessibility_statement",
+      "status": "live",
+      "class": "swfi_source_page_port",
+      "path": "/accessibility/",
+      "source": "ported_swfi_public_content",
+      "required_text": ["Accessibility Statement", "Accessibility on www.swfi.com", "Enabling accessibility menu"]
+    },
+    {
+      "id": "allocators",
+      "status": "live",
+      "class": "product_list",
+      "path": "/allocators/",
+      "source": "api_allocator_activity_completed_buyer_acquirer_transactions",
+      "required_text": ["Active Allocators", "Showing", "Entity Name", "Number of Deals", "Total Deal Value", "Last Transaction Date"],
+      "min_mirror_record_links": 5,
+      "min_source_links": 5,
+      "requires_table_controls": true
+    },
+    {
+      "id": "profiles",
+      "status": "live",
+      "class": "product_list",
+      "path": "/profiles/",
+      "source": "api_source_data_entities",
+      "required_text": ["Institutions", "Entity Name", "AUM", "Showing"],
+      "min_mirror_record_links": 5,
+      "min_source_links": 5,
+      "requires_table_controls": true
+    },
+    {
+      "id": "people",
+      "status": "live",
+      "class": "product_list",
+      "path": "/people/",
+      "source": "api_source_data_people",
+      "required_text": ["People", "Name", "Institution", "Showing"],
+      "min_mirror_record_links": 5,
+      "min_source_links": 5,
+      "requires_table_controls": true
+    },
+    {
+      "id": "deals",
+      "status": "live",
+      "class": "product_list",
+      "path": "/deals/",
+      "source": "api_transactions",
+      "required_text": ["Deals", "Data source", "Showing"],
+      "min_mirror_record_links": 5,
+      "min_source_links": 5,
+      "requires_table_controls": true
+    },
+    {
+      "id": "transactions",
+      "status": "live",
+      "class": "product_list",
+      "path": "/transactions/",
+      "source": "api_transactions",
+      "required_text": ["Transactions", "Data source", "Showing"],
+      "min_mirror_record_links": 5,
+      "min_source_links": 5,
+      "requires_table_controls": true
+    },
+    {
+      "id": "comparisons",
+      "status": "live",
+      "class": "product_list",
+      "path": "/comparisons/",
+      "source": "api_source_data_entities",
+      "required_text": ["Peer Comparisons", "Current Peer Set", "Showing"],
+      "min_mirror_record_links": 3,
+      "min_source_links": 3,
+      "requires_table_controls": true
+    },
+    {
+      "id": "mandates",
+      "status": "live",
+      "class": "product_list",
+      "path": "/mandates/",
+      "source": "api_live_opportunities_compass",
+      "required_text": ["RFPs / Mandates", "Institution", "Showing"],
+      "min_mirror_record_links": 5,
+      "min_source_links": 5,
+      "requires_table_controls": true
+    },
+    {
+      "id": "intelligence",
+      "status": "live",
+      "class": "product_list",
+      "path": "/intelligence/",
+      "source": "api_source_intelligence_news",
+      "required_text": ["Intelligence", "SWFI-backed rows only", "Showing"],
+      "min_mirror_record_links": 5,
+      "min_source_links": 5,
+      "requires_table_controls": true
+    },
+    {
+      "id": "research",
+      "status": "live",
+      "class": "product_list",
+      "path": "/research/",
+      "source": "api_source_intelligence_news",
+      "required_text": ["Research / News", "News", "Showing"],
+      "min_mirror_record_links": 5,
+      "min_source_links": 5,
+      "requires_table_controls": true
+    },
+    {
+      "id": "alerts",
+      "status": "live",
+      "class": "product_list",
+      "path": "/alerts/",
+      "source": "api_recent_transactions_live_opportunities_allocator_activity",
+      "required_text": ["Alerts", "New deals", "New mandates", "Investor activity", "Showing"],
+      "min_mirror_record_links": 3,
+      "min_source_links": 3,
+      "requires_table_controls": true
+    },
+    {
+      "id": "search",
+      "status": "live",
+      "class": "product_search",
+      "path": "/search/?q=Real%20Estate",
+      "source": "api_public_search_people_transactions",
+      "required_text": ["Smart Search Bar", "TYPE", "RESULT", "SOURCE", "DETAIL", "CITATION", "Real Estate", "Showing"],
+      "min_mirror_record_links": 3
+    },
+    {
+      "id": "reports",
+      "status": "live",
+      "class": "reports_intelligence",
+      "path": "/reports/",
+      "source": "swfi_records",
+      "required_text": ["Reports Intelligence", "AUM Rankings", "Data source", "SWFI records", "Download CSV"],
+      "requires_table_controls": true
+    },
+    {
+      "id": "provenance",
+      "status": "live",
+      "class": "source_reference_index",
+      "path": "/provenance/",
+      "source": "source_reference_metadata",
+      "required_text": ["Source References", "Source record links resolve to the corresponding SWFI record pages", "Search Records"]
+    },
+    {
+      "id": "profile_detail",
+      "status": "live",
+      "class": "product_detail",
+      "path": "/profiles/detail/?slug=andreessen-horowitz&id=5bb7bec0ca00a5212c486ec2&name=Andreessen+Horowitz",
+      "source": "api_profiles_detail",
+      "required_text": ["ENTITY PROFILE", "Andreessen Horowitz", "Verified in SWFI records"]
+    },
+    {
+      "id": "transaction_detail",
+      "status": "live",
+      "class": "product_detail",
+      "path": "/transactions/detail/?id=6a2c168b43e7f69d0cd0c923&title=ChatSee.AI+Inc",
+      "source": "api_transactions_detail",
+      "required_text": ["TRANSACTION DETAILS", "ChatSee.AI Inc", "Buyer Entities", "Verified in SWFI records"]
+    },
+    {
+      "id": "mandate_detail",
+      "status": "live",
+      "class": "product_detail",
+      "path": "/mandates/detail/?id=68b6f675576df8efb3fdb766&title=ADIA+Hones+in+on+US+Private+Equity+and+Pacing+for+2025",
+      "source": "api_compass_detail",
+      "required_text": ["COMPASS / RFP DETAIL", "ADIA Hones in on US Private Equity", "Verified in SWFI records"]
+    },
+    {
+      "id": "person_detail",
+      "status": "live",
+      "class": "product_detail",
+      "path": "/people/detail/?id=6a3117c8596879824a782b67&name=Srinivasan+Kesavan",
+      "source": "api_people_detail",
+      "required_text": ["PERSON DETAIL", "Srinivasan Kesavan", "Verified in SWFI records"]
+    },
+    {
+      "id": "research_detail",
+      "status": "live",
+      "class": "product_detail",
+      "path": "/research/detail/?legacy=109189",
+      "source": "api_research_detail",
+      "required_text": ["RESEARCH / NEWS DETAIL", "Goldman Sachs Alternatives Raises Over $3 Billion", "Verified in SWFI records", "Download Source Data"]
+    },
+    {
+      "id": "source_reference",
+      "status": "live",
+      "class": "source_reference_detail",
+      "path": "/source/",
+      "source": "source_reference_metadata",
+      "required_text": ["SOURCE REFERENCE", "Search Records"]
+    },
+    {
+      "id": "saved",
+      "status": "hidden",
+      "class": "uncontracted_route_hidden_from_public_navigation",
+      "path": "/saved/",
+      "source": "not_public_demo_surface",
+      "required_public_navigation": false
+    }
+  ],
+  "label_only_unlinked": []
+}

@@ -1,0 +1,102 @@
+name: SWFIPN Acceptance Gates
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Prove Mac-independent read-only acceptance
+        run: npm run acceptance:machine-independence
+
+      - name: Install
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Zero high-severity npm audit
+        run: npm run brd:npm-audit:high
+
+      - name: Python deps for Mongo index dry-run
+        run: python3 -m pip install pymongo
+
+      - name: Mongo index dry-run receipt
+        run: SWFIPN_DB_INDEX_DRY_RUN=1 npm run db:indexes
+
+      - name: Candidate browser and semantic gates through SWFI source
+        run: |
+          set -euo pipefail
+          python3 scripts/serve-static-with-headers.py \
+            --host 127.0.0.1 \
+            --port 4317 \
+            --root out \
+            --backend https://dashboard.swfi.com \
+            --backend-timeout 120 \
+            > output/swfipn-candidate-server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:4317/swficc/ >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              echo "candidate server did not become ready" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          SWFIPN_ORIGIN=http://127.0.0.1:4317/swficc/ \
+            SWFIPN_CONTRACT_OUT=output/swfipn-dashboard20-e2e-contract-candidate.json \
+            npm run contract:gate
+          SWFIPN_ORIGIN=http://127.0.0.1:4317 \
+            SWFIPN_SEMANTIC_TIMEOUT_MS=120000 \
+            SWFIPN_SEMANTIC_RECEIPT=output/swfipn-semantic-search-retest-candidate.json \
+            npm run test:semantic-search-retest
+
+      - name: Public search acceptance gate
+        run: |
+          SWFIPN_ORIGIN=https://dashboard.swfi.com/swficc/ \
+            SWFIPN_SEARCH_SETTLE_TIMEOUT_MS=120000 \
+            SWFIPN_SEARCH_PERFORMANCE_BLOCKING=0 \
+            node scripts/swfipn-global-search-brd-gate.mjs
+
+      - name: CDN static asset public gate
+        run: |
+          SWFIPN_ORIGIN=https://dashboard.swfi.com/swficc/ \
+            node scripts/swfipn-cdn-static-assets-gate.mjs
+
+      - name: Public closeout gate
+        run: |
+          SWFIPN_ORIGIN=https://dashboard.swfi.com/swficc/ \
+            SWFIPN_BACKEND_ORIGIN=https://dashboard.swfi.com \
+            SWFIPN_CLOSEOUT_LATENCY_BLOCKING=0 \
+            node scripts/swfipn-closeout-gate.mjs
+
+      - name: Upload receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: swfipn-acceptance-receipts
+          path: output/

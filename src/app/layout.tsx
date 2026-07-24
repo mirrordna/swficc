@@ -1,16 +1,13 @@
 import type { Metadata } from "next";
-import { Open_Sans } from "next/font/google";
+import StaleCacheGuard from "@/components/StaleCacheGuard";
 import "./globals.css";
 
-const openSans = Open_Sans({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  variable: "--font-open-sans",
-});
-
 export const metadata: Metadata = {
-  title: "SWFI | Dashboard",
-  description: "SWFI dashboard — discover, analyze, and act on institutional capital flows in under 60 seconds.",
+  title: "Sovereign Wealth Fund Institute",
+  description: "SWFI institutional investor intelligence and capital activity dashboard.",
+  icons: {
+    icon: "/swficc/favicon.ico",
+  },
 };
 
 export default function RootLayout({
@@ -19,8 +16,19 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${openSans.variable} h-full antialiased`}>
+    <html lang="en" className="h-full antialiased">
+      <head>
+        {/* Every final link hands off to www.swfi.com (minutes G/J). Measured
+            2026-07-05: the first click paid ~0.9s of DNS+TCP+TLS setup to the
+            far origin before the signin page even answered. Pre-establishing
+            the connection while the user is still on the dashboard removes
+            that setup cost from the first handoff. The remaining latency
+            (signin TTFB ~1.2s, no CDN edge) is swfi.com-side. */}
+        <link rel="preconnect" href="https://www.swfi.com" crossOrigin="anonymous" />
+        <link rel="dns-prefetch" href="https://www.swfi.com" />
+      </head>
       <body className="min-h-full flex flex-col bg-[#f5f7fa] text-gray-900 font-sans">
+        <StaleCacheGuard />
         {children}
       </body>
     </html>

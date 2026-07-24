@@ -2,6 +2,8 @@
 
 import { useState, useMemo } from "react";
 import type { HistoricalPerformance, PerformanceEntity } from "@/lib/types";
+import { selfContainedHref, sourceProvenanceHref } from "@/lib/selfContainedLinks";
+import SourceGap from "./SourceGap";
 
 export default function PerformanceDashboard({ data }: { data: HistoricalPerformance }) {
   const [entityType, setEntityType] = useState(data.entity_types[0] || "");
@@ -18,55 +20,73 @@ export default function PerformanceDashboard({ data }: { data: HistoricalPerform
     const bySlug = filteredEntities.find((e) => e.slug === data.default_entity_slug);
     return byName || bySlug || filteredEntities[0] || null;
   }, [filteredEntities, entityName, data.default_entity_slug]);
+  const hasPoints = Boolean(selectedEntity?.points?.length);
+  const profileProvenance = sourceProvenanceHref(selectedEntity?.profile_url);
 
   return (
-    <article className="bg-white border border-gray-200 rounded-[10px] shadow-sm p-[18px]">
-      <div className="flex justify-between items-start gap-3 mb-3.5">
+    <article className="border border-gray-300 bg-white p-3">
+      <div className="flex justify-between items-start gap-3 mb-3">
         <div>
-          <p className="m-0 mb-1 text-[#1a5276] text-[0.66rem] font-bold font-mono uppercase tracking-wider">Performance</p>
-          <h3 className="m-0 text-[1.08rem] font-bold text-gray-900">Historical Performance Dashboard</h3>
+          <h3 className="m-0 text-base font-semibold text-black">Historical Performance Dashboard</h3>
         </div>
         <div className="flex gap-2 flex-shrink-0">
           {selectedEntity && (
-            <a href={selectedEntity.profile_url || "/profiles"} className="px-3.5 py-1.5 bg-gray-100 border border-gray-300 rounded-md text-gray-800 text-[0.78rem] font-semibold no-underline hover:bg-gray-200 transition-colors">
+            <a
+              href={selfContainedHref(selectedEntity.profile_url, "/profiles/")}
+              data-source-state={profileProvenance ? "on-file" : undefined}
+              title={profileProvenance ? "View details" : undefined}
+              className="border border-gray-300 px-3 py-1.5 text-sm text-black no-underline hover:bg-gray-50"
+            >
               View Profile
             </a>
           )}
-          <button className="px-3.5 py-1.5 bg-gray-100 border border-gray-300 rounded-md text-gray-800 text-[0.78rem] font-semibold cursor-pointer hover:bg-gray-200 transition-colors">
+          <button disabled={!hasPoints} className="border border-gray-300 px-3 py-1.5 text-sm text-black disabled:text-gray-400">
             Export
           </button>
         </div>
       </div>
 
-      {/* Controls */}
-      <div className="grid grid-cols-[0.8fr_1.4fr_0.9fr] gap-3 mb-4 max-md:grid-cols-1">
+      <div className="grid grid-cols-1 gap-3 mb-4 md:grid-cols-[0.8fr_1.4fr_0.9fr]">
         <label className="grid gap-1.5">
-          <span className="text-gray-500 text-[0.66rem] font-bold font-mono uppercase tracking-wider">Entity Type</span>
+          <span className="text-sm text-black">Entity Type</span>
           <select value={entityType} onChange={(e) => { setEntityType(e.target.value); setEntityName(""); }}
-            className="h-[38px] border border-gray-200 rounded-lg bg-white text-gray-900 text-sm font-medium px-2.5 focus:outline-2 focus:outline-[#1a5276]">
-            {data.entity_types.map((t) => <option key={t} value={t}>{t}</option>)}
+            className="h-[38px] border border-gray-300 bg-white px-2.5 text-sm text-black">
+            <optgroup label="Top 5">
+              {data.entity_types.slice(0, 5).map((t) => <option key={t} value={t}>{t}</option>)}
+            </optgroup>
+            {data.entity_types.length > 5 ? (
+              <optgroup label="All types">
+                {data.entity_types.slice(5).map((t) => <option key={t} value={t}>{t}</option>)}
+              </optgroup>
+            ) : null}
           </select>
         </label>
         <label className="grid gap-1.5">
-          <span className="text-gray-500 text-[0.66rem] font-bold font-mono uppercase tracking-wider">Entity Name</span>
+          <span className="text-sm text-black">Entity Name</span>
           <input type="search" value={entityName} onChange={(e) => setEntityName(e.target.value)} list="perf-entities"
-            className="h-[38px] border border-gray-200 rounded-lg bg-white text-gray-900 text-sm font-medium px-2.5 focus:outline-2 focus:outline-[#1a5276]" />
+            className="h-[38px] border border-gray-300 bg-white px-2.5 text-sm text-black" />
           <datalist id="perf-entities">
             {filteredEntities.map((e) => <option key={e.slug} value={e.name} />)}
           </datalist>
         </label>
         <label className="grid gap-1.5">
-          <span className="text-gray-500 text-[0.66rem] font-bold font-mono uppercase tracking-wider">Chart Type</span>
+          <span className="text-sm text-black">Chart Type</span>
           <select value={chartType} onChange={(e) => setChartType(e.target.value)}
-            className="h-[38px] border border-gray-200 rounded-lg bg-white text-gray-900 text-sm font-medium px-2.5 focus:outline-2 focus:outline-[#1a5276]">
-            {data.chart_types.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+            className="h-[38px] border border-gray-300 bg-white px-2.5 text-sm text-black">
+            <optgroup label="Top 5">
+              {data.chart_types.slice(0, 5).map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+            </optgroup>
+            {data.chart_types.length > 5 ? (
+              <optgroup label="All chart types">
+                {data.chart_types.slice(5).map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+              </optgroup>
+            ) : null}
           </select>
         </label>
       </div>
 
-      {/* Chart */}
       {selectedEntity ? (
-        <div className="border border-gray-200 rounded-lg bg-gradient-to-b from-white to-[#f8fbff] p-3.5">
+        <div className="border border-gray-300 p-3">
           {chartType === "aum_over_time" && <AumChart entity={selectedEntity} />}
           {chartType === "growth_decline" && <GrowthChart entity={selectedEntity} />}
           {chartType === "benchmark_percentile" && <BenchmarkChart entity={selectedEntity} />}
@@ -74,16 +94,15 @@ export default function PerformanceDashboard({ data }: { data: HistoricalPerform
       ) : (
         <div className="py-6 text-center text-gray-500">
           <strong className="block mb-1.5 text-gray-700">No performance series available.</strong>
-          <p className="m-0 text-sm">Open profiles for current AUM snapshots.</p>
+          <p className="m-0 text-sm">Historical performance requires approved SWFI AUM-series rows.</p>
         </div>
       )}
 
-      {/* Benchmark summary */}
       {selectedEntity && (
-        <div className="mt-3 p-3 border border-gray-200 rounded-lg">
+        <div className="mt-3 border border-gray-300 p-3">
           <strong>{(data.chart_types.find((c) => c.key === chartType) || { label: "AUM over time" }).label}</strong>
           <p className="m-0 text-sm text-gray-600">{selectedEntity.benchmark || ""}</p>
-          <p className="m-0 text-sm text-gray-600">{selectedEntity.growth_display || "Historical series"} &middot; CAGR {selectedEntity.cagr_display || "N/A"}</p>
+          <p className="m-0 text-sm text-gray-600">{selectedEntity.growth_display || "Not disclosed"} &middot; CAGR {selectedEntity.cagr_display || "Not disclosed"}</p>
         </div>
       )}
     </article>
@@ -92,6 +111,9 @@ export default function PerformanceDashboard({ data }: { data: HistoricalPerform
 
 function AumChart({ entity }: { entity: PerformanceEntity }) {
   const points = entity.points || [];
+  if (!points.length) {
+    return <SourceGap message="AUM over time requires approved historical AUM rows for the selected entity." />;
+  }
   const max = Math.max(...points.map((p) => Number(p.assets || 0)), 1);
   return (
     <>
@@ -105,8 +127,8 @@ function AumChart({ entity }: { entity: PerformanceEntity }) {
           return (
             <div key={p.label} className="grid grid-cols-[84px_minmax(80px,1fr)_72px] gap-2.5 items-center text-xs text-gray-600">
               <span>{p.label}</span>
-              <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                <div className="h-full rounded-full bg-gradient-to-r from-[#1a5276] to-[#a61c20]" style={{ width: `${w}%` }} />
+              <div className="h-2 border border-gray-300 bg-white">
+                <div className="h-full bg-gray-600" style={{ width: `${w}%` }} />
               </div>
               <strong className="text-right text-gray-900">{p.assets_display}</strong>
             </div>
@@ -119,6 +141,9 @@ function AumChart({ entity }: { entity: PerformanceEntity }) {
 
 function GrowthChart({ entity }: { entity: PerformanceEntity }) {
   const points = entity.points || [];
+  if (!points.length) {
+    return <SourceGap message="Growth / decline requires approved historical AUM rows for the selected entity." />;
+  }
   const rows = points.map((p, i) => {
     const prev = points[i - 1];
     const prevAssets = Number(prev?.assets || 0);
@@ -132,18 +157,18 @@ function GrowthChart({ entity }: { entity: PerformanceEntity }) {
     <>
       <div className="flex justify-between items-center gap-3 mb-3">
         <strong className="text-gray-900">{entity.name}</strong>
-        <span className="text-gray-600 text-sm">{entity.first_label} to {entity.latest_label} &middot; {entity.growth_display || "N/A"}</span>
+        <span className="text-gray-600 text-sm">{entity.first_label || "Not disclosed"} to {entity.latest_label || "Not disclosed"} &middot; {entity.growth_display || "Not disclosed"}</span>
       </div>
       <div className="grid gap-2">
         {rows.map(({ point: p, change }) => {
           const hasChange = change !== null && Number.isFinite(change);
           const w = hasChange ? Math.max(6, Math.round((Math.abs(change!) / maxAbs) * 100)) : 0;
-          const color = !hasChange ? "bg-gray-300" : change! >= 0 ? "bg-gradient-to-r from-green-600 to-[#1a5276]" : "bg-gradient-to-r from-[#a61c20] to-amber-600";
+          const color = !hasChange ? "bg-gray-300" : change! >= 0 ? "bg-gray-600" : "bg-gray-800";
           return (
             <div key={p.label} className="grid grid-cols-[84px_minmax(80px,1fr)_72px] gap-2.5 items-center text-xs text-gray-600">
               <span>{p.label}</span>
-              <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                <div className={`h-full rounded-full ${color}`} style={{ width: `${w}%` }} />
+              <div className="h-2 border border-gray-300 bg-white">
+                <div className={`h-full ${color}`} style={{ width: `${w}%` }} />
               </div>
               <strong className="text-right text-gray-900 tabular-nums">{hasChange ? `${change! >= 0 ? "+" : ""}${Math.abs(change!) >= 10 ? change!.toFixed(0) : change!.toFixed(1)}%` : "Base"}</strong>
             </div>
@@ -156,10 +181,10 @@ function GrowthChart({ entity }: { entity: PerformanceEntity }) {
 
 function BenchmarkChart({ entity }: { entity: PerformanceEntity }) {
   const cards = [
-    { label: "Peer group", value: entity.peer_group || entity.type || "Peer set", note: entity.benchmark || "Current peer-set benchmark." },
+    { label: "Peer group", value: entity.peer_group || entity.type || "Not disclosed", note: entity.benchmark || "Not disclosed." },
     { label: "Peer percentile", value: entity.peer_percentile ? `${entity.peer_percentile}th` : "Not ranked", note: "AUM position among comparable institutions." },
-    { label: "Series growth", value: entity.growth_display || "N/A", note: `${entity.first_label || "First period"} to ${entity.latest_label || "latest period"}.` },
-    { label: "CAGR", value: entity.cagr_display || "N/A", note: "Annualized change across the published AUM series." },
+    { label: "Series growth", value: entity.growth_display || "Not disclosed", note: `${entity.first_label || "Not disclosed"} to ${entity.latest_label || "Not disclosed"}.` },
+    { label: "CAGR", value: entity.cagr_display || "Not disclosed", note: "Requires approved SWFI AUM history." },
   ];
   return (
     <>
@@ -169,8 +194,8 @@ function BenchmarkChart({ entity }: { entity: PerformanceEntity }) {
       </div>
       <div className="grid grid-cols-2 gap-2.5">
         {cards.map((c) => (
-          <div key={c.label} className="border border-gray-200 rounded-lg bg-white p-3">
-            <span className="block mb-1 text-gray-500 text-[0.68rem] font-extrabold uppercase">{c.label}</span>
+          <div key={c.label} className="border border-gray-300 bg-white p-3">
+            <span className="block mb-1 text-xs text-gray-600">{c.label}</span>
             <strong className="block text-gray-900">{c.value}</strong>
             <p className="m-0 mt-1.5 text-gray-600 text-xs leading-snug">{c.note}</p>
           </div>

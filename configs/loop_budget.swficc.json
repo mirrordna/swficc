@@ -1,0 +1,22 @@
+{
+  "scope_id": "swficc-acceptance-demo",
+  "scope_description": "Public /swficc dashboard and linked Terminal-native SWFI record/profile surface.",
+  "max_builder_passes": 1,
+  "max_prosecutor_passes": 1,
+  "max_internal_refinements_per_pass": 1,
+  "extra_passes_allowed_only_if": "new_external_evidence",
+  "stop_when": [
+    "all_required_receipts_pass",
+    "no_blockers_within_scope",
+    "acceptance_lock_receipt_written"
+  ],
+  "required_receipts": [
+    "output/swfipn-share-gate-latest.json",
+    "output/swfipn-self-improvement-loop-latest.json",
+    "output/swfipn-route-ledger-gate-latest.json",
+    "output/swfipn-runtime-staleness-gate-latest.json",
+    "output/swfipn-e2e-gate-latest.json"
+  ],
+  "acceptance_wording": "Ready for acceptance/demo review for the current /swficc dashboard and linked Terminal-native SWFI record/profile surface. This does not claim that all external SWFI.com pages are migrated.",
+  "required_link_wording": "corresponding SWFI record/profile page within /swficc where an internal record exists"
+}

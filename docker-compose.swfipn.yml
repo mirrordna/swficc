@@ -1,0 +1,49 @@
+services:
+  swfipn:
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_SWFI_BACKEND_URL: ${NEXT_PUBLIC_SWFI_BACKEND_URL:-same-origin}
+        NEXT_PUBLIC_BACKEND_URL: ${NEXT_PUBLIC_BACKEND_URL:-}
+    image: swfipn-terminal:local
+    restart: unless-stopped
+    ports:
+      - "${SWFIPN_PUBLIC_PORT:-8353}:8353"
+    environment:
+      SWFIPN_BACKEND: ${SWFIPN_BACKEND:-http://host.docker.internal:8362}
+      SWFIPN_BACKEND_TIMEOUT: ${SWFIPN_BACKEND_TIMEOUT:-60}
+      SWFIPN_HOST: 0.0.0.0
+      SWFIPN_PORT: 8353
+      SWFIPN_ROOT: /app/out
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "python", "/app/swfipn-container-healthcheck.py"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  swfipn-freshness-sync:
+    image: swfipn-terminal:local
+    profiles: ["freshness"]
+    restart: unless-stopped
+    command: ["python", "/app/swfipn-freshness-sync.py"]
+    environment:
+      SWFIPN_SYNC_INTERVAL_SECONDS: ${SWFIPN_SYNC_INTERVAL_SECONDS:-900}
+      SWFIPN_SYNC_COMMAND: ${SWFIPN_SYNC_COMMAND:-}
+      SWFIPN_SYNC_URL: ${SWFIPN_SYNC_URL:-}
+      SWFIPN_SYNC_METHOD: ${SWFIPN_SYNC_METHOD:-POST}
+      SWFIPN_SYNC_BEARER_TOKEN: ${SWFIPN_SYNC_BEARER_TOKEN:-}
+      SWFIPN_FRESHNESS_URL: ${SWFIPN_FRESHNESS_URL:-http://swfipn:8353/api/source-mirror/status}
+      SWFIPN_SYNC_RECEIPT_DIR: /var/lib/swfipn/freshness
+    volumes:
+      - swfipn_freshness:/var/lib/swfipn/freshness
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      swfipn:
+        condition: service_healthy
+
+volumes:
+  swfipn_freshness:

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LoopCollapseReport",
+  "type": "object",
+  "required": [
+    "timestamp",
+    "git_commit",
+    "collapse_detected",
+    "signals",
+    "recommendation"
+  ],
+  "properties": {
+    "timestamp": {
+      "type": "string"
+    },
+    "git_commit": {
+      "type": "string"
+    },
+    "collapse_detected": {
+      "type": "boolean"
+    },
+    "signals": {
+      "type": "object"
+    },
+    "recommendation": {
+      "type": "string"
+    }
+  }
+}

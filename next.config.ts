@@ -1,7 +1,12 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  output: "export",
+  basePath: "/swficc",
+  trailingSlash: true,
+  poweredByHeader: false,
+  productionBrowserSourceMaps: false,
+  images: { unoptimized: true },
 };
 
 export default nextConfig;
