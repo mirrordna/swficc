@@ -7,6 +7,8 @@ const workflowPath = path.join(cwd, ".github", "workflows", "swfipn-acceptance.y
 const outputDir = path.join(cwd, "output");
 const receiptPath = path.join(outputDir, "swfipn-machine-independence-latest.json");
 const workflow = fs.readFileSync(workflowPath, "utf8");
+const githubEvent = readGithubEvent(process.env.GITHUB_EVENT_PATH);
+const candidateSha = githubEvent?.pull_request?.head?.sha || process.env.GITHUB_SHA || null;
 
 fs.mkdirSync(outputDir, { recursive: true });
 
@@ -20,6 +22,7 @@ const checks = [
   check("swfi_dashboard_is_backend_target", /--backend https:\/\/dashboard\.swfi\.com/.test(workflow)),
   check("candidate_built_on_runner", /npm run build/.test(workflow)),
   check("duplicate_candidate_push_runs_forbidden", !/-\s*["']?codex\/\*\*/.test(workflow)),
+  check("candidate_sha_recorded_in_github", process.env.GITHUB_ACTIONS !== "true" || /^[0-9a-f]{40}$/.test(candidateSha || "")),
   check("production_ssh_forbidden", !/^\s*(?:ssh|scp|rsync)\b/m.test(workflow)),
   check("production_deploy_forbidden", !/deploy_acceptance_from_git|docker compose|ln -sfn/.test(workflow)),
   check("receipts_uploaded_by_runner", /uses:\s*actions\/upload-artifact@/.test(workflow) && /path:\s*output\//.test(workflow)),
@@ -42,7 +45,9 @@ const receipt = {
   workflow: path.relative(cwd, workflowPath),
   git: {
     repository: process.env.GITHUB_REPOSITORY || null,
-    sha: process.env.GITHUB_SHA || null,
+    candidate_sha: candidateSha,
+    workflow_merge_sha: process.env.GITHUB_SHA || null,
+    head_ref: process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF_NAME || null,
     run_id: process.env.GITHUB_RUN_ID || null,
     run_attempt: process.env.GITHUB_RUN_ATTEMPT || null,
   },
@@ -56,4 +61,13 @@ if (failures.length) process.exit(1);
 
 function check(id, ok) {
   return { id, ok: Boolean(ok) };
+}
+
+function readGithubEvent(eventPath) {
+  if (!eventPath) return null;
+  try {
+    return JSON.parse(fs.readFileSync(eventPath, "utf8"));
+  } catch {
+    return null;
+  }
 }
