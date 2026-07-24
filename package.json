@@ -46,6 +46,7 @@
     "brd:phase2:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ node scripts/swfipn-brd-phase2-gate.mjs",
     "brd:alias:gate": "node scripts/swfipn-brd-conformance-alias-gate.mjs",
     "brd:alias:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ node scripts/swfipn-brd-conformance-alias-gate.mjs",
+    "acceptance:machine-independence": "node scripts/swfipn-machine-independence-gate.mjs",
     "brd:search:gate": "node scripts/swfipn-global-search-brd-gate.mjs",
     "brd:search:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ SWFIPN_SEARCH_PERFORMANCE_BLOCKING=0 node scripts/swfipn-global-search-brd-gate.mjs",
     "brd:search:relevance": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/swfipn-search-relevance-regression.mjs",
