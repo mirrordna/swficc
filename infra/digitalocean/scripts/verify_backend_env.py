@@ -25,6 +25,10 @@ POLICY_KEYS = {
 }
 TOPOLOGY_OPTIONS = {
     "loadbalanced",
+    "proxyhost",
+    "proxypassword",
+    "proxyport",
+    "proxyusername",
     "replicaset",
     "srvmaxhosts",
     "srvservicename",
@@ -140,7 +144,7 @@ def parse_direct_endpoint(item: str) -> tuple[str, int]:
         else:
             raw_host, raw_port = item, None
     host = normalize_host(raw_host)
-    if not host:
+    if not host or raw_host != host:
         raise ValueError("invalid_host")
     return host, parse_port(raw_port)
 

@@ -224,9 +224,10 @@ The protected deployment supports only a standard `mongodb://` URI with one
 hostname, one port, explicit `directConnection=true`, strict TLS, and exactly
 the normalized options listed in `required_options`. `mongodb+srv://`,
 replica-set discovery, load-balanced discovery, SRV polling, legacy semicolon
-option separators, invalid ports, TLS downgrade, certificate-validation
-relaxations, loopback, private, link-local, multicast, reserved, unspecified,
-mapped loopback, numeric-alias, and DNS-alias destinations fail closed.
+option separators, proxy routing, non-canonical host spellings, invalid ports,
+TLS downgrade, certificate-validation relaxations, loopback, private,
+link-local, multicast, reserved, unspecified, mapped loopback, numeric-alias,
+and DNS-alias destinations fail closed.
 
 `runtime_dns_pin` selects one currently verified public address for the
 approved hostname. The deploy writes that pair to the root-only release

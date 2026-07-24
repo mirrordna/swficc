@@ -248,6 +248,8 @@ try {
     "tls=true&directConnection=true&srvMaxHosts=1",
     "tls=true&directConnection=true&srvServiceName=attacker",
     "tls=true&directConnection=true&loadBalanced=true",
+    "tls=true&directConnection=true&proxyHost=attacker.example.net&proxyPort=1080",
+    "tls=true&directConnection=true&proxyUsername=attacker&proxyPassword=secret",
     "tls=true&directConnection=true&retryWrites=true",
   ];
   for (const [index, query] of routingQueries.entries()) {
@@ -266,6 +268,20 @@ try {
     "SWFI_MONGO_ALLOWED_HOSTS=cluster-a.example.net",
   ]);
   assert.equal(srvResult.status, 1, "SRV topology discovery must fail");
+  const noncanonicalHostForms = [
+    "cluster-a.example.net.",
+    "CLUSTER-A.EXAMPLE.NET",
+    "cluster%2Da.example.net",
+  ];
+  for (const [index, host] of noncanonicalHostForms.entries()) {
+    const hostResult = runVerifier(`noncanonical-host-${index}`, [
+      "SWFI2_FACT_SOURCE=mongo",
+      "SWFI_MONGO_DB=swfi",
+      `SWFI_MONGO_URI=mongodb://user:secret@${host}:27017/swfi?tls=true&directConnection=true`,
+      "SWFI_MONGO_ALLOWED_HOSTS=cluster-a.example.net",
+    ]);
+    assert.equal(hostResult.status, 1, `noncanonical Mongo hostname must fail: ${host}`);
+  }
 
   const allowedExtraOptionsPath = path.join(backendEnvFixture, "allowed-extra-options-policy.json");
   const allowedExtraOptionsDigest = writePolicy(
