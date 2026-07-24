@@ -123,13 +123,16 @@ source from the invoking machine:
 - the frontend is fetched from `mirrordna/swficc` at one full commit SHA;
 - the active release must exactly match `acceptance-baseline.json`;
 - the active frontend and backend image IDs must match the baseline;
-- the backend tree is copied from that verified release and both tree digests
-  must match;
+- the pinned backend image is retagged for the candidate release and is not
+  rebuilt from an unverified source tree;
 - the new release is built under `/opt/swfipn-acceptance/releases`;
 - health and the public release marker must attest the candidate before
   `current` is switched;
-- activation failure restores the prior release;
-- every preflight or deploy attempt writes a v6 receipt.
+- activation failure, interruption, or failed evidence collection restores the
+  prior release;
+- a remote systemd rollback guard restores the prior release if the invoking
+  runner disappears after activation begins;
+- every preflight or deploy attempt writes a v7 receipt.
 
 Read-only preflight:
 

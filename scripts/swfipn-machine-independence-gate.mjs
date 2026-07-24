@@ -5,12 +5,17 @@ import path from "node:path";
 const cwd = process.cwd();
 const workflowPath = path.join(cwd, ".github", "workflows", "swfipn-acceptance.yml");
 const outputDir = path.join(cwd, "output");
-const receiptPath = path.join(outputDir, "swfipn-machine-independence-latest.json");
+const receiptPath = process.env.SWFIPN_MACHINE_RECEIPT
+  ? path.resolve(process.env.SWFIPN_MACHINE_RECEIPT)
+  : path.join(outputDir, "swfipn-machine-independence-latest.json");
 const workflow = fs.readFileSync(workflowPath, "utf8");
 const githubEvent = readGithubEvent(process.env.GITHUB_EVENT_PATH);
-const candidateSha = githubEvent?.pull_request?.head?.sha || process.env.GITHUB_SHA || null;
+const isPullRequest = Boolean(githubEvent?.pull_request);
+const candidateSha = isPullRequest
+  ? githubEvent.pull_request?.head?.sha || null
+  : process.env.GITHUB_SHA || null;
 
-fs.mkdirSync(outputDir, { recursive: true });
+fs.mkdirSync(path.dirname(receiptPath), { recursive: true });
 
 const checks = [
   check("github_hosted_linux_runner", /runs-on:\s*ubuntu-latest/.test(workflow)),

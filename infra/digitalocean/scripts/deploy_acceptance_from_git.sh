@@ -3,8 +3,8 @@
 set -euo pipefail
 
 # This deploy path intentionally has no local dashboard/backend source
-# dependency. GitHub supplies the exact frontend commit and the verified
-# current DigitalOcean release supplies the immutable backend snapshot.
+# dependency. GitHub supplies the exact frontend commit and the pinned active
+# DigitalOcean backend image is reused without rebuilding unverified source.
 
 MODE="${1:-deploy}"
 HOST="${SWFIPN_HOST:-}"
@@ -51,6 +51,11 @@ BASELINE_FRONTEND_GIT_SHA=""
 BASELINE_BACKEND_GIT_SHA=""
 BASELINE_FRONTEND_IMAGE_ID=""
 BASELINE_BACKEND_IMAGE_ID=""
+ACTIVATION_STARTED=0
+DEPLOY_COMMITTED=0
+ROLLBACK_ATTEMPTED=0
+ROLLBACK_SUCCEEDED=0
+ROLLBACK_GUARD_UNIT=""
 
 write_receipt() {
   mkdir -p "$(dirname "$RECEIPT_PATH")"
@@ -87,6 +92,11 @@ write_receipt() {
   SWFIPN_RECEIPT_FRESHNESS_AUDIT_SHA256="$FRESHNESS_AUDIT_SHA256" \
   SWFIPN_RECEIPT_FRESHNESS_TIMER_ACTIVE="$FRESHNESS_TIMER_ACTIVE" \
   SWFIPN_RECEIPT_PUBLIC_MARKER_SHA256="$PUBLIC_MARKER_SHA256" \
+  SWFIPN_RECEIPT_ACTIVATION_STARTED="$ACTIVATION_STARTED" \
+  SWFIPN_RECEIPT_DEPLOY_COMMITTED="$DEPLOY_COMMITTED" \
+  SWFIPN_RECEIPT_ROLLBACK_ATTEMPTED="$ROLLBACK_ATTEMPTED" \
+  SWFIPN_RECEIPT_ROLLBACK_SUCCEEDED="$ROLLBACK_SUCCEEDED" \
+  SWFIPN_RECEIPT_ROLLBACK_GUARD_UNIT="$ROLLBACK_GUARD_UNIT" \
   python3 - <<'PY'
 import json
 import os
@@ -96,14 +106,14 @@ def optional(name):
     return os.environ.get(name) or None
 
 receipt = {
-    "schema_version": "swfipn.strict_acceptance_deploy.v6",
+    "schema_version": "swfipn.strict_acceptance_deploy.v7",
     "generated_at": os.environ["SWFIPN_RECEIPT_GENERATED_AT"],
     "status": os.environ["SWFIPN_RECEIPT_STATUS"],
     "mode": os.environ["SWFIPN_RECEIPT_MODE"],
     "stage": os.environ["SWFIPN_RECEIPT_STAGE"],
     "exit_code": int(os.environ["SWFIPN_RECEIPT_EXIT_CODE"]),
     "failure": optional("SWFIPN_RECEIPT_FAILURE"),
-    "source_mode": "github_exact_commit_plus_current_release_backend",
+    "source_mode": "github_exact_commit_plus_pinned_backend_image",
     "host": optional("SWFIPN_RECEIPT_HOST"),
     "domain": optional("SWFIPN_RECEIPT_DOMAIN"),
     "site_addresses": optional("SWFIPN_RECEIPT_SITE_ADDRESSES"),
@@ -136,9 +146,10 @@ receipt = {
         "git_dirty": False,
     },
     "backend": {
-        "source_mode": "copied_from_verified_current_release",
+        "source_mode": "pinned_existing_image",
         "git_sha": optional("SWFIPN_RECEIPT_BACKEND_GIT_SHA"),
         "tree_sha256": optional("SWFIPN_RECEIPT_BACKEND_TREE_SHA256"),
+        "pinned_image_id": optional("SWFIPN_RECEIPT_PREVIOUS_BACKEND_IMAGE_ID"),
         "git_dirty": False,
     },
     "baseline": {
@@ -159,6 +170,11 @@ receipt = {
         "timer_active": os.environ["SWFIPN_RECEIPT_FRESHNESS_TIMER_ACTIVE"] == "active",
     },
     "public_release_marker_sha256": optional("SWFIPN_RECEIPT_PUBLIC_MARKER_SHA256"),
+    "activation_started": os.environ["SWFIPN_RECEIPT_ACTIVATION_STARTED"] == "1",
+    "deploy_committed": os.environ["SWFIPN_RECEIPT_DEPLOY_COMMITTED"] == "1",
+    "rollback_attempted": os.environ["SWFIPN_RECEIPT_ROLLBACK_ATTEMPTED"] == "1",
+    "rollback_succeeded": os.environ["SWFIPN_RECEIPT_ROLLBACK_SUCCEEDED"] == "1",
+    "rollback_guard_unit": optional("SWFIPN_RECEIPT_ROLLBACK_GUARD_UNIT"),
     "production_mutation_attempted": (
         os.environ["SWFIPN_RECEIPT_MODE"] == "deploy"
         and os.environ["SWFIPN_RECEIPT_STAGE"] not in {
@@ -182,6 +198,14 @@ on_exit() {
   local code=$?
   trap - EXIT
   EXIT_CODE=$code
+  if [[ "$code" != "0" && "$ACTIVATION_STARTED" == "1" && "$DEPLOY_COMMITTED" != "1" && "$ROLLBACK_ATTEMPTED" != "1" ]]; then
+    if restore_previous_release; then
+      ROLLBACK_SUCCEEDED=1
+    else
+      ROLLBACK_SUCCEEDED=0
+      FAILURE="${FAILURE:-command_failed_during_$STAGE}; automatic rollback failed"
+    fi
+  fi
   if [[ "$code" == "0" ]]; then
     STATUS="pass"
   elif [[ -z "$FAILURE" ]]; then
@@ -191,6 +215,8 @@ on_exit() {
   exit "$code"
 }
 trap on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 die() {
   FAILURE="$1"
@@ -286,7 +312,6 @@ ssh "${SSH_OPTS[@]}" "$HOST" "set -eu; \
   test \"\$(git -C '$REMOTE_RELEASE/frontend-git' show -s --format=%T FETCH_HEAD)\" = '$FRONTEND_GIT_TREE'; \
   mkdir '$REMOTE_RELEASE/swfi-dashboard' '$REMOTE_RELEASE/SWFI2.0-final'; \
   git -C '$REMOTE_RELEASE/frontend-git' archive '$FRONTEND_GIT_SHA' | tar -x -C '$REMOTE_RELEASE/swfi-dashboard'; \
-  cp -a '$PREVIOUS_RELEASE/SWFI2.0-final/.' '$REMOTE_RELEASE/SWFI2.0-final/'; \
   rm -rf '$REMOTE_RELEASE/frontend-git'; \
   cp '$REMOTE_RELEASE/swfi-dashboard/infra/digitalocean/Caddyfile' '$REMOTE_RELEASE/Caddyfile'; \
   cp '$REMOTE_RELEASE/swfi-dashboard/infra/digitalocean/compose.acceptance.yml' '$REMOTE_RELEASE/compose.acceptance.yml'; \
@@ -294,12 +319,7 @@ ssh "${SSH_OPTS[@]}" "$HOST" "set -eu; \
   ln -s '$REMOTE_ROOT/shared/.env.swfipn-web' '$REMOTE_RELEASE/.env.swfipn-web'"
 
 FRONTEND_TREE_JSON="$(ssh "${SSH_OPTS[@]}" "$HOST" "python3 '$REMOTE_RELEASE/swfi-dashboard/infra/digitalocean/scripts/tree_digest.py' '$REMOTE_RELEASE/swfi-dashboard'")"
-BACKEND_SOURCE_TREE_JSON="$(ssh "${SSH_OPTS[@]}" "$HOST" "python3 '$REMOTE_RELEASE/swfi-dashboard/infra/digitalocean/scripts/tree_digest.py' '$PREVIOUS_RELEASE/SWFI2.0-final'")"
-BACKEND_COPY_TREE_JSON="$(ssh "${SSH_OPTS[@]}" "$HOST" "python3 '$REMOTE_RELEASE/swfi-dashboard/infra/digitalocean/scripts/tree_digest.py' '$REMOTE_RELEASE/SWFI2.0-final'")"
 FRONTEND_TREE_SHA256="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["sha256"])' <<<"$FRONTEND_TREE_JSON")"
-BACKEND_SOURCE_TREE_SHA256="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["sha256"])' <<<"$BACKEND_SOURCE_TREE_JSON")"
-BACKEND_TREE_SHA256="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["sha256"])' <<<"$BACKEND_COPY_TREE_JSON")"
-[[ "$BACKEND_SOURCE_TREE_SHA256" == "$BACKEND_TREE_SHA256" ]] || die "backend snapshot copy digest mismatch"
 
 ssh "${SSH_OPTS[@]}" "$HOST" "set -eu; \
   printf '%s\n' \
@@ -308,16 +328,16 @@ ssh "${SSH_OPTS[@]}" "$HOST" "set -eu; \
     'SWFIPN_GIT_SHA=$FRONTEND_GIT_SHA' \
     'SWFIPN_GIT_DIRTY=0' \
     'SWFIPN_BACKEND_GIT_SHA=$BASELINE_BACKEND_GIT_SHA' \
-    'SWFIPN_SOURCE_MODE=github_exact_commit_plus_current_release_backend' \
+    'SWFIPN_SOURCE_MODE=github_exact_commit_plus_pinned_backend_image' \
     > '$REMOTE_RELEASE/.release.env'; \
   FRONTEND_GIT_URL='$FRONTEND_GIT_URL' \
   FRONTEND_GIT_SHA='$FRONTEND_GIT_SHA' \
   FRONTEND_GIT_TREE='$FRONTEND_GIT_TREE' \
   FRONTEND_TREE_SHA256='$FRONTEND_TREE_SHA256' \
   BACKEND_GIT_SHA='$BASELINE_BACKEND_GIT_SHA' \
-  BACKEND_TREE_SHA256='$BACKEND_TREE_SHA256' \
+  BACKEND_IMAGE_ID='$BASELINE_BACKEND_IMAGE_ID' \
   BASELINE_RELEASE='$BASELINE_RELEASE' \
-  python3 -c 'import json,os,pathlib; pathlib.Path(\"$REMOTE_RELEASE/source-manifest.json\").write_text(json.dumps({\"schema_version\":\"swfipn.release_source.v1\",\"frontend\":{\"git_url\":os.environ[\"FRONTEND_GIT_URL\"],\"git_sha\":os.environ[\"FRONTEND_GIT_SHA\"],\"git_tree\":os.environ[\"FRONTEND_GIT_TREE\"],\"tree_sha256\":os.environ[\"FRONTEND_TREE_SHA256\"]},\"backend\":{\"source_mode\":\"copied_from_verified_current_release\",\"git_sha\":os.environ[\"BACKEND_GIT_SHA\"],\"tree_sha256\":os.environ[\"BACKEND_TREE_SHA256\"],\"source_release\":os.environ[\"BASELINE_RELEASE\"]}},indent=2)+\"\\n\")'"
+  python3 -c 'import json,os,pathlib; pathlib.Path(\"$REMOTE_RELEASE/source-manifest.json\").write_text(json.dumps({\"schema_version\":\"swfipn.release_source.v2\",\"frontend\":{\"git_url\":os.environ[\"FRONTEND_GIT_URL\"],\"git_sha\":os.environ[\"FRONTEND_GIT_SHA\"],\"git_tree\":os.environ[\"FRONTEND_GIT_TREE\"],\"tree_sha256\":os.environ[\"FRONTEND_TREE_SHA256\"]},\"backend\":{\"source_mode\":\"pinned_existing_image\",\"git_sha\":os.environ[\"BACKEND_GIT_SHA\"],\"image_id\":os.environ[\"BACKEND_IMAGE_ID\"],\"source_release\":os.environ[\"BASELINE_RELEASE\"]}},indent=2)+\"\\n\")'"
 
 STAGE="image_build"
 ssh "${SSH_OPTS[@]}" "$HOST" "cd '$REMOTE_RELEASE' && \
@@ -326,20 +346,39 @@ ssh "${SSH_OPTS[@]}" "$HOST" "cd '$REMOTE_RELEASE' && \
   SWFIPN_DOMAIN='$DOMAIN' \
   SWFIPN_SITE_ADDRESSES='$SITE_ADDRESSES' \
   SWFIPN_API_DOMAIN='$API_DOMAIN' \
-  docker compose --env-file .release.env -p '$COMPOSE_PROJECT' -f compose.acceptance.yml build"
+  docker image tag '$BASELINE_BACKEND_IMAGE_ID' 'swfipn/swfi2-backend:$STAMP'; \
+  docker compose --env-file .release.env -p '$COMPOSE_PROJECT' -f compose.acceptance.yml build swfipn-web"
 
 restore_previous_release() {
-  ssh "${SSH_OPTS[@]}" "$HOST" "cd '$REMOTE_RELEASE' && docker compose --env-file .release.env -p '$COMPOSE_PROJECT' -f compose.acceptance.yml down --remove-orphans || true"
-  ssh "${SSH_OPTS[@]}" "$HOST" "set -eu; cd '$PREVIOUS_RELEASE'; \
+  ROLLBACK_ATTEMPTED=1
+  if ssh "${SSH_OPTS[@]}" "$HOST" "cd '$REMOTE_RELEASE' && docker compose --env-file .release.env -p '$COMPOSE_PROJECT' -f compose.acceptance.yml down --remove-orphans || true" \
+    && ssh "${SSH_OPTS[@]}" "$HOST" "set -eu; cd '$PREVIOUS_RELEASE'; \
     SWFIPN_DOMAIN='$DOMAIN' \
     SWFIPN_SITE_ADDRESSES='$SITE_ADDRESSES' \
     SWFIPN_API_DOMAIN='$API_DOMAIN' \
     docker compose --env-file .release.env -p '$COMPOSE_PROJECT' -f compose.acceptance.yml up -d --wait --wait-timeout 240; \
     ln -sfn '$PREVIOUS_RELEASE' '$REMOTE_ROOT/current'; \
-    test \"\$(readlink -f '$REMOTE_ROOT/current')\" = '$PREVIOUS_RELEASE'"
+    test \"\$(readlink -f '$REMOTE_ROOT/current')\" = '$PREVIOUS_RELEASE'; \
+    rm -f '$REMOTE_RELEASE/.activation-pending'; \
+    systemctl stop '$ROLLBACK_GUARD_UNIT.timer' '$ROLLBACK_GUARD_UNIT.service' >/dev/null 2>&1 || true"; then
+    ROLLBACK_SUCCEEDED=1
+    ACTIVATION_STARTED=0
+    return 0
+  fi
+  ROLLBACK_SUCCEEDED=0
+  return 1
 }
 
+ROLLBACK_GUARD_UNIT="swfipn-rollback-$STAMP"
+ssh "${SSH_OPTS[@]}" "$HOST" "set -eu; \
+  touch '$REMOTE_RELEASE/.activation-pending'; \
+  systemd-run --quiet --unit '$ROLLBACK_GUARD_UNIT' --on-active=15m --property=Type=oneshot \
+    '$REMOTE_RELEASE/swfi-dashboard/infra/digitalocean/scripts/rollback_guard.sh' \
+    '$REMOTE_RELEASE' '$PREVIOUS_RELEASE' '$REMOTE_ROOT' '$COMPOSE_PROJECT' \
+    '$DOMAIN' '$SITE_ADDRESSES' '$API_DOMAIN'"
+
 STAGE="activation"
+ACTIVATION_STARTED=1
 if ! ssh "${SSH_OPTS[@]}" "$HOST" "set -eu; cd '$REMOTE_RELEASE'; \
   SWFI2_BACKEND_CONTEXT=./SWFI2.0-final \
   SWFIPN_FRONTEND_CONTEXT=./swfi-dashboard \
@@ -392,6 +431,7 @@ STAGE="activation_evidence"
 collect_activation_evidence() {
   FRONTEND_IMAGE_ID="$(ssh "${SSH_OPTS[@]}" "$HOST" "docker inspect --format '{{.Image}}' '$COMPOSE_PROJECT-swfipn-web-1'")" || return 1
   BACKEND_IMAGE_ID="$(ssh "${SSH_OPTS[@]}" "$HOST" "docker inspect --format '{{.Image}}' '$COMPOSE_PROJECT-swfi2-backend-1'")" || return 1
+  [[ "$BACKEND_IMAGE_ID" == "$BASELINE_BACKEND_IMAGE_ID" ]] || return 1
   if ssh "${SSH_OPTS[@]}" "$HOST" "docker image inspect '$PREVIOUS_FRONTEND_IMAGE_ID' '$PREVIOUS_BACKEND_IMAGE_ID' >/dev/null"; then
     ROLLBACK_IMAGES_PRESENT=1
   else
@@ -426,6 +466,15 @@ if ! ssh "${SSH_OPTS[@]}" "$HOST" "set -eu; \
   restore_previous_release
   exit 1
 fi
+if ! ssh "${SSH_OPTS[@]}" "$HOST" "set -eu; \
+  rm -f '$REMOTE_RELEASE/.activation-pending'; \
+  systemctl stop '$ROLLBACK_GUARD_UNIT.timer' '$ROLLBACK_GUARD_UNIT.service' >/dev/null 2>&1 || true"; then
+  FAILURE="rollback guard disarm failed; restoring previous release"
+  echo "$FAILURE" >&2
+  restore_previous_release
+  exit 1
+fi
+DEPLOY_COMMITTED=1
 
 STAGE="complete"
 STATUS="pass"

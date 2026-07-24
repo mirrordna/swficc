@@ -17,6 +17,7 @@ const gitDeployPath = "infra/digitalocean/scripts/deploy_acceptance_from_git.sh"
 const baselinePath = "infra/digitalocean/acceptance-baseline.json";
 const workflowPath = ".github/workflows/swfipn-deploy-acceptance.yml";
 const acceptanceWorkflowPath = ".github/workflows/swfipn-acceptance.yml";
+const machineGatePath = "scripts/swfipn-machine-independence-gate.mjs";
 const composePath = "infra/digitalocean/compose.acceptance.yml";
 const freshnessAuditPath = "infra/digitalocean/scripts/run_freshness_audit.sh";
 const deploy = readFileSync(deployPath, "utf8");
@@ -76,7 +77,7 @@ try {
   });
   assert.equal(failureRun.status, 2, "invalid candidate preflight must fail closed");
   const failureReceipt = JSON.parse(readFileSync(failureReceiptPath, "utf8"));
-  assert.equal(failureReceipt.schema_version, "swfipn.strict_acceptance_deploy.v6");
+  assert.equal(failureReceipt.schema_version, "swfipn.strict_acceptance_deploy.v7");
   assert.equal(failureReceipt.status, "fail");
   assert.equal(failureReceipt.mode, "preflight");
   assert.equal(failureReceipt.production_mutation_attempted, false);
@@ -84,6 +85,30 @@ try {
   assert.match(failureReceipt.failure, /full lowercase commit sha/);
 } finally {
   rmSync(failureReceiptDir, { recursive: true, force: true });
+}
+
+const machineReceiptDir = mkdtempSync(path.join(tmpdir(), "swfipn-machine-receipt-"));
+try {
+  const eventPath = path.join(machineReceiptDir, "event.json");
+  const receiptPath = path.join(machineReceiptDir, "receipt.json");
+  writeFileSync(eventPath, JSON.stringify({ pull_request: { head: {} } }));
+  const missingHeadRun = spawnSync("node", [machineGatePath], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      GITHUB_ACTIONS: "true",
+      GITHUB_EVENT_PATH: eventPath,
+      GITHUB_SHA: "a".repeat(40),
+      SWFIPN_MACHINE_RECEIPT: receiptPath,
+    },
+  });
+  assert.equal(missingHeadRun.status, 1, "PR execution must fail when pull_request.head.sha is absent");
+  const missingHeadReceipt = JSON.parse(readFileSync(receiptPath, "utf8"));
+  assert.equal(missingHeadReceipt.git.candidate_sha, null);
+  assert.ok(missingHeadReceipt.failures.includes("candidate_sha_recorded_in_github"));
+} finally {
+  rmSync(machineReceiptDir, { recursive: true, force: true });
 }
 
 const requiredDeployContracts = [
@@ -116,9 +141,9 @@ const requiredGitDeployContracts = [
   ["host-side exact commit fetch", "fetch -q --depth=1 origin '$FRONTEND_GIT_SHA'"],
   ["host-side commit verification", "rev-parse FETCH_HEAD"],
   ["host-side git tree verification", "show -s --format=%T FETCH_HEAD"],
-  ["backend source from current release", "cp -a '$PREVIOUS_RELEASE/SWFI2.0-final/.'"],
-  ["backend source-copy digest parity", "backend snapshot copy digest mismatch"],
-  ["source provenance manifest", "swfipn.release_source.v1"],
+  ["pinned backend image reuse", "docker image tag '$BASELINE_BACKEND_IMAGE_ID'"],
+  ["pinned backend image activation check", '[[ "$BACKEND_IMAGE_ID" == "$BASELINE_BACKEND_IMAGE_ID" ]]'],
+  ["source provenance manifest", "swfipn.release_source.v2"],
   ["real release directory", "test ! -L '$REMOTE_RELEASE'"],
   ["health-waited activation", "up -d --wait --wait-timeout 240"],
   ["automatic previous-release restore", "activation failed; restoring previous release"],
@@ -127,7 +152,10 @@ const requiredGitDeployContracts = [
   ["rollback image verification", "docker image inspect '$PREVIOUS_FRONTEND_IMAGE_ID' '$PREVIOUS_BACKEND_IMAGE_ID'"],
   ["incomplete activation evidence restore", "activation evidence incomplete; restoring previous release"],
   ["receipt on every exit", "trap on_exit EXIT"],
-  ["versioned deploy receipt", "swfipn.strict_acceptance_deploy.v6"],
+  ["exit-trap rollback", 'if [[ "$code" != "0" && "$ACTIVATION_STARTED" == "1"'],
+  ["remote rollback guard", "systemd-run --quiet --unit '$ROLLBACK_GUARD_UNIT'"],
+  ["rollback guard disarm", "rollback guard disarm failed; restoring previous release"],
+  ["versioned deploy receipt", "swfipn.strict_acceptance_deploy.v7"],
   ["preflight receipt isolation", "swfipn-git-deploy-preflight-latest.json"],
   ["legacy receipt compatibility", '"backend_git_sha"'],
   ["explicit production mutation attempt flag", '"production_mutation_attempted"'],
