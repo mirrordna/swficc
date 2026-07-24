@@ -9,6 +9,7 @@ const receiptPath = process.env.SWFIPN_MACHINE_RECEIPT
   ? path.resolve(process.env.SWFIPN_MACHINE_RECEIPT)
   : path.join(outputDir, "swfipn-machine-independence-latest.json");
 const workflow = fs.readFileSync(workflowPath, "utf8");
+const actionReferences = [...workflow.matchAll(/^\s*uses:\s*([^\s#]+)/gm)].map((match) => match[1]);
 const githubEvent = readGithubEvent(process.env.GITHUB_EVENT_PATH);
 const isPullRequest = Boolean(githubEvent?.pull_request);
 const candidateSha = isPullRequest
@@ -31,11 +32,15 @@ const checks = [
   check("production_ssh_forbidden", !/^\s*(?:ssh|scp|rsync)\b/m.test(workflow)),
   check("production_deploy_forbidden", !/deploy_acceptance_from_git|docker compose|ln -sfn/.test(workflow)),
   check("receipts_uploaded_by_runner", /uses:\s*actions\/upload-artifact@/.test(workflow) && /path:\s*output\//.test(workflow)),
+  check(
+    "third_party_actions_pinned_to_commit",
+    actionReferences.length > 0 && actionReferences.every((reference) => /@[0-9a-f]{40}$/.test(reference)),
+  ),
 ];
 
 const failures = checks.filter((item) => !item.ok).map((item) => item.id);
 const receipt = {
-  schema_version: "swfipn.machine_independence_gate.v1",
+  schema_version: "swfipn.machine_independence_gate.v2",
   generated_at: new Date().toISOString(),
   status: failures.length ? "fail" : "pass",
   scope: "authoritative_github_acceptance_workflow",

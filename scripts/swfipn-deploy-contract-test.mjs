@@ -467,6 +467,18 @@ for (const marker of [
 ]) {
   assert.ok(acceptanceWorkflow.includes(marker), `acceptance workflow missing: ${marker}`);
 }
+for (const [label, workflowSource] of [
+  ["acceptance", acceptanceWorkflow],
+  ["protected deployment", workflow],
+]) {
+  const actionReferences = [...workflowSource.matchAll(/^\s*uses:\s*([^\s#]+)/gm)]
+    .map((match) => match[1]);
+  assert.ok(actionReferences.length > 0, `${label} workflow must contain actions`);
+  assert.ok(
+    actionReferences.every((reference) => /@[0-9a-f]{40}$/.test(reference)),
+    `${label} workflow actions must be pinned to immutable commit SHAs`,
+  );
+}
 assert.equal(
   acceptanceWorkflow.includes("swfipn.activemirror.ai"),
   false,
