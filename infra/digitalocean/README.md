@@ -123,9 +123,11 @@ source from the invoking machine:
 - the frontend is fetched from `mirrordna/swficc` at one full commit SHA;
 - the active release must exactly match `acceptance-baseline.json`;
 - the active frontend and backend image IDs must match the baseline;
-- read-only preflight verifies `SWFI2_FACT_SOURCE=mongo`, database `swfi`, and
-  a non-local Mongo URI whose normalized hosts match
-  `SWFI_MONGO_ALLOWED_HOSTS`, without writing URI or host values into receipts;
+- read-only preflight verifies `SWFI2_FACT_SOURCE=mongo`, database `swfi`,
+  strict TLS, the configured host allowlist, live direct/SRV DNS targets, and
+  every effective IP against a separately pinned Mongo source policy;
+- Mongo receipts bind the exact policy and resolved source identity with
+  SHA-256 digests without writing credentials, URI values, hostnames, or IPs;
 - the pinned backend image is retagged for the candidate release and is not
   rebuilt from an unverified source tree;
 - the new release is built under `/opt/swfipn-acceptance/releases`;
@@ -135,7 +137,7 @@ source from the invoking machine:
   prior release;
 - a remote systemd rollback guard restores the prior release if the invoking
   runner disappears after activation begins;
-- every preflight or deploy attempt writes a v7 receipt.
+- every preflight or deploy attempt writes a v8 receipt.
 
 Read-only preflight:
 
@@ -143,6 +145,7 @@ Read-only preflight:
 SWFIPN_HOST=root@161.35.56.218 \
 SWFIPN_DOMAIN=swfipn.activemirror.ai \
 SWFIPN_FRONTEND_GIT_SHA=<full-commit-sha> \
+SWFIPN_MONGO_POLICY_SHA256=<sha256-of-server-policy-file> \
 npm run deploy:acceptance:preflight
 ```
 
@@ -161,6 +164,7 @@ SWFIPN_ACCEPTANCE_HOST
 SWFIPN_ACCEPTANCE_DOMAIN
 SWFIPN_ACCEPTANCE_SSH_KEY
 SWFIPN_ACCEPTANCE_KNOWN_HOSTS
+SWFIPN_ACCEPTANCE_MONGO_POLICY_SHA256
 ```
 
 Dispatch requires the full candidate SHA and the exact
@@ -183,12 +187,40 @@ Create these on the server next to `compose.acceptance.yml`.
 ```bash
 SWFI2_FACT_SOURCE=mongo
 SWFI_MONGO_URI=
+SWFI_MONGO_ALLOWED_HOSTS=
 SWFI_MONGO_DB=swfi
 SWFI2_API_TOKEN=
 SWFI2_PRODUCT_API_KEYS=
 SWFI2_MSCI_COMPAT_KEY_IDS=
 SWFI2_SYNC_MAX_STALENESS_SECONDS=1800
 ```
+
+`SWFI_MONGO_ALLOWED_HOSTS` contains the normalized URI seed hostname(s), never
+credentials. It is checked against the independently pinned
+`/opt/swfipn-acceptance/shared/mongo-source-policy.json` file:
+
+```json
+{
+  "schema_version": "swfipn.mongo_source_policy.v1",
+  "allowed_uri_hosts": ["<approved-uri-seed-host>"],
+  "allowed_srv_hosts": ["<approved-srv-target-host>"],
+  "allowed_resolved_ips": ["<approved-public-ip>"]
+}
+```
+
+For a standard `mongodb://` URI, `allowed_srv_hosts` is an empty array. For
+`mongodb+srv://`, enumerate every approved SRV target. The policy rejects
+loopback, private, link-local, multicast, reserved, unspecified, mapped
+loopback, numeric-alias, and DNS-alias destinations. Pin the exact byte-level
+SHA-256 of this root-owned file in the GitHub environment secret
+`SWFIPN_ACCEPTANCE_MONGO_POLICY_SHA256`; changing either side independently
+must fail preflight. The pinned backend image performs live SRV and A/AAAA
+resolution in a read-only, capability-dropped container.
+
+Both environment files and the Mongo source policy must be owned by
+`root:root` with mode `0600`. The policy IP set is intentionally fail-closed:
+legitimate DNS or Atlas topology rotation requires a reviewed policy update and
+matching GitHub environment digest before another deployment can pass.
 
 `SWFI2_MSCI_COMPAT_KEY_IDS` contains comma-separated API key identifiers, not raw API keys. It is the explicit allowlist for the legacy `/v1/api` compatibility facade.
 

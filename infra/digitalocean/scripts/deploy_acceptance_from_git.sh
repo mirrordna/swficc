@@ -16,6 +16,7 @@ COMPOSE_PROJECT="${SWFIPN_COMPOSE_PROJECT:-swfipn_acceptance}"
 FRONTEND_GIT_URL="${SWFIPN_FRONTEND_GIT_URL:-https://github.com/mirrordna/swficc.git}"
 FRONTEND_GIT_SHA="${SWFIPN_FRONTEND_GIT_SHA:-}"
 BASELINE_MANIFEST="${SWFIPN_BASELINE_MANIFEST:-infra/digitalocean/acceptance-baseline.json}"
+MONGO_POLICY_SHA256="${SWFIPN_MONGO_POLICY_SHA256:-}"
 if [[ "$MODE" == "preflight" ]]; then
   DEFAULT_RECEIPT_PATH="output/swfipn-git-deploy-preflight-latest.json"
 else
@@ -58,6 +59,9 @@ ROLLBACK_SUCCEEDED=0
 ROLLBACK_GUARD_UNIT=""
 MONGO_SOURCE_VERIFIED=0
 MONGO_SOURCE_RECEIPT_SHA256=""
+MONGO_POLICY_RECEIPT_SHA256=""
+MONGO_SOURCE_IDENTITY_SHA256=""
+MONGO_EFFECTIVE_DESTINATIONS_SHA256=""
 
 write_receipt() {
   mkdir -p "$(dirname "$RECEIPT_PATH")"
@@ -101,6 +105,9 @@ write_receipt() {
   SWFIPN_RECEIPT_ROLLBACK_GUARD_UNIT="$ROLLBACK_GUARD_UNIT" \
   SWFIPN_RECEIPT_MONGO_SOURCE_VERIFIED="$MONGO_SOURCE_VERIFIED" \
   SWFIPN_RECEIPT_MONGO_SOURCE_RECEIPT_SHA256="$MONGO_SOURCE_RECEIPT_SHA256" \
+  SWFIPN_RECEIPT_MONGO_POLICY_SHA256="$MONGO_POLICY_RECEIPT_SHA256" \
+  SWFIPN_RECEIPT_MONGO_SOURCE_IDENTITY_SHA256="$MONGO_SOURCE_IDENTITY_SHA256" \
+  SWFIPN_RECEIPT_MONGO_EFFECTIVE_DESTINATIONS_SHA256="$MONGO_EFFECTIVE_DESTINATIONS_SHA256" \
   python3 - <<'PY'
 import json
 import os
@@ -110,7 +117,7 @@ def optional(name):
     return os.environ.get(name) or None
 
 receipt = {
-    "schema_version": "swfipn.strict_acceptance_deploy.v7",
+    "schema_version": "swfipn.strict_acceptance_deploy.v8",
     "generated_at": os.environ["SWFIPN_RECEIPT_GENERATED_AT"],
     "status": os.environ["SWFIPN_RECEIPT_STATUS"],
     "mode": os.environ["SWFIPN_RECEIPT_MODE"],
@@ -182,6 +189,9 @@ receipt = {
     "mongo_source": {
         "verified": os.environ["SWFIPN_RECEIPT_MONGO_SOURCE_VERIFIED"] == "1",
         "verification_receipt_sha256": optional("SWFIPN_RECEIPT_MONGO_SOURCE_RECEIPT_SHA256"),
+        "policy_sha256": optional("SWFIPN_RECEIPT_MONGO_POLICY_SHA256"),
+        "source_identity_sha256": optional("SWFIPN_RECEIPT_MONGO_SOURCE_IDENTITY_SHA256"),
+        "effective_destinations_sha256": optional("SWFIPN_RECEIPT_MONGO_EFFECTIVE_DESTINATIONS_SHA256"),
         "secrets_recorded": False,
     },
     "production_mutation_attempted": (
@@ -254,6 +264,7 @@ PY
 [[ "$COMPOSE_PROJECT" == "swfipn_acceptance" ]] || die "refusing noncanonical compose project: $COMPOSE_PROJECT"
 [[ "$FRONTEND_GIT_URL" == "https://github.com/mirrordna/swficc.git" ]] || die "refusing unapproved frontend repository: $FRONTEND_GIT_URL"
 [[ "$FRONTEND_GIT_SHA" =~ ^[0-9a-f]{40}$ ]] || die "SWFIPN_FRONTEND_GIT_SHA must be a full lowercase commit sha"
+[[ "$MONGO_POLICY_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "SWFIPN_MONGO_POLICY_SHA256 must be a full lowercase sha256 digest"
 [[ -s "$BASELINE_MANIFEST" ]] || die "missing baseline manifest: $BASELINE_MANIFEST"
 
 STAGE="baseline_validation"
@@ -287,17 +298,54 @@ ssh "${SSH_OPTS[@]}" "$HOST" "set -eu; \
   test -d '$PREVIOUS_RELEASE'; test ! -L '$PREVIOUS_RELEASE'; \
   test -d '$PREVIOUS_RELEASE/SWFI2.0-final'; test ! -L '$PREVIOUS_RELEASE/SWFI2.0-final'; \
   test -s '$REMOTE_ROOT/shared/.env.swfi2-backend'; \
+  test -s '$REMOTE_ROOT/shared/mongo-source-policy.json'; \
   test -s '$REMOTE_ROOT/shared/.env.swfipn-web'; \
+  test \"\$(stat -c '%U:%G:%a' '$REMOTE_ROOT/shared/.env.swfi2-backend')\" = 'root:root:600'; \
+  test \"\$(stat -c '%U:%G:%a' '$REMOTE_ROOT/shared/mongo-source-policy.json')\" = 'root:root:600'; \
+  test \"\$(stat -c '%U:%G:%a' '$REMOTE_ROOT/shared/.env.swfipn-web')\" = 'root:root:600'; \
   test -x /usr/local/sbin/swfipn-freshness-audit; \
   test \"\$(systemctl is-active swfipn-freshness-audit.timer)\" = active; \
   command -v git >/dev/null; command -v python3 >/dev/null; command -v docker >/dev/null; command -v flock >/dev/null; command -v systemd-run >/dev/null; \
   docker compose version >/dev/null; \
-  docker image inspect '$BASELINE_FRONTEND_IMAGE_ID' '$BASELINE_BACKEND_IMAGE_ID' >/dev/null"
+  docker image inspect '$BASELINE_FRONTEND_IMAGE_ID' '$BASELINE_BACKEND_IMAGE_ID' >/dev/null; \
+  docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges \
+    '$BASELINE_BACKEND_IMAGE_ID' python -c 'import dns.resolver' >/dev/null"
 if ! MONGO_SOURCE_RECEIPT="$(ssh "${SSH_OPTS[@]}" "$HOST" \
-  "python3 - '$REMOTE_ROOT/shared/.env.swfi2-backend'" \
+  "docker run --rm -i --read-only --cap-drop ALL --security-opt no-new-privileges \
+    --pids-limit 64 --memory 128m --network bridge --user 0:0 \
+    --tmpfs /tmp:rw,noexec,nosuid,size=16m \
+    -v '$REMOTE_ROOT/shared/.env.swfi2-backend:/run/secrets/backend.env:ro' \
+    -v '$REMOTE_ROOT/shared/mongo-source-policy.json:/run/secrets/mongo-policy.json:ro' \
+    '$BASELINE_BACKEND_IMAGE_ID' python - \
+    /run/secrets/backend.env /run/secrets/mongo-policy.json '$MONGO_POLICY_SHA256'" \
   < infra/digitalocean/scripts/verify_backend_env.py)"; then
   die "backend Mongo source verification failed"
 fi
+if ! MONGO_SOURCE_FIELDS="$(printf '%s' "$MONGO_SOURCE_RECEIPT" | python3 -c '
+import json
+import sys
+
+receipt = json.load(sys.stdin)
+assert receipt["schema_version"] == "swfipn.backend_env_verification.v2"
+assert receipt["status"] == "pass"
+assert receipt["resolver_mode"] == "live"
+assert receipt["no_secret_values_written"] is True
+for field in ("policy_sha256", "source_identity_sha256", "effective_destinations_sha256"):
+    value = receipt[field]
+    assert isinstance(value, str) and len(value) == 64
+print(receipt["policy_sha256"])
+print(receipt["source_identity_sha256"])
+print(receipt["effective_destinations_sha256"])
+')"; then
+  die "backend Mongo source receipt validation failed"
+fi
+readarray -t MONGO_SOURCE_FIELD_LINES <<<"$MONGO_SOURCE_FIELDS"
+MONGO_POLICY_RECEIPT_SHA256="${MONGO_SOURCE_FIELD_LINES[0]:-}"
+MONGO_SOURCE_IDENTITY_SHA256="${MONGO_SOURCE_FIELD_LINES[1]:-}"
+MONGO_EFFECTIVE_DESTINATIONS_SHA256="${MONGO_SOURCE_FIELD_LINES[2]:-}"
+[[ "$MONGO_POLICY_RECEIPT_SHA256" == "$MONGO_POLICY_SHA256" ]] || die "backend Mongo policy digest mismatch"
+mkdir -p output
+printf '%s' "$MONGO_SOURCE_RECEIPT" > output/swfipn-mongo-source-verification-latest.json
 MONGO_SOURCE_RECEIPT_SHA256="$(printf '%s' "$MONGO_SOURCE_RECEIPT" | shasum -a 256 | awk '{print $1}')"
 MONGO_SOURCE_VERIFIED=1
 

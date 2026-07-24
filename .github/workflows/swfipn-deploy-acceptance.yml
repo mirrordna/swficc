@@ -79,6 +79,7 @@ jobs:
           SWFIPN_HOST: ${{ secrets.SWFIPN_ACCEPTANCE_HOST }}
           SWFIPN_DOMAIN: ${{ secrets.SWFIPN_ACCEPTANCE_DOMAIN }}
           SWFIPN_FRONTEND_GIT_SHA: ${{ github.event.inputs.candidate_sha }}
+          SWFIPN_MONGO_POLICY_SHA256: ${{ secrets.SWFIPN_ACCEPTANCE_MONGO_POLICY_SHA256 }}
         run: |
           bash infra/digitalocean/scripts/deploy_acceptance_from_git.sh preflight
 
@@ -87,6 +88,7 @@ jobs:
           SWFIPN_HOST: ${{ secrets.SWFIPN_ACCEPTANCE_HOST }}
           SWFIPN_DOMAIN: ${{ secrets.SWFIPN_ACCEPTANCE_DOMAIN }}
           SWFIPN_FRONTEND_GIT_SHA: ${{ github.event.inputs.candidate_sha }}
+          SWFIPN_MONGO_POLICY_SHA256: ${{ secrets.SWFIPN_ACCEPTANCE_MONGO_POLICY_SHA256 }}
         run: |
           bash infra/digitalocean/scripts/deploy_acceptance_from_git.sh deploy
 

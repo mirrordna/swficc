@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   mkdtempSync,
@@ -63,49 +64,235 @@ try {
 
 const backendEnvFixture = mkdtempSync(path.join(tmpdir(), "swfipn-backend-env-"));
 try {
-  const remoteEnv = path.join(backendEnvFixture, "remote.env");
-  const localEnv = path.join(backendEnvFixture, "local.env");
-  writeFileSync(remoteEnv, [
+  const fixturePath = path.join(backendEnvFixture, "dns-fixture.json");
+  const policyPath = path.join(backendEnvFixture, "mongo-policy.json");
+  const policy = {
+    schema_version: "swfipn.mongo_source_policy.v1",
+    allowed_uri_hosts: [
+      "cluster.example.net",
+      "cluster-a.example.net",
+      "cluster-b.example.net",
+    ],
+    allowed_srv_hosts: [
+      "node-a.example.net",
+      "node-b.example.net",
+    ],
+    allowed_resolved_ips: [
+      "1.1.1.1",
+      "8.8.8.8",
+    ],
+  };
+  const fixture = {
+    srv: {
+      "cluster.example.net": [
+        "node-a.example.net",
+        "node-b.example.net",
+      ],
+    },
+    addresses: {
+      "cluster-a.example.net": ["8.8.8.8"],
+      "cluster-b.example.net": ["8.8.8.8"],
+      "node-a.example.net": ["8.8.8.8"],
+      "node-b.example.net": ["1.1.1.1"],
+    },
+  };
+  const policyJson = `${JSON.stringify(policy, null, 2)}\n`;
+  writeFileSync(policyPath, policyJson);
+  writeFileSync(fixturePath, `${JSON.stringify(fixture, null, 2)}\n`);
+  const policyDigest = createHash("sha256").update(policyJson).digest("hex");
+
+  const runVerifier = (name, lines, policyFile = policyPath, digest = policyDigest, dnsFixture = fixturePath) => {
+    const envPath = path.join(backendEnvFixture, `${name}.env`);
+    writeFileSync(envPath, [...lines, ""].join("\n"));
+    return spawnSync(
+      "python3",
+      [backendEnvVerifierPath, envPath, policyFile, digest, dnsFixture],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          SWFIPN_BACKEND_ENV_VERIFY_TEST_MODE: "1",
+        },
+      },
+    );
+  };
+
+  const remoteResult = runVerifier("remote", [
+    "SWFI2_FACT_SOURCE=mongo",
+    "SWFI_MONGO_DB=swfi",
+    "SWFI_MONGO_URI=mongodb+srv://user:secret@cluster.example.net/swfi",
+    "SWFI_MONGO_ALLOWED_HOSTS=cluster.example.net",
+  ]);
+  assert.equal(
+    remoteResult.status,
+    0,
+    `pinned remote Mongo source contract must pass: ${remoteResult.stdout || remoteResult.stderr}`,
+  );
+  const remoteReceipt = JSON.parse(remoteResult.stdout);
+  assert.equal(remoteReceipt.schema_version, "swfipn.backend_env_verification.v2");
+  assert.equal(remoteReceipt.policy_sha256, policyDigest);
+  assert.equal(remoteReceipt.resolver_mode, "fixture");
+  assert.equal(remoteResult.stdout.includes("user:secret"), false, "Mongo verifier must not expose credentials");
+  assert.equal(remoteResult.stdout.includes("cluster.example.net"), false, "Mongo verifier must not expose host values");
+
+  const identityA = runVerifier("identity-a", [
+    "SWFI2_FACT_SOURCE=mongo",
+    "SWFI_MONGO_DB=swfi",
+    "SWFI_MONGO_URI=mongodb://user:secret@cluster-a.example.net:27017/swfi?tls=true",
+    "SWFI_MONGO_ALLOWED_HOSTS=cluster-a.example.net",
+  ]);
+  const identityB = runVerifier("identity-b", [
+    "SWFI2_FACT_SOURCE=mongo",
+    "SWFI_MONGO_DB=swfi",
+    "SWFI_MONGO_URI=mongodb://user:secret@cluster-b.example.net:27017/swfi?tls=true",
+    "SWFI_MONGO_ALLOWED_HOSTS=cluster-b.example.net",
+  ]);
+  assert.equal(identityA.status, 0);
+  assert.equal(identityB.status, 0);
+  assert.notEqual(
+    JSON.parse(identityA.stdout).source_identity_sha256,
+    JSON.parse(identityB.stdout).source_identity_sha256,
+    "receipt digest must bind the verified Mongo source identity",
+  );
+
+  const wrongDigest = runVerifier(
+    "wrong-policy-digest",
+    [
+      "SWFI2_FACT_SOURCE=mongo",
+      "SWFI_MONGO_DB=swfi",
+      "SWFI_MONGO_URI=mongodb+srv://user:secret@cluster.example.net/swfi",
+      "SWFI_MONGO_ALLOWED_HOSTS=cluster.example.net",
+    ],
+    policyPath,
+    "0".repeat(64),
+  );
+  assert.equal(wrongDigest.status, 1, "unpinned Mongo policy content must fail");
+
+  const missingEnvAllowlist = runVerifier("missing-env-allowlist", [
+    "SWFI2_FACT_SOURCE=mongo",
+    "SWFI_MONGO_DB=swfi",
+    "SWFI_MONGO_URI=mongodb+srv://user:secret@cluster.example.net/swfi",
+  ]);
+  assert.equal(missingEnvAllowlist.status, 1, "missing environment host allowlist must fail");
+
+  const insecureTls = runVerifier("insecure-tls", [
+    "SWFI2_FACT_SOURCE=mongo",
+    "SWFI_MONGO_DB=swfi",
+    "SWFI_MONGO_URI=mongodb+srv://user:secret@cluster.example.net/swfi?tls=false",
+    "SWFI_MONGO_ALLOWED_HOSTS=cluster.example.net",
+  ]);
+  assert.equal(insecureTls.status, 1, "Mongo TLS downgrade must fail");
+
+  const missingDirectTls = runVerifier("missing-direct-tls", [
+    "SWFI2_FACT_SOURCE=mongo",
+    "SWFI_MONGO_DB=swfi",
+    "SWFI_MONGO_URI=mongodb://user:secret@cluster-a.example.net:27017/swfi",
+    "SWFI_MONGO_ALLOWED_HOSTS=cluster-a.example.net",
+  ]);
+  assert.equal(missingDirectTls.status, 1, "standard Mongo URI without explicit TLS must fail");
+
+  const outsidePolicyFixturePath = path.join(backendEnvFixture, "outside-policy.dns.json");
+  writeFileSync(outsidePolicyFixturePath, `${JSON.stringify({
+    srv: {},
+    addresses: {
+      "cluster-a.example.net": ["9.9.9.9"],
+    },
+  }, null, 2)}\n`);
+  const outsidePolicy = runVerifier(
+    "outside-policy",
+    [
+      "SWFI2_FACT_SOURCE=mongo",
+      "SWFI_MONGO_DB=swfi",
+      "SWFI_MONGO_URI=mongodb://user:secret@cluster-a.example.net:27017/swfi?tls=true",
+      "SWFI_MONGO_ALLOWED_HOSTS=cluster-a.example.net",
+    ],
+    policyPath,
+    policyDigest,
+    outsidePolicyFixturePath,
+  );
+  assert.equal(outsidePolicy.status, 1, "resolved address outside pinned policy must fail");
+
+  const unauthorizedSrvFixturePath = path.join(backendEnvFixture, "unauthorized-srv.dns.json");
+  writeFileSync(unauthorizedSrvFixturePath, `${JSON.stringify({
+    srv: {
+      "cluster.example.net": ["unauthorized.example.net"],
+    },
+    addresses: {
+      "unauthorized.example.net": ["8.8.8.8"],
+    },
+  }, null, 2)}\n`);
+  const unauthorizedSrv = runVerifier(
+    "unauthorized-srv",
+    [
+      "SWFI2_FACT_SOURCE=mongo",
+      "SWFI_MONGO_DB=swfi",
+      "SWFI_MONGO_URI=mongodb+srv://user:secret@cluster.example.net/swfi",
+      "SWFI_MONGO_ALLOWED_HOSTS=cluster.example.net",
+    ],
+    policyPath,
+    policyDigest,
+    unauthorizedSrvFixturePath,
+  );
+  assert.equal(unauthorizedSrv.status, 1, "SRV target outside pinned policy must fail");
+
+  const fixtureBypassEnv = path.join(backendEnvFixture, "fixture-bypass.env");
+  writeFileSync(fixtureBypassEnv, [
     "SWFI2_FACT_SOURCE=mongo",
     "SWFI_MONGO_DB=swfi",
     "SWFI_MONGO_URI=mongodb+srv://user:secret@cluster.example.net/swfi",
     "SWFI_MONGO_ALLOWED_HOSTS=cluster.example.net",
     "",
   ].join("\n"));
-  writeFileSync(localEnv, [
-    "SWFI2_FACT_SOURCE=mongo",
-    "SWFI_MONGO_DB=swfi",
-    "SWFI_MONGO_URI=mongodb://localhost:27017/swfi",
-    "SWFI_MONGO_ALLOWED_HOSTS=localhost",
-    "",
-  ].join("\n"));
-  const remoteResult = spawnSync("python3", [backendEnvVerifierPath, remoteEnv], { encoding: "utf8" });
-  const localResult = spawnSync("python3", [backendEnvVerifierPath, localEnv], { encoding: "utf8" });
-  assert.equal(remoteResult.status, 0, "remote Mongo source contract must pass");
-  assert.equal(localResult.status, 1, "local Mongo source must fail");
-  assert.equal(remoteResult.stdout.includes("user:secret"), false, "Mongo verifier must not expose credentials");
-  assert.equal(localResult.stdout.includes("localhost"), false, "Mongo verifier must not expose host values");
+  const fixtureBypass = spawnSync(
+    "python3",
+    [backendEnvVerifierPath, fixtureBypassEnv, policyPath, policyDigest, fixturePath],
+    { encoding: "utf8", env: { ...process.env, SWFIPN_BACKEND_ENV_VERIFY_TEST_MODE: "0" } },
+  );
+  assert.equal(fixtureBypass.status, 1, "DNS fixture must be unavailable outside explicit test mode");
 
   const unsafeHosts = [
-    "localhost.",
-    "127.0.0.2",
-    "127.1",
-    "[::ffff:127.0.0.1]",
-    "%2Ftmp%2Fmongodb.sock",
-    "mongo",
-    "host.docker.internal",
+    ["localhost.", "127.0.0.1"],
+    ["127.0.0.2", "127.0.0.2"],
+    ["127.1", "127.0.0.1"],
+    ["[::ffff:127.0.0.1]", "::ffff:127.0.0.1"],
+    ["%2Ftmp%2Fmongodb.sock", "127.0.0.1"],
+    ["mongo", "127.0.0.1"],
+    ["host.docker.internal", "127.0.0.1"],
+    ["127.0.0.1.nip.io", "127.0.0.1"],
+    ["localtest.me", "::1"],
+    ["0x7f.0.0.1", "127.0.0.1"],
+    ["0x7f.1", "127.0.0.1"],
   ];
-  for (const unsafeHost of unsafeHosts) {
-    const unsafeEnv = path.join(backendEnvFixture, `unsafe-${unsafeHosts.indexOf(unsafeHost)}.env`);
-    writeFileSync(unsafeEnv, [
-      "SWFI2_FACT_SOURCE=mongo",
-      "SWFI_MONGO_DB=swfi",
-      `SWFI_MONGO_URI=mongodb://${unsafeHost}:27017/swfi`,
-      `SWFI_MONGO_ALLOWED_HOSTS=${unsafeHost}`,
-      "",
-    ].join("\n"));
-    const unsafeResult = spawnSync("python3", [backendEnvVerifierPath, unsafeEnv], { encoding: "utf8" });
-    assert.equal(unsafeResult.status, 1, `unsafe Mongo host must fail: ${unsafeHost}`);
+  for (const [index, [unsafeHost, resolvedIp]] of unsafeHosts.entries()) {
+    const unsafePolicyPath = path.join(backendEnvFixture, `unsafe-${index}.policy.json`);
+    const unsafeFixturePath = `${unsafePolicyPath}.dns.json`;
+    const normalizedUnsafeHost = unsafeHost.replace(/^\[|\]$/g, "");
+    const unsafePolicyJson = `${JSON.stringify({
+      schema_version: "swfipn.mongo_source_policy.v1",
+      allowed_uri_hosts: [normalizedUnsafeHost],
+      allowed_srv_hosts: [],
+      allowed_resolved_ips: [resolvedIp],
+    }, null, 2)}\n`;
+    writeFileSync(unsafePolicyPath, unsafePolicyJson);
+    writeFileSync(unsafeFixturePath, `${JSON.stringify({
+      srv: {},
+      addresses: {
+        [normalizedUnsafeHost.replace(/\.$/, "")]: [resolvedIp],
+      },
+    }, null, 2)}\n`);
+    const unsafeResult = runVerifier(
+      `unsafe-${index}`,
+      [
+        "SWFI2_FACT_SOURCE=mongo",
+        "SWFI_MONGO_DB=swfi",
+        `SWFI_MONGO_URI=mongodb://${unsafeHost}:27017/swfi?tls=true`,
+        `SWFI_MONGO_ALLOWED_HOSTS=${unsafeHost}`,
+      ],
+      unsafePolicyPath,
+      createHash("sha256").update(unsafePolicyJson).digest("hex"),
+      unsafeFixturePath,
+    );
+    assert.equal(unsafeResult.status, 1, `unsafe Mongo destination must fail: ${unsafeHost}`);
     assert.equal(unsafeResult.stdout.includes(`mongodb://${unsafeHost}`), false, "Mongo verifier must not expose rejected URI values");
   }
 } finally {
@@ -131,7 +318,7 @@ try {
   });
   assert.equal(failureRun.status, 2, "invalid candidate preflight must fail closed");
   const failureReceipt = JSON.parse(readFileSync(failureReceiptPath, "utf8"));
-  assert.equal(failureReceipt.schema_version, "swfipn.strict_acceptance_deploy.v7");
+  assert.equal(failureReceipt.schema_version, "swfipn.strict_acceptance_deploy.v8");
   assert.equal(failureReceipt.status, "fail");
   assert.equal(failureReceipt.mode, "preflight");
   assert.equal(failureReceipt.production_mutation_attempted, false);
@@ -193,6 +380,13 @@ const requiredGitDeployContracts = [
   ["pinned active frontend image", "active frontend image differs from pinned baseline"],
   ["pinned active backend image", "active backend image differs from pinned baseline"],
   ["secret-safe Mongo source preflight", "backend Mongo source verification failed"],
+  ["pinned Mongo policy digest", "SWFIPN_MONGO_POLICY_SHA256"],
+  ["root-owned Mongo policy file", "mongo-source-policy.json"],
+  ["live SRV resolver dependency", "import dns.resolver"],
+  ["hardened source verifier container", "--cap-drop ALL --security-opt no-new-privileges"],
+  ["source identity receipt binding", "source_identity_sha256"],
+  ["effective destination receipt binding", "effective_destinations_sha256"],
+  ["standalone source verification receipt", "swfipn-mongo-source-verification-latest.json"],
   ["host-side exact commit fetch", "fetch -q --depth=1 origin '$FRONTEND_GIT_SHA'"],
   ["host-side commit verification", "rev-parse FETCH_HEAD"],
   ["host-side git tree verification", "show -s --format=%T FETCH_HEAD"],
@@ -215,7 +409,7 @@ const requiredGitDeployContracts = [
   ["rollback backend image verification", "PREVIOUS_BACKEND_IMAGE_ID"],
   ["rollback guard disarm", "rollback guard disarm failed; restoring previous release"],
   ["Mongo source receipt binding", '"mongo_source"'],
-  ["versioned deploy receipt", "swfipn.strict_acceptance_deploy.v7"],
+  ["versioned deploy receipt", "swfipn.strict_acceptance_deploy.v8"],
   ["preflight receipt isolation", "swfipn-git-deploy-preflight-latest.json"],
   ["legacy receipt compatibility", '"backend_git_sha"'],
   ["explicit production mutation attempt flag", '"production_mutation_attempted"'],
@@ -251,6 +445,7 @@ for (const marker of [
   'test "$CANDIDATE_SHA" = "$WORKFLOW_SHA"',
   "SWFIPN_ACCEPTANCE_SSH_KEY",
   "SWFIPN_ACCEPTANCE_KNOWN_HOSTS",
+  "SWFIPN_ACCEPTANCE_MONGO_POLICY_SHA256",
   "deploy_acceptance_from_git.sh preflight",
   "deploy_acceptance_from_git.sh deploy",
   "Remove ephemeral SSH identity",
