@@ -141,7 +141,7 @@
     "list:data:proof": "node scripts/swfipn-list-data-proof.mjs",
     "list:data:proof:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ node scripts/swfipn-list-data-proof.mjs",
     "closeout:gate": "node scripts/swfipn-closeout-gate.mjs",
-    "closeout:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ SWFIPN_BACKEND_ORIGIN=https://swfipn.activemirror.ai node scripts/swfipn-closeout-gate.mjs",
+    "closeout:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ SWFIPN_BACKEND_ORIGIN=https://swfipn.activemirror.ai SWFIPN_CLOSEOUT_LATENCY_BLOCKING=0 node scripts/swfipn-closeout-gate.mjs",
     "record-mirror:gate": "node scripts/swfipn-record-mirror-gate.mjs",
     "record-mirror:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ SWFIPN_BACKEND_ORIGIN=https://swfipn.activemirror.ai node scripts/swfipn-record-mirror-gate.mjs",
     "record:parity:gate": "node scripts/swfipn-record-level-parity-gate.mjs",
