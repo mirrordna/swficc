@@ -228,26 +228,23 @@
     "@types/react-dom": "^19",
     "@types/topojson-client": "^3.1.5",
     "@types/topojson-specification": "^1.0.5",
+    "brace-expansion": "5.0.8",
     "eslint": "^9",
     "eslint-config-next": "^16.2.11",
+    "minimatch": "file:vendor/minimatch-callable",
+    "minimatch-modern": "npm:minimatch@10.2.5",
     "playwright": "^1.60.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^5",
     "world-atlas": "^2.0.2"
   },
   "overrides": {
-    "postcss": "8.5.15",
+    "postcss": "8.5.23",
     "next": {
       "sharp": "0.35.3"
     },
     "@eslint/eslintrc": {
       "js-yaml": "4.3.0"
-    },
-    "minimatch@3.1.5": {
-      "brace-expansion": "1.1.16"
-    },
-    "minimatch@10.2.5": {
-      "brace-expansion": "5.0.8"
     }
   }
 }

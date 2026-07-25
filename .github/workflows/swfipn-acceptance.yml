@@ -27,6 +27,11 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Deployment contract and security hygiene
+        run: |
+          npm run test:deploy-contract
+          npm run security:hygiene
+
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 

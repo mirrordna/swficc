@@ -3,12 +3,20 @@ name: SWFIPN Deploy Acceptance
 on:
   workflow_dispatch:
     inputs:
+      operation:
+        description: Run immutable preflight only, or deploy after preflight
+        required: true
+        default: preflight_only
+        type: choice
+        options:
+          - preflight_only
+          - deploy
       candidate_sha:
-        description: Full 40-character frontend commit SHA to deploy
+        description: Full 40-character frontend commit SHA to verify
         required: true
         type: string
       approval_phrase:
-        description: Type DEPLOY_SWFIPN_ACCEPTANCE to unlock the protected job
+        description: Type PREFLIGHT_SWFIPN_ACCEPTANCE or DEPLOY_SWFIPN_ACCEPTANCE
         required: true
         type: string
 
@@ -21,29 +29,57 @@ permissions:
 
 jobs:
   deploy:
-    if: github.event.inputs.approval_phrase == 'DEPLOY_SWFIPN_ACCEPTANCE'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: swfipn-acceptance
     steps:
-      - name: Validate requested commit
+      - name: Validate manual request and required secrets
         env:
-          CANDIDATE_SHA: ${{ github.event.inputs.candidate_sha }}
+          OPERATION: ${{ inputs.operation }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           WORKFLOW_SHA: ${{ github.sha }}
-          APPROVAL_PHRASE: ${{ github.event.inputs.approval_phrase }}
+          APPROVAL_PHRASE: ${{ inputs.approval_phrase }}
+          SWFIPN_ACCEPTANCE_HOST: ${{ secrets.SWFIPN_ACCEPTANCE_HOST }}
+          SWFIPN_ACCEPTANCE_DOMAIN: ${{ secrets.SWFIPN_ACCEPTANCE_DOMAIN }}
+          SWFIPN_ACCEPTANCE_SSH_KEY: ${{ secrets.SWFIPN_ACCEPTANCE_SSH_KEY }}
+          SWFIPN_ACCEPTANCE_KNOWN_HOSTS: ${{ secrets.SWFIPN_ACCEPTANCE_KNOWN_HOSTS }}
+          SWFIPN_ACCEPTANCE_MONGO_POLICY_SHA256: ${{ secrets.SWFIPN_ACCEPTANCE_MONGO_POLICY_SHA256 }}
         run: |
+          set -euo pipefail
+          missing=()
+          [[ -n "$SWFIPN_ACCEPTANCE_HOST" ]] || missing+=("SWFIPN_ACCEPTANCE_HOST")
+          [[ -n "$SWFIPN_ACCEPTANCE_DOMAIN" ]] || missing+=("SWFIPN_ACCEPTANCE_DOMAIN")
+          [[ -n "$SWFIPN_ACCEPTANCE_SSH_KEY" ]] || missing+=("SWFIPN_ACCEPTANCE_SSH_KEY")
+          [[ -n "$SWFIPN_ACCEPTANCE_KNOWN_HOSTS" ]] || missing+=("SWFIPN_ACCEPTANCE_KNOWN_HOSTS")
+          [[ -n "$SWFIPN_ACCEPTANCE_MONGO_POLICY_SHA256" ]] || missing+=("SWFIPN_ACCEPTANCE_MONGO_POLICY_SHA256")
+          if (( ${#missing[@]} )); then
+            printf 'Missing required deployment secrets (%d):\n' "${#missing[@]}" >&2
+            printf ' - %s\n' "${missing[@]}" >&2
+            exit 2
+          fi
           [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$CANDIDATE_SHA" = "$WORKFLOW_SHA"
-          test "$APPROVAL_PHRASE" = "DEPLOY_SWFIPN_ACCEPTANCE"
+          case "$OPERATION" in
+            preflight_only)
+              test "$APPROVAL_PHRASE" = "PREFLIGHT_SWFIPN_ACCEPTANCE"
+              ;;
+            deploy)
+              test "$APPROVAL_PHRASE" = "DEPLOY_SWFIPN_ACCEPTANCE"
+              ;;
+            *)
+              printf 'Unsupported operation: %s\n' "$OPERATION" >&2
+              exit 2
+              ;;
+          esac
 
       - name: Checkout exact candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.event.inputs.candidate_sha }}
+          ref: ${{ inputs.candidate_sha }}
 
       - name: Verify checkout identity
         env:
-          CANDIDATE_SHA: ${{ github.event.inputs.candidate_sha }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
         run: |
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           test -z "$(git status --porcelain --untracked-files=normal)"
@@ -63,7 +99,12 @@ jobs:
           SWFIPN_DB_INDEX_DRY_RUN=1 npm run db:indexes
           npm run build
 
+      - name: Install Playwright Chromium before activation
+        if: ${{ inputs.operation == 'deploy' }}
+        run: npx playwright install --with-deps chromium
+
       - name: Configure ephemeral SSH identity
+        id: ssh_identity
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SWFIPN_ACCEPTANCE_SSH_KEY }}
           SSH_KNOWN_HOSTS: ${{ secrets.SWFIPN_ACCEPTANCE_KNOWN_HOSTS }}
@@ -73,42 +114,122 @@ jobs:
           chmod 0600 "$HOME/.ssh/id_ed25519"
           printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           chmod 0600 "$HOME/.ssh/known_hosts"
+          ssh-keygen -y -f "$HOME/.ssh/id_ed25519" > "$HOME/.ssh/id_ed25519.pub"
+          chmod 0600 "$HOME/.ssh/id_ed25519.pub"
+          fingerprint="$(ssh-keygen -lf "$HOME/.ssh/id_ed25519.pub" -E sha256 | awk '{print $2}')"
+          [[ "$fingerprint" =~ ^SHA256:[A-Za-z0-9+/]+$ ]]
+          printf 'fingerprint=%s\n' "$fingerprint" >> "$GITHUB_OUTPUT"
+
+      - name: Attest temporary server SSH authorization
+        id: authorize_access
+        env:
+          SWFIPN_HOST: ${{ secrets.SWFIPN_ACCEPTANCE_HOST }}
+          SWFIPN_SSH_KEY_FINGERPRINT: ${{ steps.ssh_identity.outputs.fingerprint }}
+          SWFIPN_SSH_ACCESS_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: bash infra/digitalocean/scripts/deploy_acceptance_from_git.sh authorize-access
 
       - name: DigitalOcean immutable preflight
+        id: preflight
         env:
           SWFIPN_HOST: ${{ secrets.SWFIPN_ACCEPTANCE_HOST }}
           SWFIPN_DOMAIN: ${{ secrets.SWFIPN_ACCEPTANCE_DOMAIN }}
-          SWFIPN_FRONTEND_GIT_SHA: ${{ github.event.inputs.candidate_sha }}
+          SWFIPN_FRONTEND_GIT_SHA: ${{ inputs.candidate_sha }}
           SWFIPN_MONGO_POLICY_SHA256: ${{ secrets.SWFIPN_ACCEPTANCE_MONGO_POLICY_SHA256 }}
         run: |
           bash infra/digitalocean/scripts/deploy_acceptance_from_git.sh preflight
 
       - name: Deploy exact GitHub commit
+        id: activate
+        if: ${{ inputs.operation == 'deploy' }}
         env:
           SWFIPN_HOST: ${{ secrets.SWFIPN_ACCEPTANCE_HOST }}
           SWFIPN_DOMAIN: ${{ secrets.SWFIPN_ACCEPTANCE_DOMAIN }}
-          SWFIPN_FRONTEND_GIT_SHA: ${{ github.event.inputs.candidate_sha }}
+          SWFIPN_FRONTEND_GIT_SHA: ${{ inputs.candidate_sha }}
           SWFIPN_MONGO_POLICY_SHA256: ${{ secrets.SWFIPN_ACCEPTANCE_MONGO_POLICY_SHA256 }}
         run: |
           bash infra/digitalocean/scripts/deploy_acceptance_from_git.sh deploy
 
-      - name: Remove ephemeral SSH identity
-        if: always()
-        run: |
-          rm -f "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
-
-      - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
-
       - name: Post-deploy frozen browser contract
+        id: browser_gate
+        if: ${{ inputs.operation == 'deploy' }}
+        env:
+          SWFIPN_CONTRACT_OUT: output/swfipn-dashboard20-e2e-contract-post-deploy.json
+          SWFIPN_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          SWFIPN_WORKFLOW_RUN_ID: ${{ github.run_id }}
+          SWFIPN_RELEASE_MARKER_URL: https://dashboard.swfi.com/swficc/swficc-release.json
+          SWFIPN_REQUIRE_RELEASE_PROVENANCE: "1"
         run: npm run contract:gate:public
 
       - name: Post-deploy semantic contract
+        id: semantic_gate
+        if: ${{ inputs.operation == 'deploy' }}
+        env:
+          SWFIPN_SEMANTIC_RECEIPT: output/swfipn-semantic-search-retest-post-deploy.json
+          SWFIPN_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          SWFIPN_WORKFLOW_RUN_ID: ${{ github.run_id }}
+          SWFIPN_RELEASE_MARKER_URL: https://dashboard.swfi.com/swficc/swficc-release.json
+          SWFIPN_REQUIRE_RELEASE_PROVENANCE: "1"
         run: npm run test:semantic-search-retest:public
+
+      - name: Finalize verified deployment and revoke temporary server access
+        id: finalize
+        if: ${{ inputs.operation == 'deploy' }}
+        env:
+          SWFIPN_HOST: ${{ secrets.SWFIPN_ACCEPTANCE_HOST }}
+          SWFIPN_DOMAIN: ${{ secrets.SWFIPN_ACCEPTANCE_DOMAIN }}
+          SWFIPN_FRONTEND_GIT_SHA: ${{ inputs.candidate_sha }}
+          SWFIPN_ACTIVATION_RECEIPT: output/swfipn-strict-acceptance-deploy-latest.json
+          SWFIPN_BROWSER_GATE_RECEIPT: output/swfipn-dashboard20-e2e-contract-post-deploy.json
+          SWFIPN_SEMANTIC_GATE_RECEIPT: output/swfipn-semantic-search-retest-post-deploy.json
+          SWFIPN_WORKFLOW_RUN_ID: ${{ github.run_id }}
+          SWFIPN_SSH_KEY_FINGERPRINT: ${{ steps.ssh_identity.outputs.fingerprint }}
+          SWFIPN_SSH_ACCESS_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: bash infra/digitalocean/scripts/deploy_acceptance_from_git.sh finalize
+
+      - name: Roll back any unfinalized deployment and revoke temporary server access
+        id: rollback
+        if: ${{ always() && inputs.operation == 'deploy' && steps.activate.outcome != 'skipped' && steps.finalize.outcome != 'success' }}
+        env:
+          SWFIPN_HOST: ${{ secrets.SWFIPN_ACCEPTANCE_HOST }}
+          SWFIPN_DOMAIN: ${{ secrets.SWFIPN_ACCEPTANCE_DOMAIN }}
+          SWFIPN_FRONTEND_GIT_SHA: ${{ inputs.candidate_sha }}
+          SWFIPN_ACTIVATION_RECEIPT: output/swfipn-strict-acceptance-deploy-latest.json
+          SWFIPN_SSH_KEY_FINGERPRINT: ${{ steps.ssh_identity.outputs.fingerprint }}
+          SWFIPN_SSH_ACCESS_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: bash infra/digitalocean/scripts/deploy_acceptance_from_git.sh rollback
+
+      - name: Revoke temporary server access after preflight
+        if: ${{ always() && inputs.operation == 'preflight_only' && steps.ssh_identity.outcome == 'success' }}
+        env:
+          SWFIPN_HOST: ${{ secrets.SWFIPN_ACCEPTANCE_HOST }}
+          SWFIPN_SSH_KEY_FINGERPRINT: ${{ steps.ssh_identity.outputs.fingerprint }}
+          SWFIPN_SSH_ACCESS_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: bash infra/digitalocean/scripts/deploy_acceptance_from_git.sh revoke-access
+
+      - name: Emergency revoke after pre-activation failure
+        if: ${{ always() && inputs.operation == 'deploy' && steps.ssh_identity.outcome == 'success' && steps.activate.outcome == 'skipped' }}
+        env:
+          SWFIPN_HOST: ${{ secrets.SWFIPN_ACCEPTANCE_HOST }}
+          SWFIPN_SSH_KEY_FINGERPRINT: ${{ steps.ssh_identity.outputs.fingerprint }}
+          SWFIPN_SSH_ACCESS_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: bash infra/digitalocean/scripts/deploy_acceptance_from_git.sh revoke-access
+
+      - name: Guarantee deploy-mode server access revocation
+        if: ${{ always() && inputs.operation == 'deploy' && steps.ssh_identity.outcome == 'success' }}
+        env:
+          SWFIPN_HOST: ${{ secrets.SWFIPN_ACCEPTANCE_HOST }}
+          SWFIPN_SSH_KEY_FINGERPRINT: ${{ steps.ssh_identity.outputs.fingerprint }}
+          SWFIPN_SSH_ACCESS_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: bash infra/digitalocean/scripts/deploy_acceptance_from_git.sh revoke-access
+
+      - name: Remove ephemeral runner SSH identity
+        if: always()
+        run: |
+          rm -f "$HOME/.ssh/id_ed25519" "$HOME/.ssh/id_ed25519.pub" "$HOME/.ssh/known_hosts"
 
       - name: Upload deployment receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: swfipn-deploy-${{ github.event.inputs.candidate_sha }}
+          name: swfipn-${{ inputs.operation }}-${{ inputs.candidate_sha }}
           path: output/
