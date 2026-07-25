@@ -1,0 +1,17 @@
+{
+  "name": "minimatch",
+  "version": "3.1.6",
+  "private": true,
+  "description": "Callable CommonJS facade for legacy ESLint consumers using patched minimatch.",
+  "main": "index.cjs",
+  "files": [
+    "index.cjs"
+  ],
+  "license": "UNLICENSED",
+  "engines": {
+    "node": "18 || 20 || >=22"
+  },
+  "peerDependencies": {
+    "minimatch-modern": "*"
+  }
+}

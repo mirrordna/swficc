@@ -9,6 +9,7 @@
 // node; the browser run executes wherever Playwright + Chrome live (deploy
 // lane), like every other gate in this repo.
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -16,6 +17,10 @@ import { fileURLToPath } from "node:url";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ORIGIN = (process.env.SWFIPN_ORIGIN || "http://127.0.0.1:3000/swficc/").replace(/\/+$/, "");
 const OUT_PATH = process.env.SWFIPN_CONTRACT_OUT || path.join(repoRoot, "output", "swfipn-dashboard20-e2e-contract-latest.json");
+const CANDIDATE_SHA = String(process.env.SWFIPN_CANDIDATE_SHA || "").trim();
+const WORKFLOW_RUN_ID = String(process.env.SWFIPN_WORKFLOW_RUN_ID || "").trim();
+const RELEASE_MARKER_URL = String(process.env.SWFIPN_RELEASE_MARKER_URL || "").trim();
+const REQUIRE_RELEASE_PROVENANCE = process.env.SWFIPN_REQUIRE_RELEASE_PROVENANCE === "1";
 
 // --- Condition 7: language must be user-facing, plain, specific -------------
 // Banned as WHOLE labels; "View live mandates" is fine, bare "View" is not.
@@ -80,6 +85,38 @@ const PAGES = [
   { page: "/aggregates/", contract: true },
   { page: "/reports/", contract: true },
 ];
+
+async function captureReleaseMarker() {
+  const provenanceConfigured = Boolean(CANDIDATE_SHA || WORKFLOW_RUN_ID || RELEASE_MARKER_URL);
+  if (!REQUIRE_RELEASE_PROVENANCE && !provenanceConfigured) return null;
+  if (!/^[0-9a-f]{40}$/.test(CANDIDATE_SHA)) throw new Error("invalid_candidate_sha");
+  if (!/^[1-9][0-9]{0,19}$/.test(WORKFLOW_RUN_ID)) throw new Error("invalid_workflow_run_id");
+  if (RELEASE_MARKER_URL !== "https://dashboard.swfi.com/swficc/swficc-release.json") {
+    throw new Error("invalid_release_marker_url");
+  }
+  if (ORIGIN !== "https://dashboard.swfi.com/swficc") throw new Error("invalid_dashboard_contract_origin");
+
+  const requestUrl = new URL(RELEASE_MARKER_URL);
+  requestUrl.searchParams.set("qa_run", WORKFLOW_RUN_ID);
+  const response = await fetch(requestUrl, {
+    cache: "no-store",
+    headers: { accept: "application/json" },
+  });
+  if (!response.ok) throw new Error(`release_marker_http_${response.status}`);
+  const bytes = Buffer.from(await response.arrayBuffer());
+  const marker = JSON.parse(bytes.toString("utf8"));
+  if (marker.schema_version !== "swfipn.release_marker.v1") throw new Error("release_marker_schema_mismatch");
+  if (marker.git_sha !== CANDIDATE_SHA) throw new Error("release_marker_candidate_mismatch");
+  if (marker.asset_version !== CANDIDATE_SHA.slice(0, 7)) throw new Error("release_marker_asset_mismatch");
+  if (marker.git_dirty !== false) throw new Error("release_marker_dirty");
+  return {
+    url: RELEASE_MARKER_URL,
+    schema_version: marker.schema_version,
+    git_sha: marker.git_sha,
+    asset_version: marker.asset_version,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  };
+}
 
 function loadPlaywright() {
   for (const root of [repoRoot, "/Users/mirror-pro/repos/SWFI2.0-final"]) {
@@ -177,6 +214,7 @@ async function auditPage(page, spec) {
 }
 
 async function main() {
+  const releaseMarker = await captureReleaseMarker();
   const { chromium } = loadPlaywright();
   const browser = await chromium.launch({ channel: process.env.SWFIPN_BROWSER_CHANNEL || "chrome" }).catch(() => chromium.launch());
   const context = await browser.newContext();
@@ -191,6 +229,9 @@ async function main() {
     schema_version: "swfipn.dashboard20_e2e_contract.v1",
     generated_at: new Date().toISOString(),
     origin: ORIGIN,
+    candidate_sha: CANDIDATE_SHA || null,
+    workflow_run_id: WORKFLOW_RUN_ID || null,
+    release_marker: releaseMarker,
     doctrine: "A 200 response means reachable. It does not mean approved.",
     summary: { pages: pages.length, passed: pages.length - failed.length, failed: failed.length, failures: pages.reduce((sum, entry) => sum + entry.failures.length, 0) },
     pages,

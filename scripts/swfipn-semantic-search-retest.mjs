@@ -1,10 +1,15 @@
 #!/usr/bin/env node
+import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { chromium } from "playwright";
 
 const ORIGIN = (process.env.SWFIPN_ORIGIN || "http://127.0.0.1:4317").replace(/\/$/, "");
 const TIMEOUT_MS = Number(process.env.SWFIPN_SEMANTIC_TIMEOUT_MS || 45_000);
 const RECEIPT = process.env.SWFIPN_SEMANTIC_RECEIPT || "output/swfipn-semantic-search-retest-latest.json";
+const CANDIDATE_SHA = String(process.env.SWFIPN_CANDIDATE_SHA || "").trim();
+const WORKFLOW_RUN_ID = String(process.env.SWFIPN_WORKFLOW_RUN_ID || "").trim();
+const RELEASE_MARKER_URL = String(process.env.SWFIPN_RELEASE_MARKER_URL || "").trim();
+const REQUIRE_RELEASE_PROVENANCE = process.env.SWFIPN_REQUIRE_RELEASE_PROVENANCE === "1";
 const cases = [
   ["Top Active Investors", "Transaction-buyer entities ranked by sourced 30-day activity count", 1, "entities"],
   ["RFPs from the Middle East", "Current RFP, mandate, and opportunity records with sourced region Middle East", 1, "opportunities"],
@@ -15,6 +20,7 @@ const cases = [
   ["Family offices deploying capital into real estate", "real estate transactions in the last 365 days with a sourced family-office buyer", 1, "transactions"],
 ];
 const checks = [];
+const releaseMarker = await captureReleaseMarker();
 const browser = await chromium.launch({ headless: true });
 
 try {
@@ -121,6 +127,9 @@ const receipt = {
   schema_version: "swfipn.semantic_search_retest.v1",
   generated_at: new Date().toISOString(),
   origin: ORIGIN,
+  candidate_sha: CANDIDATE_SHA || null,
+  workflow_run_id: WORKFLOW_RUN_ID || null,
+  release_marker: releaseMarker,
   status: failures.length ? "fail" : "pass",
   checks,
   failures: failures.map((check) => check.id),
@@ -134,3 +143,35 @@ mkdirSync("output", { recursive: true });
 writeFileSync(RECEIPT, `${JSON.stringify(receipt, null, 2)}\n`);
 console.log(JSON.stringify({ status: receipt.status, receipt: RECEIPT, failures: receipt.failures }, null, 2));
 if (failures.length) process.exit(1);
+
+async function captureReleaseMarker() {
+  const provenanceConfigured = Boolean(CANDIDATE_SHA || WORKFLOW_RUN_ID || RELEASE_MARKER_URL);
+  if (!REQUIRE_RELEASE_PROVENANCE && !provenanceConfigured) return null;
+  if (!/^[0-9a-f]{40}$/.test(CANDIDATE_SHA)) throw new Error("invalid_candidate_sha");
+  if (!/^[1-9][0-9]{0,19}$/.test(WORKFLOW_RUN_ID)) throw new Error("invalid_workflow_run_id");
+  if (RELEASE_MARKER_URL !== "https://dashboard.swfi.com/swficc/swficc-release.json") {
+    throw new Error("invalid_release_marker_url");
+  }
+  if (ORIGIN !== "https://dashboard.swfi.com") throw new Error("invalid_semantic_contract_origin");
+
+  const requestUrl = new URL(RELEASE_MARKER_URL);
+  requestUrl.searchParams.set("qa_run", WORKFLOW_RUN_ID);
+  const response = await fetch(requestUrl, {
+    cache: "no-store",
+    headers: { accept: "application/json" },
+  });
+  if (!response.ok) throw new Error(`release_marker_http_${response.status}`);
+  const bytes = Buffer.from(await response.arrayBuffer());
+  const marker = JSON.parse(bytes.toString("utf8"));
+  if (marker.schema_version !== "swfipn.release_marker.v1") throw new Error("release_marker_schema_mismatch");
+  if (marker.git_sha !== CANDIDATE_SHA) throw new Error("release_marker_candidate_mismatch");
+  if (marker.asset_version !== CANDIDATE_SHA.slice(0, 7)) throw new Error("release_marker_asset_mismatch");
+  if (marker.git_dirty !== false) throw new Error("release_marker_dirty");
+  return {
+    url: RELEASE_MARKER_URL,
+    schema_version: marker.schema_version,
+    git_sha: marker.git_sha,
+    asset_version: marker.asset_version,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  };
+}
