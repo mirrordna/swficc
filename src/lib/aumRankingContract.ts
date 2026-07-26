@@ -99,9 +99,19 @@ export function inspectAumRankingPacket(packet: Packet | undefined, requestedLim
     const aumUsd = finiteNumber(row.aum_usd);
     const aum = finiteNumber(row.aum);
     const currency = String(row.aum_currency || "").trim().toUpperCase();
+    const source = String(row.aum_source || "").trim();
     if (aum !== null && aum > 0 && !currency) issues.push(`aum_currency_${expectedRank}`);
-    if (aum !== null && aum > 0 && !String(row.aum_source || "").trim()) issues.push(`aum_source_${expectedRank}`);
-    if (aumUsd !== null && currency && currency !== "USD" && !hasExplicitFxProvenance(row)) {
+    if (aum !== null && aum > 0 && !source) issues.push(`aum_source_${expectedRank}`);
+    if (aum !== null && aum > 0 && source === "entitiesAUM" && !String(row.aum_date || "").trim()) {
+      issues.push(`aum_date_${expectedRank}`);
+    }
+    if (
+      aumUsd !== null
+      && currency
+      && currency !== "USD"
+      && !hasExplicitFxProvenance(row)
+      && !hasIndependentUsdProvenance(row)
+    ) {
       issues.push(`fx_provenance_${expectedRank}`);
     }
     if (aumUsd === null) {
@@ -149,6 +159,7 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 function finiteNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
   const number = typeof value === "number" ? value : Number(value);
   return Number.isFinite(number) && number >= 0 ? number : null;
 }
@@ -163,4 +174,8 @@ function hasExplicitFxProvenance(row: Record<string, unknown>): boolean {
   const date = String(row.fx_date || row.aum_fx_date || row.usd_fx_date || "").trim();
   const source = String(row.fx_source || row.aum_fx_source || row.usd_fx_source || "").trim();
   return rate !== null && rate > 0 && Boolean(date) && Boolean(source);
+}
+
+function hasIndependentUsdProvenance(row: Record<string, unknown>): boolean {
+  return String(row.aum_usd_source || "").trim() === "entities.assets";
 }

@@ -11,6 +11,7 @@
     "contract:gate": "node scripts/swfipn-dashboard20-e2e-contract-gate.mjs",
     "contract:gate:public": "SWFIPN_ORIGIN=https://dashboard.swfi.com/swficc/ node scripts/swfipn-dashboard20-e2e-contract-gate.mjs",
     "contract:logic:test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/swfipn-section-dashboard-logic-test.mjs",
+    "test:aum-ranking-contract": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/swfipn-aum-ranking-contract-test.mjs",
     "test:record-sort": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/swfipn-record-sort-defaults-test.mjs",
     "test:smart-search-intent": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/swfipn-smart-search-intent-test.mjs",
     "test:smart-search-presentation": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/swfipn-smart-search-presentation-test.mjs",
@@ -211,7 +212,7 @@
     "d3-geo": "^3.1.1",
     "echarts": "^6.1.0",
     "gsap": "^3.15.0",
-    "next": "^16.2.10",
+    "next": "16.2.11",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "topojson-client": "^3.1.0"
@@ -226,13 +227,17 @@
     "@types/topojson-client": "^3.1.5",
     "@types/topojson-specification": "^1.0.5",
     "eslint": "^9",
-    "eslint-config-next": "^16.2.10",
+    "eslint-config-next": "16.2.11",
     "playwright": "^1.60.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^5",
     "world-atlas": "^2.0.2"
   },
   "overrides": {
-    "postcss": "8.5.15"
+    "brace-expansion": "5.0.8",
+    "js-yaml@4.2.0": "4.3.0",
+    "minimatch": "10.2.5",
+    "postcss": "8.5.23",
+    "sharp": "0.35.3"
   }
 }
