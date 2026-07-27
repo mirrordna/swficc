@@ -11,6 +11,7 @@ import { filterSmartSearchIntentRows, smartSearchIntentForQuery } from "@/lib/sm
 import { entityLifecycleIntent } from "@/lib/entityLifecycle";
 import { isShortTextQuery, isTextQueryReady, MIN_TEXT_QUERY_CHARACTERS } from "@/lib/textQueryPolicy";
 import { balanceSearchResultRows, searchResultCategoryCounts, searchResultRecordType } from "@/lib/searchResultPresentation";
+import { broadRegionsForValues } from "@/lib/broadRegions";
 
 const SEARCH_PREFETCH_CACHE_PREFIX = "swfipn.search.prefetch.v1:";
 const SEARCH_CATEGORIES = ["all", "entities", "opportunities", "transactions", "news", "people"] as const;
@@ -655,15 +656,25 @@ function searchFilterOptions(rowsToFilter: Record<string, unknown>[], key: Searc
 
 function searchRowFilterValues(row: CategorizedSearchRow, key: SearchFilterKey): string[] {
   if (key === "recordType") return cleanFilterValues([searchResultRecordType(row)]);
-  if (key === "geography") return cleanFilterValues([
-    row.country,
-    row.region,
-    row.buyer_country,
-    row.buyer_region,
-    row.seller_country,
-    row.seller_region,
-    row.location,
-  ]);
+  if (key === "geography") {
+    const geographyValues = [
+      row.country,
+      row.region,
+      row.buyer_country,
+      row.buyer_region,
+      row.seller_country,
+      row.seller_region,
+      row.location,
+    ];
+    // July 16 minutes item O: broad SWFI regions (MENA, CALA, Southeast
+    // Asia) appear as selectable geographies whenever a loaded row belongs
+    // to one, and selecting them matches by country membership. Mirror of
+    // the backend crosswalk — see src/lib/broadRegions.ts header.
+    return cleanFilterValues([
+      ...geographyValues,
+      ...broadRegionsForValues(geographyValues),
+    ]);
+  }
   if (key === "transactionType") return cleanFilterValues([
     row.acquisition_type,
     row.investment_type,

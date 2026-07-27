@@ -29,14 +29,25 @@ function deadlineTime(value: unknown): number | null {
 
 export default function AlertsPage() {
   const [packet, setPacket] = useState<Packet | undefined>(undefined);
+  // Key Enhancements PDF section 5, Phase A: the global activity feed
+  // (new deals + open mandates) from /v1/swfi/activity-feed. Until the
+  // backend serving that endpoint is deployed, the packet resolves to a
+  // gap and this page keeps saying so instead of pretending.
+  const [feedPacket, setFeedPacket] = useState<Packet | undefined>(undefined);
   const [now] = useState(() => Date.now());
   useEffect(() => {
     const controller = new AbortController();
     void fetchPacket("/api/live-opportunities/v1", 120_000, { signal: controller.signal, attempts: 2 }).then((next) => {
       if (!controller.signal.aborted) setPacket(next ?? null);
     });
+    void fetchPacket("/v1/swfi/activity-feed?limit=10&days=30", 120_000, { signal: controller.signal, attempts: 2 }).then((next) => {
+      if (!controller.signal.aborted) setFeedPacket(next ?? null);
+    });
     return () => controller.abort();
   }, []);
+  const feedLive = feedPacket !== undefined && isFact(feedPacket);
+  const feedDeals = feedLive ? rows(feedPacket, "deals") : [];
+  const feedMandates = feedLive ? rows(feedPacket, "mandates") : [];
 
   const rfpRows = packet && isFact(packet) ? rows(packet, "rows") : [];
   const dated = rfpRows
@@ -57,7 +68,9 @@ export default function AlertsPage() {
           <div className="text-[11px] font-bold uppercase tracking-[0.07em] text-[#7A8A9B]">Alerts</div>
           <h1 className="m-0 text-[24px] font-bold text-[#11314F]">RFP deadlines approaching</h1>
           <p className="m-0 text-sm leading-6 text-[#41566B]">
-            A dedicated alerts feed does not exist yet in this preview. What IS time-sensitive today: live Compass RFP deadlines, counted below from the same records the RFPs &amp; Mandates page shows. Click a bar for the full list.
+            {feedLive
+              ? "Live Compass RFP deadlines, counted below from the same records the RFPs & Mandates page shows — and beneath them, the global activity feed of new deals and open mandates. Click a bar for the full list."
+              : "A dedicated alerts feed is not being served by this deployment yet. What IS time-sensitive today: live Compass RFP deadlines, counted below from the same records the RFPs & Mandates page shows. Click a bar for the full list."}
           </p>
           {packet === undefined ? (
             <div className="rounded bg-[#F6F8FA] px-3 py-3 text-[12px] font-semibold text-[#657282]">Loading…</div>
@@ -92,6 +105,53 @@ export default function AlertsPage() {
               swfi.com account
             </a>
           </div>
+        </section>
+        <section className="grid gap-3 border border-[#DCE3EA] bg-white p-4">
+          <div className="text-[11px] font-bold uppercase tracking-[0.07em] text-[#7A8A9B]">Activity feed</div>
+          <h2 className="m-0 text-[18px] font-bold text-[#11314F]">New deals &amp; open mandates</h2>
+          {feedPacket === undefined ? (
+            <div className="rounded bg-[#F6F8FA] px-3 py-3 text-[12px] font-semibold text-[#657282]">Loading…</div>
+          ) : !feedLive ? (
+            <div className="rounded bg-[#F6F8FA] px-3 py-3 text-[12px] font-semibold text-[#657282]">
+              The activity-feed source is not available from this deployment yet. Nothing is estimated — deals and mandates stay fully browsable on their own pages below.
+            </div>
+          ) : feedDeals.length === 0 && feedMandates.length === 0 ? (
+            <div className="rounded bg-[#F6F8FA] px-3 py-3 text-[12px] font-semibold text-[#657282]">
+              No new deals in the last 30 days and no open mandates in the loaded records.
+            </div>
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2">
+              {[
+                { heading: "Latest deals (30 days)", items: feedDeals },
+                { heading: "Open mandates", items: feedMandates },
+              ].map((group) => (
+                <div key={group.heading} className="grid content-start gap-2">
+                  <div className="text-[12px] font-bold uppercase tracking-[0.05em] text-[#41566B]">{group.heading}</div>
+                  {group.items.length === 0 ? (
+                    <div className="rounded bg-[#F6F8FA] px-3 py-2 text-[12px] font-semibold text-[#657282]">None in the loaded records.</div>
+                  ) : (
+                    group.items.map((item, index) => {
+                      const title = text(item.title, "Not disclosed");
+                      const sourceUrl = text(item.source_url, "");
+                      const meta = [text(item.institution, ""), text(item.type, ""), text(item.detail, ""), text(item.deadline ? `Due ${text(item.deadline, "")}` : item.date, "")]
+                        .filter(Boolean)
+                        .join(" · ");
+                      return (
+                        <div key={`${group.heading}-${text(item.id, String(index))}`} className="grid gap-0.5 border-b border-[#EEF1F4] pb-2">
+                          {sourceUrl ? (
+                            <a href={sourceUrl} className="text-[13px] font-bold text-[#16538C] underline">{title}</a>
+                          ) : (
+                            <span className="text-[13px] font-bold text-[#11314F]">{title}</span>
+                          )}
+                          {meta ? <span className="text-[12px] text-[#657282]">{meta}</span> : null}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </section>
         <AlertsRuleManager />
       </main>
