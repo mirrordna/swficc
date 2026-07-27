@@ -792,7 +792,7 @@ function VisualExecutiveOverview({
   return (
     <section data-gsap-reveal className="border-b border-[#E0DDD6] bg-[#EEF1F4] px-4 py-4 sm:px-5">
       <div className="mx-auto grid max-w-[1440px] gap-3">
-        <div className="grid gap-2 md:grid-cols-3 2xl:grid-cols-6">
+        <div className="grid gap-2 md:grid-cols-3 2xl:grid-cols-7">
           {kpis.map((kpi) => (
             <ConceptKpiCard key={kpi.label} {...kpi} />
           ))}
@@ -2792,6 +2792,7 @@ function dashboardMetricCards(packets: Packets, topAumRows: Record<string, unkno
   const sectorCapital = sumNumbers(sectorRows.map(sectorValue));
   const rfps = metricNumber(packets.metrics, "rfps") || packetCountNumber(packets.rfps) || 0;
   const swfs = metricNumber(packets.metrics, "swfs") || 0;
+  const institutions = metricNumber(packets.metrics, "institutions") || 0;
   const research = metricNumber(packets.metrics, "news") || packetCountNumber(packets.news) || 0;
   // Pending ≠ absent: while a card's backing packet has not resolved yet,
   // say "Loading…" — "Not disclosed" is reserved for loaded-but-undisclosable
@@ -2799,6 +2800,18 @@ function dashboardMetricCards(packets: Packets, topAumRows: Record<string, unkno
   const LOADING_LABEL = "Loading…";
   const settled = (packet: Packet | undefined, display: string) => (packet === undefined ? LOADING_LABEL : display);
   return [
+    {
+      // Key Enhancements PDF 1.1 / 3.1: the snapshot row leads with the
+      // total-institutions KPI. Active-only per the defunct doctrine; the
+      // backend institutions card is the count's single source.
+      label: "TOTAL INSTITUTIONS",
+      value: settled(packets.metrics, institutions ? compactNumber(institutions) : "Not disclosed"),
+      note: "Active institutions tracked",
+      href: "/profiles/",
+      series: seriesFromNumbers([institutions]),
+      color: "#16324A",
+      explain: "Active institutional investor records tracked on SWFI — sovereign wealth funds, pensions, asset managers, family offices and more; defunct entities excluded. Click → all institutions.",
+    },
     {
       label: "TOP-RANKED AUM TOTAL",
       value: settled(packets.top20, totalAumDisplay(packets.top20, topAumRows)),
