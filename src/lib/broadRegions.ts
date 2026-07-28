@@ -35,20 +35,76 @@ export const SWFI_BROAD_REGIONS: Record<string, readonly string[]> = {
   "Southeast Asia": SOUTHEAST_ASIA,
 };
 
+// Native SWFI region values as they appear on entity records and in the
+// dashboard's Geography dropdowns. These lists are matching aids for
+// client-side filtering ONLY (KP feedback 2026-07-27: Geography="Middle
+// East" + Entity type="Sovereign Wealth Fund" filtered 50 loaded rows to
+// zero because search rows carry `country` but often no `region`). A
+// country appearing under two groups simply matches both filters; nothing
+// here rewrites source data.
+export const SWFI_NATIVE_REGIONS: Record<string, readonly string[]> = {
+  "Middle East": [
+    "Bahrain", "Iran", "Iraq", "Israel", "Jordan", "Kuwait", "Lebanon",
+    "Oman", "Palestine", "Qatar", "Saudi Arabia", "Syria", "Turkey",
+    "United Arab Emirates", "Yemen",
+  ],
+  Europe: [
+    "Austria", "Belgium", "Cyprus", "Czech Republic", "Denmark", "Finland",
+    "France", "Germany", "Greece", "Hungary", "Iceland", "Ireland", "Italy",
+    "Latvia", "Liechtenstein", "Lithuania", "Luxembourg", "Malta", "Monaco",
+    "Netherlands", "Norway", "Poland", "Portugal", "Romania", "Spain",
+    "Sweden", "Switzerland", "United Kingdom",
+  ],
+  Asia: [
+    "Bangladesh", "Brunei", "Cambodia", "China", "Hong Kong", "India",
+    "Indonesia", "Japan", "Kazakhstan", "Laos", "Malaysia", "Mongolia",
+    "Myanmar", "Nepal", "Pakistan", "Philippines", "Singapore",
+    "South Korea", "Sri Lanka", "Taiwan", "Thailand", "Timor-Leste",
+    "Uzbekistan", "Vietnam",
+  ],
+  "North America": ["Canada", "Mexico", "United States"],
+  "Latin America": [
+    "Argentina", "Bolivia", "Brazil", "Chile", "Colombia", "Costa Rica",
+    "Cuba", "Dominican Republic", "Ecuador", "El Salvador", "Guatemala",
+    "Guyana", "Honduras", "Jamaica", "Mexico", "Nicaragua", "Panama",
+    "Paraguay", "Peru", "Suriname", "Trinidad and Tobago", "Uruguay",
+    "Venezuela",
+  ],
+  Africa: [
+    "Algeria", "Angola", "Botswana", "Cameroon", "Djibouti", "Egypt",
+    "Ethiopia", "Gabon", "Ghana", "Kenya", "Libya", "Mauritania",
+    "Mauritius", "Morocco", "Mozambique", "Namibia", "Nigeria", "Rwanda",
+    "Senegal", "South Africa", "Sudan", "Tanzania", "Tunisia", "Uganda",
+    "Zambia", "Zimbabwe",
+  ],
+  "Australia and Pacific": ["Australia", "Fiji", "New Zealand", "Papua New Guinea"],
+};
+
 const MEMBERSHIP: Map<string, string[]> = (() => {
   const byCountry = new Map<string, string[]>();
-  for (const [regionName, countries] of Object.entries(SWFI_BROAD_REGIONS)) {
-    for (const countryName of countries) {
-      const key = countryName.toLowerCase();
-      byCountry.set(key, [...(byCountry.get(key) ?? []), regionName]);
+  for (const groups of [SWFI_BROAD_REGIONS, SWFI_NATIVE_REGIONS]) {
+    for (const [regionName, countries] of Object.entries(groups)) {
+      for (const countryName of countries) {
+        const key = countryName.toLowerCase();
+        const existing = byCountry.get(key) ?? [];
+        if (!existing.includes(regionName)) byCountry.set(key, [...existing, regionName]);
+      }
     }
   }
   return byCountry;
 })();
 
 const REGION_LABELS = new Map<string, string>(
-  Object.keys(SWFI_BROAD_REGIONS).map((name) => [name.toLowerCase(), name]),
+  [...Object.keys(SWFI_BROAD_REGIONS), ...Object.keys(SWFI_NATIVE_REGIONS)].map((name) => [name.toLowerCase(), name]),
 );
+
+// Countries a native/broad region group resolves to, or null when the value
+// is not a known group label. Used by the smart-search intent layer.
+export function countriesForRegionGroup(value: string): readonly string[] | null {
+  const label = REGION_LABELS.get(String(value || "").trim().toLowerCase());
+  if (!label) return null;
+  return SWFI_BROAD_REGIONS[label] ?? SWFI_NATIVE_REGIONS[label] ?? null;
+}
 
 // Broad-region names a row belongs to, given its geography-ish values
 // (countries, regions, locations). A value that IS a broad-region label

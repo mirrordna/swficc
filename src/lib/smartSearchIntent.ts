@@ -1,3 +1,5 @@
+import { broadRegionsForValues } from "./broadRegions.ts";
+
 export type SmartSearchCategory = "entities" | "opportunities" | "transactions";
 
 export type SmartSearchIntentId =
@@ -19,6 +21,7 @@ export type SmartSearchIntent = {
   requests: SmartSearchRequest[];
   region?: string;
   regions?: string[];
+  countries?: string[];
   entityTypes?: string[];
 };
 
@@ -55,6 +58,66 @@ const REGION_DEFINITIONS: readonly RegionDefinition[] = [
   { pattern: /\b(?:latin[\s-]+america(?:n)?|latam)\b/i, label: "Latin America", sourceValues: ["Latin America"] },
   { pattern: /\b(?:americas)\b/i, label: "the Americas", sourceValues: ["North America", "Latin America"] },
   { pattern: /\b(?:australia(?:n)?(?:\s+and\s+pacific)?|pacific|oceania)\b/i, label: "Australia and Pacific", sourceValues: ["Australia and Pacific"] },
+];
+
+type CountryDefinition = {
+  pattern: RegExp;
+  label: string;
+};
+
+// KP feedback 2026-07-27: "Family office in Germany" fetched nothing —
+// the intent layer understood regions but no countries. Curated country
+// patterns (with common aliases, including Abu Dhabi/Dubai -> UAE) so
+// "<entity type> in <country>" resolves like the region form does.
+// Country labels use SWFI's canonical English names on entity records.
+const COUNTRY_DEFINITIONS: readonly CountryDefinition[] = [
+  { pattern: /\bgermany|german\b/, label: "Germany" },
+  { pattern: /\bunited\s+states|usa|u\s*s\s*a|american?\b/, label: "United States" },
+  { pattern: /\bunited\s+kingdom|uk|britain|british|england\b/, label: "United Kingdom" },
+  { pattern: /\bfrance|french\b/, label: "France" },
+  { pattern: /\bswitzerland|swiss\b/, label: "Switzerland" },
+  { pattern: /\bnetherlands|dutch|holland\b/, label: "Netherlands" },
+  { pattern: /\bnorway|norwegian\b/, label: "Norway" },
+  { pattern: /\bsweden|swedish\b/, label: "Sweden" },
+  { pattern: /\bdenmark|danish\b/, label: "Denmark" },
+  { pattern: /\bitaly|italian\b/, label: "Italy" },
+  { pattern: /\bspain|spanish\b/, label: "Spain" },
+  { pattern: /\baustria(?:n)?\b/, label: "Austria" },
+  { pattern: /\bireland|irish\b/, label: "Ireland" },
+  { pattern: /\bluxembourg\b/, label: "Luxembourg" },
+  { pattern: /\bchina|chinese\b/, label: "China" },
+  { pattern: /\bhong\s+kong\b/, label: "Hong Kong" },
+  { pattern: /\bjapan(?:ese)?\b/, label: "Japan" },
+  { pattern: /\b(?:south\s+)?korea(?:n)?\b/, label: "South Korea" },
+  { pattern: /\bindia(?:n)?\b/, label: "India" },
+  { pattern: /\bsingapore(?:an)?\b/, label: "Singapore" },
+  { pattern: /\bmalaysia(?:n)?\b/, label: "Malaysia" },
+  { pattern: /\bindonesia(?:n)?\b/, label: "Indonesia" },
+  { pattern: /\bthailand|thai\b/, label: "Thailand" },
+  { pattern: /\bvietnam(?:ese)?\b/, label: "Vietnam" },
+  { pattern: /\bphilippines?|filipino\b/, label: "Philippines" },
+  { pattern: /\baustralia(?:n)?\b/, label: "Australia" },
+  { pattern: /\bnew\s+zealand\b/, label: "New Zealand" },
+  { pattern: /\bcanada|canadian\b/, label: "Canada" },
+  { pattern: /\bmexico|mexican\b/, label: "Mexico" },
+  { pattern: /\bbrazil(?:ian)?\b/, label: "Brazil" },
+  { pattern: /\bchile(?:an)?\b/, label: "Chile" },
+  { pattern: /\bargentin(?:a|e|ian)\b/, label: "Argentina" },
+  { pattern: /\bunited\s+arab\s+emirates|uae|emirates|abu\s+dhabi|dubai\b/, label: "United Arab Emirates" },
+  { pattern: /\bsaudi(?:\s+arabia(?:n)?)?\b/, label: "Saudi Arabia" },
+  { pattern: /\bqatar(?:i)?\b/, label: "Qatar" },
+  { pattern: /\bkuwait(?:i)?\b/, label: "Kuwait" },
+  { pattern: /\bbahrain(?:i)?\b/, label: "Bahrain" },
+  { pattern: /\boman(?:i)?\b/, label: "Oman" },
+  { pattern: /\bisrael(?:i)?\b/, label: "Israel" },
+  { pattern: /\bturkey|turkish\b/, label: "Turkey" },
+  { pattern: /\begypt(?:ian)?\b/, label: "Egypt" },
+  { pattern: /\bnigeria(?:n)?\b/, label: "Nigeria" },
+  { pattern: /\bsouth\s+africa(?:n)?\b/, label: "South Africa" },
+  { pattern: /\bkenya(?:n)?\b/, label: "Kenya" },
+  { pattern: /\bkazakhstan(?:i)?\b/, label: "Kazakhstan" },
+  { pattern: /\btaiwan(?:ese)?\b/, label: "Taiwan" },
+  { pattern: /\bpakistan(?:i)?\b/, label: "Pakistan" },
 ];
 
 const ENTITY_DEFINITIONS: readonly EntityDefinition[] = [
@@ -164,6 +227,7 @@ export function smartSearchIntentForQuery(query: string): SmartSearchIntent | nu
   if (!clean) return null;
 
   const region = intentRegionDefinition(query);
+  const country = region ? undefined : COUNTRY_DEFINITIONS.find((definition) => definition.pattern.test(clean));
   const entity = ENTITY_DEFINITIONS.find((definition) => definition.pattern.test(clean));
   const theme = THEME_DEFINITIONS.find((definition) => definition.pattern.test(clean));
   const investmentAction = isInvestmentActionQuery(clean);
@@ -247,6 +311,26 @@ export function smartSearchIntentForQuery(query: string): SmartSearchIntent | nu
     };
   }
 
+  // KP feedback 2026-07-27: "Family office in Germany" must resolve the
+  // same way the region form does. The country= param is honored once the
+  // backend train deploys; until then it is ignored upstream and the
+  // client-side country filter keeps served rows correct.
+  if (country && entity && !investmentAction) {
+    return {
+      id: "regional-institutions",
+      category: "entities",
+      region: country.label,
+      countries: [country.label],
+      entityTypes: entity.sourceTypes,
+      label: `${entity.label} in ${country.label}`,
+      explanation: `${entity.label} with sourced country ${country.label}`,
+      requests: [{
+        key: "regional-institutions-0",
+        endpoint: `/api/source-data/search/v1?collection=entities&entity_type=${encodeURIComponent(entity.sourceTypes[0])}&country=${encodeURIComponent(country.label)}&limit=100&page=1`,
+      }],
+    };
+  }
+
   return null;
 }
 
@@ -254,7 +338,18 @@ export function filterSmartSearchIntentRows(intent: SmartSearchIntent, sourceRow
   return sourceRows.flatMap((row) => {
     if (intent.regions?.length) {
       const rowRegion = normalizedField(row.region);
-      if (!intent.regions.some((region) => normalizedField(region) === rowRegion)) return [];
+      // Rows often carry country without region (KP feedback 2026-07-27:
+      // SWF + Middle East filtered 50 rows to zero). Region membership by
+      // country keeps those rows instead of silently dropping them.
+      const rowGroups = broadRegionsForValues([row.region, row.country]).map((group) => normalizedField(group));
+      if (!intent.regions.some((region) => {
+        const target = normalizedField(region);
+        return target === rowRegion || rowGroups.includes(target);
+      })) return [];
+    }
+    if (intent.countries?.length) {
+      const rowCountry = normalizedField(row.country);
+      if (!intent.countries.some((countryName) => normalizedField(countryName) === rowCountry)) return [];
     }
     if (intent.entityTypes?.length) {
       const typeMatch = intent.category === "transactions"
