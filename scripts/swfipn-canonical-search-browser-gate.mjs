@@ -69,6 +69,15 @@ function fileSha256(filePath) {
   return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
 }
 
+async function timedVisibility(locator, startedAt, timeout) {
+  try {
+    await locator.waitFor({ state: "visible", timeout });
+    return { present: true, ms: Date.now() - startedAt };
+  } catch {
+    return { present: false, ms: Date.now() - startedAt };
+  }
+}
+
 async function runQuery(browser, origin, testCase) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const startedAt = Date.now();
@@ -76,19 +85,25 @@ async function runQuery(browser, origin, testCase) {
     await page.goto(origin, { waitUntil: "domcontentloaded", timeout: 30_000 });
     await page.getByRole("button", { name: "Open Global Search" }).click();
     await page.getByRole("textbox", { name: "Search query" }).fill(testCase.query);
-    await page.getByTestId("smart-search-canonical-identity").waitFor({ timeout: 5_000 });
-    await page.getByText(testCase.entity, { exact: true }).first().waitFor({ timeout: 25_000 });
-    const entityMs = Date.now() - startedAt;
-    await page.getByText(new RegExp(testCase.news), { exact: false }).first().waitFor({ timeout: 15_000 });
-    const newsMs = Date.now() - startedAt;
-    await page.getByText("No source-backed people relationship found.", { exact: true }).waitFor({ timeout: 30_000 });
-    const canonicalSourceHref = await page.getByTestId("smart-search-canonical-source-link").locator("a").getAttribute("data-source-href");
     const entitySection = page.locator("section").filter({
       has: page.getByRole("heading", { name: "Entities", exact: true }),
     }).first();
     const liveEntityLink = entitySection.getByText(testCase.entity, { exact: true }).first();
-    const liveEntityPresent = await liveEntityLink.waitFor({ state: "visible", timeout: 25_000 }).then(() => true).catch(() => false);
-    const liveEntityMs = Date.now() - startedAt;
+    // Observe independent lanes concurrently. Serial awaits incorrectly attribute
+    // a slow people/news lane to an entity that may already be visible.
+    const [canonicalIdentity, liveEntity, newsResult, peopleEmptyState] = await Promise.all([
+      timedVisibility(page.getByTestId("smart-search-canonical-identity"), startedAt, 5_000),
+      timedVisibility(liveEntityLink, startedAt, 25_000),
+      timedVisibility(page.getByText(new RegExp(testCase.news), { exact: false }).first(), startedAt, 15_000),
+      timedVisibility(page.getByText("No source-backed people relationship found.", { exact: true }), startedAt, 30_000),
+    ]);
+    const entityMs = canonicalIdentity.ms;
+    const liveEntityMs = liveEntity.ms;
+    const newsMs = newsResult.ms;
+    const canonicalSourceHref = canonicalIdentity.present
+      ? await page.getByTestId("smart-search-canonical-source-link").locator("a").getAttribute("data-source-href")
+      : "";
+    const liveEntityPresent = liveEntity.present;
     const liveEntityHref = liveEntityPresent
       ? await liveEntityLink.evaluate((node) => node.closest("a")?.getAttribute("data-source-href") || "")
       : "";
@@ -99,12 +114,15 @@ async function runQuery(browser, origin, testCase) {
     await page.screenshot({ path: screenshotPath, fullPage: true });
     return {
       id: testCase.id,
-      pass: body.includes(testCase.entity)
+      pass: canonicalIdentity.present
+        && liveEntityPresent
+        && newsResult.present
+        && peopleEmptyState.present
+        && body.includes(testCase.entity)
         && body.includes(testCase.news)
         && testCase.forbidden.every((value) => !body.includes(value))
         && entityMs <= newsMs
         && entityMs <= entityBudgetMs
-        && liveEntityPresent
         && liveEntityMs <= liveEntityBudgetMs
         && newsMs <= newsBudgetMs
         && sourceLinkMatchesLiveResult,
@@ -115,7 +133,10 @@ async function runQuery(browser, origin, testCase) {
       performance_pass: entityMs <= entityBudgetMs && liveEntityPresent && liveEntityMs <= liveEntityBudgetMs && newsMs <= newsBudgetMs,
       canonical_source_href: canonicalSourceHref,
       live_entity_href: liveEntityHref,
+      canonical_identity_present: canonicalIdentity.present,
       live_entity_result_present: liveEntityPresent,
+      news_result_present: newsResult.present,
+      people_empty_state_present: peopleEmptyState.present,
       source_link_matches_live_result: sourceLinkMatchesLiveResult,
       entity: testCase.entity,
       news: testCase.news,
