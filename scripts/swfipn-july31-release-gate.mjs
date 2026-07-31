@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -18,7 +19,8 @@ const receiptFiles = {
 
 function readJson(file) {
   try {
-    return JSON.parse(fs.readFileSync(path.join(output, file), "utf8"));
+    const raw = fs.readFileSync(path.join(output, file), "utf8");
+    return { ...JSON.parse(raw), _receipt_sha256: createHash("sha256").update(raw).digest("hex") };
   } catch {
     return null;
   }
@@ -36,7 +38,7 @@ function fresh(receipt, now) {
   return Number.isFinite(generated) && now - generated >= 0 && now - generated <= maxAgeMs;
 }
 
-function evaluate({ mode, receipts, identity, expectedRelease, now = Date.now() }) {
+function evaluate({ mode, receipts, identity, expectedRelease, stakeholderApprovalSha, now = Date.now() }) {
   const checks = [];
   const add = (id, ok, detail = null) => checks.push({ id, status: ok ? "PASS" : "BLOCKED", detail });
   const { search, visualization, numeric, parity, stakeholder } = receipts;
@@ -46,7 +48,14 @@ function evaluate({ mode, receipts, identity, expectedRelease, now = Date.now() 
   add("visualization_receipt_current_pass", visualization?.status === "pass" && fresh(visualization, now), visualization?.status || "missing");
   add("numeric_truth_promotion_eligible", numeric?.status === "pass" && numeric?.promotion_eligible === true && fresh(numeric, now), numeric?.source_truth_verdict || numeric?.status || "missing");
   add("fresh_full_mongo_parity", parity?.status === "pass" && /Mongo parity/i.test(String(parity?.scope || "")) && fresh(parity, now), parity?.status || "missing");
-  add("stakeholder_acceptance_for_release", stakeholder?.status === "pass" && stakeholder?.release_git_sha === acceptanceIdentity.git_sha && stakeholder?.asset_version === acceptanceIdentity.asset_version && fresh(stakeholder, now), stakeholder?.status || "missing");
+  const stakeholderReceiptAuthorized = /^[a-f0-9]{64}$/i.test(stakeholderApprovalSha)
+    && stakeholder?._receipt_sha256 === stakeholderApprovalSha;
+  add("stakeholder_acceptance_for_release", stakeholder?.status === "pass"
+    && stakeholder?.release_git_sha === acceptanceIdentity.git_sha
+    && stakeholder?.asset_version === acceptanceIdentity.asset_version
+    && fresh(stakeholder, now)
+    && stakeholderReceiptAuthorized,
+  stakeholder ? { status: stakeholder.status, receipt_sha256: stakeholder._receipt_sha256, authorized: stakeholderReceiptAuthorized } : "missing");
 
   if (mode === "production") {
     const expectedPinned = /^[a-f0-9]{40}$/i.test(expectedRelease.git_sha) && Boolean(expectedRelease.asset_version);
@@ -85,7 +94,7 @@ function selfTest() {
     visualization: { status: "pass", generated_at, target_mode: "local_candidate", candidate_identity: candidateIdentity },
     numeric: { status: "pass", generated_at, promotion_eligible: true, source_truth_verdict: "MATCH" },
     parity: { status: "pass", generated_at, scope: "record-level live API to Mongo parity by _id" },
-    stakeholder: { status: "pass", generated_at, release_git_sha: identity.git_sha, asset_version: identity.asset_version },
+    stakeholder: { status: "pass", generated_at, release_git_sha: identity.git_sha, asset_version: identity.asset_version, _receipt_sha256: "b".repeat(64) },
   };
   const production = {
     ...base,
@@ -93,12 +102,13 @@ function selfTest() {
     visualization: { status: "pass", generated_at, target_mode: "live", release_identity_pinned: true, tested_release_git_sha: identity.git_sha, tested_release_asset_version: identity.asset_version },
   };
   const cases = [
-    evaluate({ mode: "candidate", receipts: base, identity, expectedRelease: {}, now }).status === "pass",
-    evaluate({ mode: "candidate", receipts: base, identity: { ...identity, git_dirty: true }, expectedRelease: {}, now }).status === "blocked",
-    evaluate({ mode: "candidate", receipts: { ...base, numeric: { ...base.numeric, promotion_eligible: false } }, identity, expectedRelease: {}, now }).status === "blocked",
-    evaluate({ mode: "candidate", receipts: { ...base, stakeholder: null }, identity, expectedRelease: {}, now }).status === "blocked",
-    evaluate({ mode: "production", receipts: production, identity, expectedRelease: { git_sha: identity.git_sha, asset_version: identity.asset_version }, now }).status === "pass",
-    evaluate({ mode: "production", receipts: production, identity, expectedRelease: {}, now }).status === "blocked",
+    evaluate({ mode: "candidate", receipts: base, identity, expectedRelease: {}, stakeholderApprovalSha: "b".repeat(64), now }).status === "pass",
+    evaluate({ mode: "candidate", receipts: base, identity: { ...identity, git_dirty: true }, expectedRelease: {}, stakeholderApprovalSha: "b".repeat(64), now }).status === "blocked",
+    evaluate({ mode: "candidate", receipts: { ...base, numeric: { ...base.numeric, promotion_eligible: false } }, identity, expectedRelease: {}, stakeholderApprovalSha: "b".repeat(64), now }).status === "blocked",
+    evaluate({ mode: "candidate", receipts: { ...base, stakeholder: null }, identity, expectedRelease: {}, stakeholderApprovalSha: "b".repeat(64), now }).status === "blocked",
+    evaluate({ mode: "production", receipts: production, identity, expectedRelease: { git_sha: identity.git_sha, asset_version: identity.asset_version }, stakeholderApprovalSha: "b".repeat(64), now }).status === "pass",
+    evaluate({ mode: "production", receipts: production, identity, expectedRelease: {}, stakeholderApprovalSha: "b".repeat(64), now }).status === "blocked",
+    evaluate({ mode: "candidate", receipts: base, identity, expectedRelease: {}, stakeholderApprovalSha: "c".repeat(64), now }).status === "blocked",
   ];
   const result = { status: cases.every(Boolean) ? "pass" : "fail", checks: cases.length, passed: cases.filter(Boolean).length };
   console.log(JSON.stringify(result, null, 2));
@@ -115,7 +125,8 @@ function main() {
     git_sha: String(process.env.SWFIPN_RELEASE_GIT_SHA || "").trim(),
     asset_version: String(process.env.SWFIPN_RELEASE_ASSET_VERSION || "").trim(),
   };
-  const result = evaluate({ mode, receipts, identity, expectedRelease });
+  const stakeholderApprovalSha = String(process.env.SWFIPN_STAKEHOLDER_ACCEPTANCE_SHA256 || "").trim();
+  const result = evaluate({ mode, receipts, identity, expectedRelease, stakeholderApprovalSha });
   const receipt = {
     schema_version: "swfipn.july31_release_gate.v1",
     generated_at: new Date().toISOString(),
