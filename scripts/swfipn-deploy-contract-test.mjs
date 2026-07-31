@@ -4,9 +4,11 @@ import { readFileSync } from "node:fs";
 const deployPath = "infra/digitalocean/scripts/deploy_acceptance.sh";
 const composePath = "infra/digitalocean/compose.acceptance.yml";
 const freshnessAuditPath = "infra/digitalocean/scripts/run_freshness_audit.sh";
+const frontendOnlyDeployPath = "infra/digitalocean/scripts/deploy_frontend_only.sh";
 const deploy = readFileSync(deployPath, "utf8");
 const compose = readFileSync(composePath, "utf8");
 const freshnessAudit = readFileSync(freshnessAuditPath, "utf8");
+const frontendOnlyDeploy = readFileSync(frontendOnlyDeployPath, "utf8");
 
 const requiredDeployContracts = [
   ["untracked frontend dirty detection", 'status --porcelain --untracked-files=normal'],
@@ -39,6 +41,10 @@ assert.ok(
 );
 assert.ok(deploy.includes("SWFI2_BACKEND_IMAGE_TAG=$STAMP"), "deploy must pin the backend image tag");
 assert.ok(deploy.includes("SWFIPN_FRONTEND_IMAGE_TAG=$STAMP"), "deploy must pin the frontend image tag");
+assert.ok(frontendOnlyDeploy.includes("up -d --no-deps --wait --wait-timeout 180 swfipn-web"), "frontend-only deploy must not restart dependencies");
+assert.ok(frontendOnlyDeploy.includes("backend image changed during frontend-only deploy"), "frontend-only deploy must prove backend immutability");
+assert.ok(frontendOnlyDeploy.includes("restoring exact previous web image"), "frontend-only deploy must restore the exact previous web image on failure");
+assert.ok(frontendOnlyDeploy.includes("frontend_only_deploy.v1"), "frontend-only deploy must write a scoped receipt");
 assert.ok(
   freshnessAudit.includes("--env HOME=/tmp/swfipn-freshness"),
   "freshness verifier must use a writable isolated home",

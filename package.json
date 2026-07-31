@@ -182,6 +182,7 @@
     "acceptance:stack": "node scripts/swfipn-acceptance-stack.mjs --target local",
     "acceptance:stack:public": "node scripts/swfipn-acceptance-stack.mjs --target public --share",
     "acceptance:stack:deploy": "node scripts/swfipn-acceptance-stack.mjs --target public --deploy --share",
+    "acceptance:frontend-only:deploy": "bash infra/digitalocean/scripts/deploy_frontend_only.sh",
     "acceptance-lock": "python3 tools/loop-budget/swficc_acceptance_lock.py --repo . --out output/swfipn-acceptance-lock-latest.json",
     "loop-collapse": "python3 tools/loop-budget/loop_collapse_detector.py --repo . --out output/swfipn-loop-collapse-latest.json",
     "universe:map": "node scripts/swfipn-full-universe-mapping-gate.mjs",
