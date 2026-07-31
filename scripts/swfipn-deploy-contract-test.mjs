@@ -30,13 +30,15 @@ for (const [label, marker] of requiredDeployContracts) {
 }
 
 assert.ok(
-  compose.includes("swfipn/swfi2-backend:${SWFIPN_IMAGE_TAG:-acceptance}"),
-  "backend image must be release-versioned",
+  compose.includes("swfipn/swfi2-backend:${SWFI2_BACKEND_IMAGE_TAG:-acceptance}"),
+  "backend image must have an independent immutable tag",
 );
 assert.ok(
-  compose.includes("swfipn/web:${SWFIPN_IMAGE_TAG:-acceptance}"),
-  "frontend image must be release-versioned",
+  compose.includes("swfipn/web:${SWFIPN_FRONTEND_IMAGE_TAG:-acceptance}"),
+  "frontend image must have an independent immutable tag",
 );
+assert.ok(deploy.includes("SWFI2_BACKEND_IMAGE_TAG=$STAMP"), "deploy must pin the backend image tag");
+assert.ok(deploy.includes("SWFIPN_FRONTEND_IMAGE_TAG=$STAMP"), "deploy must pin the frontend image tag");
 assert.ok(
   freshnessAudit.includes("--env HOME=/tmp/swfipn-freshness"),
   "freshness verifier must use a writable isolated home",

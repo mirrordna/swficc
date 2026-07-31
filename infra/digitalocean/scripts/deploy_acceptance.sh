@@ -91,7 +91,7 @@ ssh $SSH_OPTS "$HOST" "test -s '$REMOTE_ROOT/shared/.env.swfi2-backend' && test 
 
 ssh $SSH_OPTS "$HOST" "ln -sfn '$REMOTE_ROOT/shared/.env.swfi2-backend' '$REMOTE_RELEASE/.env.swfi2-backend' && ln -sfn '$REMOTE_ROOT/shared/.env.swfipn-web' '$REMOTE_RELEASE/.env.swfipn-web'"
 
-ssh $SSH_OPTS "$HOST" "printf '%s\n' 'SWFIPN_IMAGE_TAG=$STAMP' 'SWFIPN_ASSET_VERSION=$ASSET_VERSION' 'SWFIPN_GIT_SHA=$GIT_SHA' 'SWFIPN_GIT_DIRTY=$GIT_DIRTY' > '$REMOTE_RELEASE/.release.env'"
+ssh $SSH_OPTS "$HOST" "printf '%s\n' 'SWFIPN_IMAGE_TAG=$STAMP' 'SWFI2_BACKEND_IMAGE_TAG=$STAMP' 'SWFIPN_FRONTEND_IMAGE_TAG=$STAMP' 'SWFIPN_ASSET_VERSION=$ASSET_VERSION' 'SWFIPN_GIT_SHA=$GIT_SHA' 'SWFIPN_GIT_DIRTY=$GIT_DIRTY' > '$REMOTE_RELEASE/.release.env'"
 
 ssh $SSH_OPTS "$HOST" "set -eu; install -m 0755 '$REMOTE_RELEASE/swfi-dashboard/infra/digitalocean/scripts/run_freshness_audit.sh' /usr/local/sbin/swfipn-freshness-audit; install -m 0644 '$REMOTE_RELEASE/swfi-dashboard/infra/digitalocean/systemd/swfipn-freshness-audit.service' /etc/systemd/system/swfipn-freshness-audit.service; install -m 0644 '$REMOTE_RELEASE/swfi-dashboard/infra/digitalocean/systemd/swfipn-freshness-audit.timer' /etc/systemd/system/swfipn-freshness-audit.timer; mkdir -p /var/lib/swfipn/freshness; chmod 0750 /var/lib/swfipn/freshness; systemctl daemon-reload; systemctl enable --now swfipn-freshness-audit.timer"
 
