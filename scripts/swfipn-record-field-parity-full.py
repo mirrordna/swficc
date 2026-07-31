@@ -4,6 +4,7 @@ import json
 import math
 import os
 import re
+import sys
 from pathlib import Path
 
 from bson import ObjectId
@@ -54,18 +55,26 @@ def scalar_date(value):
     return text(value)[:10]
 
 
-def first_positive(doc, fields):
-    fallback = None
+def first_value(doc, fields):
+    for field in fields:
+        value = doc.get(field)
+        if value is not None and text(value) != "":
+            return value
+    return None
+
+
+def source_number_value(doc, fields):
+    zero_value = None
     for field in fields:
         value = doc.get(field)
         if value is None or text(value) == "":
             continue
-        if fallback is None:
-            fallback = value
         num = scalar_number(value)
-        if not math.isnan(num) and num > 0:
+        if not math.isnan(num) and num != 0:
             return value
-    return fallback
+        if zero_value is None:
+            zero_value = value
+    return zero_value
 
 
 def first_array_item(value):
@@ -86,13 +95,13 @@ def compare_string(field_id, live, source, skip_gap=True, allow_includes=False):
     return {"field": field_id, "status": "mismatch", "live": text(live), "source": text(source)}
 
 
-def compare_number(field_id, live, source, zero_null_equivalent=False):
+def compare_number(field_id, live, source):
     live_num = scalar_number(live)
     source_num = scalar_number(source)
-    if zero_null_equivalent and ((math.isnan(live_num) and source_num == 0) or (live_num == 0 and math.isnan(source_num))):
-        return {"field": field_id, "status": "allowed_normalization", "reason": "zero_null_equivalent"}
     if math.isnan(live_num) and math.isnan(source_num):
         return {"field": field_id, "status": "skipped", "reason": "both_missing"}
+    if math.isnan(live_num) != math.isnan(source_num):
+        return {"field": field_id, "status": "mismatch", "reason": "one_side_missing", "live": text(live), "source": text(source)}
     if live_num == source_num:
         return {"field": field_id, "status": "match"}
     if not math.isnan(live_num) and not math.isnan(source_num) and abs(live_num - source_num) < 1:
@@ -121,7 +130,7 @@ SPECS = {
             compare_string("type", row.get("type"), doc.get("type")),
             compare_string("country", row.get("country"), doc.get("country")),
             compare_string("region", row.get("region"), doc.get("region")),
-            compare_number("assets", row.get("assets") or row.get("aum"), first_positive(doc, ["assets", "managedAssets"]), True),
+            compare_number("assets", first_value(row, ["assets", "aum"]), source_number_value(doc, ["assets", "managedAssets"])),
         ],
     },
     "people": {
@@ -162,7 +171,7 @@ SPECS = {
             compare_string("region", row.get("region"), doc.get("region")),
             compare_string("industry", row.get("industry"), doc.get("industry")),
             compare_string("investment_type", row.get("investment_type"), doc.get("investmentType")),
-            compare_number("amount", row.get("amount") or row.get("capital") or row.get("value"), doc.get("amount"), True),
+            compare_number("amount", first_value(row, ["amount", "capital", "value"]), doc.get("amount")),
             compare_date("closed_at", row.get("closed_at") or row.get("activity_date") or row.get("relevant_date"), doc.get("closedAt") or doc.get("announcedAt")),
             compare_string("buyer_entity", row.get("buyer_entity") or row.get("institution"), first_array_item(doc.get("buyerEntities")).get("name")),
             compare_string("seller_entity", row.get("seller_entity"), first_array_item(doc.get("sellerEntities")).get("name")),
@@ -178,7 +187,7 @@ SPECS = {
             compare_string("country", row.get("country"), doc.get("country")),
             compare_string("region", row.get("region"), doc.get("region")),
             compare_string("investment_type", row.get("investment_type") or row.get("strategy") or row.get("asset_class_or_strategy"), doc.get("investmentType")),
-            compare_number("amount", row.get("amount") or row.get("value"), doc.get("amount"), True),
+            compare_number("amount", first_value(row, ["amount", "value"]), doc.get("amount")),
             compare_date("due_at", row.get("due_at") or row.get("deadline") or row.get("relevant_date"), doc.get("dueAt")),
             compare_date("posted_at", row.get("posted_at"), doc.get("postedAt")),
         ],
@@ -283,5 +292,20 @@ def process_batch(db, family_id, spec, batch, state, failures):
             state[family_id]["matched"] += 1
 
 
+def self_test():
+    checks = [
+        ("zero_matches_zero", compare_number("value", 0, 0)["status"], "match"),
+        ("missing_live_rejects_source_zero", compare_number("value", None, 0)["status"], "mismatch"),
+        ("live_zero_rejects_missing_source", compare_number("value", 0, None)["status"], "mismatch"),
+        ("both_missing_skips", compare_number("value", None, None)["status"], "skipped"),
+        ("live_alias_preserves_zero", first_value({"amount": 0, "capital": 12}, ["amount", "capital"]), 0),
+        ("source_zero_fallback_preserved", source_number_value({"assets": 0}, ["assets", "managedAssets"]), 0),
+        ("nonzero_source_alias_preferred", source_number_value({"assets": 0, "managedAssets": 12}, ["assets", "managedAssets"]), 12),
+    ]
+    failures = [{"check": name, "actual": actual, "expected": expected} for name, actual, expected in checks if actual != expected]
+    print(json.dumps({"status": "fail" if failures else "pass", "checks": len(checks), "failures": failures}, indent=2))
+    return 1 if failures else 0
+
+
 if __name__ == "__main__":
-    main()
+    raise SystemExit(self_test() if "--self-test" in sys.argv else main())

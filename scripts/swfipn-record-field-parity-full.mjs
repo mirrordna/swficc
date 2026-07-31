@@ -30,8 +30,8 @@ const specs = {
       stringField("country", ["country"], ["country"]),
       stringField("region", ["region"], ["region"]),
       {
-        ...numberField("assets", ["assets", "aum"], ["assets"], { zeroNullEquivalent: true }),
-        source: (doc) => firstPositiveNumberValue(doc, ["assets", "managedAssets"]),
+        ...numberField("assets", ["assets", "aum"], ["assets"]),
+        source: (doc) => sourceNumberValue(doc, ["assets", "managedAssets"]),
       },
     ],
   },
@@ -73,7 +73,7 @@ const specs = {
       stringField("region", ["region"], ["region"]),
       stringField("industry", ["industry"], ["industry"]),
       stringField("investment_type", ["investment_type"], ["investmentType"]),
-      numberField("amount", ["amount", "capital", "value"], ["amount"], { zeroNullEquivalent: true }),
+      numberField("amount", ["amount", "capital", "value"], ["amount"]),
       dateField("closed_at", ["closed_at", "activity_date", "relevant_date"], ["closedAt", "announcedAt"]),
       {
         id: "buyer_entity",
@@ -101,7 +101,7 @@ const specs = {
       stringField("country", ["country"], ["country"]),
       stringField("region", ["region"], ["region"]),
       stringField("investment_type", ["investment_type", "strategy", "asset_class_or_strategy"], ["investmentType"]),
-      numberField("amount", ["amount", "value"], ["amount"], { zeroNullEquivalent: true }),
+      numberField("amount", ["amount", "value"], ["amount"]),
       dateField("due_at", ["due_at", "deadline", "relevant_date"], ["dueAt"]),
       dateField("posted_at", ["posted_at"], ["postedAt"]),
     ],
@@ -161,13 +161,12 @@ function stringField(id, liveFields, sourceFields = liveFields) {
   };
 }
 
-function numberField(id, liveFields, sourceFields = liveFields, options = {}) {
+function numberField(id, liveFields, sourceFields = liveFields) {
   return {
     id,
     kind: "number",
     live: (row) => liveValue(row, liveFields),
     source: (doc) => sourceValue(doc, sourceFields),
-    ...options,
   };
 }
 
@@ -212,20 +211,22 @@ function scalarNumber(value) {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (value && typeof value === "object" && value.$numberLong) return Number(value.$numberLong);
   if (value && typeof value === "object" && value.$numberDouble) return Number(value.$numberDouble);
-  const parsed = Number(String(value ?? "").replace(/[^0-9.-]/g, ""));
+  const clean = String(value ?? "").replace(/[^0-9.-]/g, "");
+  if (clean === "") return NaN;
+  const parsed = Number(clean);
   return Number.isFinite(parsed) ? parsed : NaN;
 }
 
-function firstPositiveNumberValue(doc, fields) {
-  let fallback;
+function sourceNumberValue(doc, fields) {
+  let zeroValue;
   for (const field of fields) {
     const value = doc?.[field];
     if (value === undefined || value === null || text(value) === "") continue;
-    if (fallback === undefined) fallback = value;
     const parsed = scalarNumber(value);
-    if (Number.isFinite(parsed) && parsed > 0) return value;
+    if (Number.isFinite(parsed) && parsed !== 0) return value;
+    if (zeroValue === undefined) zeroValue = value;
   }
-  return fallback;
+  return zeroValue;
 }
 
 function compareField(field, row, doc) {
@@ -237,10 +238,10 @@ function compareField(field, row, doc) {
   if (field.kind === "number") {
     const liveNum = scalarNumber(live);
     const sourceNum = scalarNumber(source);
-    if (field.zeroNullEquivalent && ((Number.isNaN(liveNum) && sourceNum === 0) || (liveNum === 0 && Number.isNaN(sourceNum)))) {
-      return { field: field.id, status: "allowed_normalization", reason: "zero_null_equivalent" };
-    }
     if (Number.isNaN(liveNum) && Number.isNaN(sourceNum)) return { field: field.id, status: "skipped", reason: "both_missing" };
+    if (Number.isNaN(liveNum) !== Number.isNaN(sourceNum)) {
+      return { field: field.id, status: "mismatch", reason: "one_side_missing", live: text(live), source: text(source) };
+    }
     if (liveNum === sourceNum) return { field: field.id, status: "match" };
     if (Number.isFinite(liveNum) && Number.isFinite(sourceNum) && Math.abs(liveNum - sourceNum) < 1) {
       return { field: field.id, status: "allowed_normalization", reason: "sub_dollar_numeric_precision" };
@@ -262,6 +263,23 @@ function compareField(field, row, doc) {
     return { field: field.id, status: "allowed_normalization", reason: "name_variant" };
   }
   return { field: field.id, status: "mismatch", live: text(live), source: text(source) };
+}
+
+function selfTest() {
+  const assets = specs.entities.fields.find((field) => field.id === "assets");
+  const amount = specs.transactions.fields.find((field) => field.id === "amount");
+  const checks = [
+    ["zero_matches_zero", compareField(assets, { assets: 0 }, { assets: 0 }).status, "match"],
+    ["missing_live_rejects_source_zero", compareField(assets, {}, { assets: 0 }).status, "mismatch"],
+    ["live_zero_rejects_missing_source", compareField(assets, { assets: 0 }, {}).status, "mismatch"],
+    ["both_missing_skips", compareField(assets, {}, {}).status, "skipped"],
+    ["live_alias_preserves_zero", amount.live({ amount: 0, capital: 12 }), 0],
+    ["source_zero_fallback_preserved", assets.source({ assets: 0 }), 0],
+    ["nonzero_source_alias_preferred", assets.source({ assets: 0, managedAssets: 12 }), 12],
+  ];
+  const failures = checks.filter(([, actual, expected]) => !Object.is(actual, expected));
+  console.log(JSON.stringify({ status: failures.length ? "fail" : "pass", checks: checks.length, failures }, null, 2));
+  if (failures.length) process.exit(1);
 }
 
 function scanUrl(collection, limit, after) {
@@ -647,9 +665,13 @@ async function main() {
   if (receipt.status === "fail" || (receipt.status === "partial_pass" && !allowPartialExit)) process.exit(1);
 }
 
-main().catch((error) => {
-  fs.mkdirSync(outputDir, { recursive: true });
-  fs.writeFileSync(receiptPath, `${JSON.stringify({ status: "fail", generated_at: new Date().toISOString(), error: error.message }, null, 2)}\n`);
-  console.error(error);
-  process.exit(1);
-});
+if (process.argv.includes("--self-test")) {
+  selfTest();
+} else {
+  main().catch((error) => {
+    fs.mkdirSync(outputDir, { recursive: true });
+    fs.writeFileSync(receiptPath, `${JSON.stringify({ status: "fail", generated_at: new Date().toISOString(), error: error.message }, null, 2)}\n`);
+    console.error(error);
+    process.exit(1);
+  });
+}

@@ -114,18 +114,18 @@ def first_named(value: Any) -> str:
     return ""
 
 
-def first_positive(item: dict[str, Any], names: list[str]) -> Any:
-    fallback = None
+def source_number_value(item: dict[str, Any], names: list[str]) -> Any:
+    zero_value = None
     for name in names:
         value = item.get(name)
         if value is None or text(value) == "":
             continue
-        if fallback is None:
-            fallback = value
         number = scalar_number(value)
-        if math.isfinite(number) and number > 0:
+        if math.isfinite(number) and number != 0:
             return value
-    return fallback
+        if zero_value is None:
+            zero_value = value
+    return zero_value
 
 
 @dataclass(frozen=True)
@@ -179,7 +179,7 @@ SPECS: dict[str, dict[str, Any]] = {
             string_field("type", ["type"]),
             string_field("country", ["country"]),
             string_field("region", ["region"]),
-            FieldSpec("assets", "number", lambda row: first_value(row, ["assets", "aum"]), lambda doc: first_positive(doc, ["assets", "managedAssets"])),
+            FieldSpec("assets", "number", lambda row: first_value(row, ["assets", "aum"]), lambda doc: source_number_value(doc, ["assets", "managedAssets"])),
         ],
     },
     "people": {
@@ -525,10 +525,15 @@ def self_test() -> int:
     assert compare_field(SPECS["entities"]["fields"][0], {"name": "A"}, {"name": "B"})["status"] == "mismatch"
     assert compare_field(SPECS["entities"]["fields"][4], {}, {"assets": 0})["status"] == "mismatch"
     assert compare_field(SPECS["entities"]["fields"][4], {"assets": 0}, {})["status"] == "mismatch"
+    assert compare_field(SPECS["entities"]["fields"][4], {"assets": 0}, {"assets": 0})["status"] == "match"
+    assert compare_field(SPECS["entities"]["fields"][4], {}, {})["status"] == "skipped"
+    assert first_value({"assets": 0, "aum": 12}, ["assets", "aum"]) == 0
+    assert source_number_value({"assets": 0}, ["assets", "managedAssets"]) == 0
+    assert source_number_value({"assets": 0, "managedAssets": 12}, ["assets", "managedAssets"]) == 12
     assert compare_field(SPECS["entities"]["fields"][2], {}, {"country": "UAE"})["status"] == "mismatch"
     assert compare_field(SPECS["entities"]["fields"][2], {}, {})["status"] == "skipped"
     assert civil_date_from_millis(569510352000000) == "20017-01-24"
-    print(json.dumps({"status": "pass", "checks": 11}))
+    print(json.dumps({"status": "pass", "checks": 16}))
     return 0
 
 
