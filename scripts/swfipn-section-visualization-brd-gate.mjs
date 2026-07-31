@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { chromium } from "playwright";
 
 const cwd = process.cwd();
 const configuredOrigin = String(process.env.SWFIPN_ORIGIN || "").trim();
 const liveTarget = Boolean(configuredOrigin);
-const origin = normalizeOrigin(configuredOrigin || "http://localhost:3025/swficc/");
+const sourceBackendOrigin = new URL(
+  String(process.env.SWFIPN_BACKEND_ORIGIN || (liveTarget ? configuredOrigin : "https://dashboard.swfi.com")),
+).origin;
+let origin = normalizeOrigin(configuredOrigin || "http://127.0.0.1/swficc/");
 const outputDir = path.join(cwd, "output");
 const receiptPath = path.join(outputDir, "swfipn-section-visualization-brd-gate-latest.json");
 fs.mkdirSync(outputDir, { recursive: true });
@@ -33,10 +37,64 @@ const ROUTES = [
   { id: "reports", route: "/reports/", selector: "[data-brd-reports-visualization='true']", required: ["Reports / League Tables Visualization", "Reports by Type", "Market Activity by Sector", "League Tables"] },
 ];
 
+function reservePort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      server.close((error) => error ? reject(error) : resolve(address.port));
+    });
+  });
+}
+
+async function waitForOrigin(targetOrigin, child) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (child && child.exitCode !== null) throw new Error(`static_server_exited_${child.exitCode}`);
+    try {
+      const response = await fetch(targetOrigin, { signal: AbortSignal.timeout(1_000) });
+      if (response.ok) return;
+    } catch { /* retry */ }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("static_server_readiness_timeout");
+}
+
+async function stopChild(child) {
+  if (!child || child.exitCode !== null) return;
+  child.kill("SIGTERM");
+  await Promise.race([
+    new Promise((resolve) => child.once("exit", resolve)),
+    new Promise((resolve) => setTimeout(resolve, 2_000)),
+  ]);
+  if (child.exitCode === null) child.kill("SIGKILL");
+}
+
 async function main() {
-  const browser = await chromium.launch({ channel: "chrome", headless: true });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
-  const consoleErrors = [];
+  let child = null;
+  if (!liveTarget) {
+    if (!fs.existsSync(path.join(cwd, "out", "index.html"))) {
+      throw new Error("built_static_export_missing: run npm run build first");
+    }
+    const port = await reservePort();
+    origin = `http://127.0.0.1:${port}/swficc/`;
+    child = spawn("python3", [
+      path.join(cwd, "scripts", "serve-static-with-headers.py"),
+      "--host", "127.0.0.1",
+      "--port", String(port),
+      "--root", path.join(cwd, "out"),
+      "--backend", sourceBackendOrigin,
+      "--backend-timeout", "12",
+    ], { cwd, stdio: "ignore" });
+  }
+  let browser;
+  try {
+    await waitForOrigin(origin, child);
+    browser = await chromium.launch({ channel: "chrome", headless: true });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    const consoleErrors = [];
   page.on("console", (msg) => {
     if (msg.type() === "error") consoleErrors.push(msg.text());
   });
@@ -64,6 +122,7 @@ async function main() {
       : "CANDIDATE_WITH_LIVE_SWFI_SOURCES_NOT_PRODUCTION_ACCEPTANCE",
     origin,
     target_mode: liveTarget ? "live" : "local_candidate",
+    source_backend_origin: sourceBackendOrigin,
     tested_release_git_sha: testedReleaseGitSha || null,
     tested_release_asset_version: testedReleaseAssetVersion || null,
     release_identity_pinned: releaseIdentityPinned,
@@ -87,9 +146,12 @@ async function main() {
     checks,
   };
   fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2));
-  console.log(JSON.stringify({ status, receipt: receiptPath, summary: receipt.summary }, null, 2));
-  await browser.close();
-  if (status === "fail") process.exit(1);
+    console.log(JSON.stringify({ status, receipt: receiptPath, summary: receipt.summary }, null, 2));
+    if (status === "fail") process.exitCode = 1;
+  } finally {
+    if (browser) await browser.close();
+    await stopChild(child);
+  }
 }
 
 async function checkRoute(page, spec) {

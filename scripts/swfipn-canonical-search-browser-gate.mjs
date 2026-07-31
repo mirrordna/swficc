@@ -188,6 +188,9 @@ async function main() {
   fs.mkdirSync(outputDir, { recursive: true });
   const configuredOrigin = String(process.env.SWFIPN_ORIGIN || "").trim();
   const liveTarget = Boolean(configuredOrigin);
+  const sourceBackendOrigin = new URL(
+    String(process.env.SWFIPN_BACKEND_ORIGIN || (liveTarget ? configuredOrigin : "https://dashboard.swfi.com")),
+  ).origin;
   let child = null;
   let origin;
   if (liveTarget) {
@@ -203,7 +206,7 @@ async function main() {
       "--host", "127.0.0.1",
       "--port", String(port),
       "--root", path.join(repoRoot, "out"),
-      "--backend", process.env.SWFIPN_BACKEND_ORIGIN || "https://dashboard.swfi.com",
+      "--backend", sourceBackendOrigin,
       "--backend-timeout", "12",
     ], { cwd: repoRoot, stdio: "ignore" });
   }
@@ -247,6 +250,7 @@ async function main() {
         : "CANDIDATE_WITH_LIVE_SWFI_SOURCES_NOT_PRODUCTION_ACCEPTANCE",
       target_origin: origin,
       target_mode: liveTarget ? "live" : "local_candidate",
+      source_backend_origin: sourceBackendOrigin,
       tested_release_git_sha: testedReleaseGitSha || null,
       tested_release_asset_version: testedReleaseAssetVersion || null,
       release_identity_pinned: releaseIdentityPinned,
