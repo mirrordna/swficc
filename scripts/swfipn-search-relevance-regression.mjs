@@ -11,7 +11,7 @@ const outputDir = path.join(cwd, "output");
 const receiptPath = path.join(outputDir, "swfipn-search-relevance-regression-latest.json");
 fs.mkdirSync(outputDir, { recursive: true });
 
-const { businessSearchQueryVariants, rankSearchRecords, searchSubjectQuery } = await import(pathToFileURL(path.join(cwd, "src/lib/searchRelevance.ts")).href);
+const { businessSearchQueryVariants, canonicalSearchName, rankSearchRecords, searchSubjectQuery } = await import(pathToFileURL(path.join(cwd, "src/lib/searchRelevance.ts")).href);
 
 const fixtures = {
   abuDhabi: [
@@ -32,6 +32,11 @@ const fixtures = {
   zurich: [
     entity("Zurich Insurance Group", "Insurance", 358_005_000_000),
     entity("Zurich Re", "Insurance", 0),
+  ],
+  hkic: [
+    entity("HealthKick", "Company", 0),
+    entity("MaRS HealthKick", "Investor", 0),
+    entity("Hong Kong Investment Corporation", "Sovereign Wealth Fund", 0, "HKIC"),
   ],
 };
 
@@ -59,6 +64,30 @@ const checks = [
     query: "PIF",
     actual: businessSearchQueryVariants("PIF"),
     expected: ["PIF", "Public Investment Fund"],
+  },
+  {
+    id: "query_variant_hkic",
+    query: "HKIC",
+    actual: businessSearchQueryVariants("HKIC"),
+    expected: ["HKIC", "Hong Kong Investment Corporation"],
+  },
+  {
+    id: "query_variant_hkic_reverse",
+    query: "Hong Kong Investment Corporation",
+    actual: businessSearchQueryVariants("Hong Kong Investment Corporation"),
+    expected: ["Hong Kong Investment Corporation", "HKIC"],
+  },
+  {
+    id: "canonical_name_hkic",
+    query: "HKIC",
+    actual: canonicalSearchName("HKIC"),
+    expected: "Hong Kong Investment Corporation",
+  },
+  {
+    id: "query_variant_adia_reverse",
+    query: "Abu Dhabi Investment Authority",
+    actual: businessSearchQueryVariants("Abu Dhabi Investment Authority"),
+    expected: ["Abu Dhabi Investment Authority", "ADIA"],
   },
   {
     id: "query_variant_sovereign_wealth_funds",
@@ -150,12 +179,26 @@ async function runServerRenderedChecks() {
   try {
     await waitForHttp(`http://127.0.0.1:${searchPort}/api/v1/public/search?q=health&limit=25`, 5_000);
     const pifApi = await fetchJson(`http://127.0.0.1:${searchPort}/api/v1/public/search?q=PIF&limit=25`);
+    const hkicApi = await fetchJson(`http://127.0.0.1:${searchPort}/api/v1/public/search?q=HKIC&limit=25`);
+    const hkicFullApi = await fetchJson(`http://127.0.0.1:${searchPort}/api/v1/public/search?q=${encodeURIComponent("Hong Kong Investment Corporation")}&limit=25`);
     return [
       {
         id: "edge_public_api_pif_synonym_before_substring_noise",
         query: "PIF",
         actual: [pifApi?.data?.results?.[0]?.name || ""],
         expected: ["Public Investment Fund"],
+      },
+      {
+        id: "edge_public_api_hkic_alias_before_substring_noise",
+        query: "HKIC",
+        actual: [hkicApi?.data?.results?.[0]?.name || ""],
+        expected: ["Hong Kong Investment Corporation"],
+      },
+      {
+        id: "edge_public_api_hkic_reverse_alias",
+        query: "Hong Kong Investment Corporation",
+        actual: [hkicFullApi?.data?.results?.[0]?.name || ""],
+        expected: ["Hong Kong Investment Corporation"],
       },
     ];
   } catch (error) {
@@ -195,6 +238,8 @@ function publicRows(query) {
   if (clean === "public investment fund") return [fixtures.pif[2], fixtures.pif[1], fixtures.pif[0]];
   if (clean === "zurich insurance group") return fixtures.zurich;
   if (clean === "abu dhabi") return [fixtures.abuDhabi[1], fixtures.abuDhabi[2], fixtures.abuDhabi[3], fixtures.abuDhabi[4]];
+  if (clean === "hkic") return [fixtures.hkic[0], fixtures.hkic[1]];
+  if (clean === "hong kong investment corporation") return [fixtures.hkic[2]];
   return [];
 }
 
@@ -204,6 +249,8 @@ function sourceRows(query) {
   if (clean === "pif") return [fixtures.pif[0], fixtures.pif[1]];
   if (clean === "zurich insurance group") return fixtures.zurich;
   if (clean === "abu dhabi") return [fixtures.abuDhabi[1], fixtures.abuDhabi[2], fixtures.abuDhabi[3], fixtures.abuDhabi[4]];
+  if (clean === "hkic") return [fixtures.hkic[0], fixtures.hkic[1]];
+  if (clean === "hong kong investment corporation") return [fixtures.hkic[2]];
   return [];
 }
 

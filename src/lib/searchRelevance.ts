@@ -30,6 +30,7 @@ const VERIFIED_QUERY_ALIASES: Readonly<Record<string, readonly string[]>> = {
   cic: ["China Investment Corporation"],
   gpfg: ["Government Pension Fund Global"],
   gpif: ["Government Pension Investment Fund Japan"],
+  hkic: ["Hong Kong Investment Corporation"],
   pif: ["Public Investment Fund"],
   qia: ["Qatar Investment Authority"],
   safe: ["State Administration of Foreign Exchange"],
@@ -56,6 +57,18 @@ export function businessSearchQueryVariants(query: string, sourceRows: Record<st
     if (canonicalName) variants.push(canonicalName);
   }
   return uniqueStrings(variants).slice(0, 3);
+}
+
+export function canonicalSearchName(query: string): string {
+  const clean = normalizeSearchText(searchSubjectQuery(query));
+  if (!clean) return "";
+  const direct = VERIFIED_QUERY_ALIASES[clean]?.[0];
+  if (direct) return direct;
+  for (const canonicalNames of Object.values(VERIFIED_QUERY_ALIASES)) {
+    const match = canonicalNames.find((name) => normalizeSearchText(name) === clean);
+    if (match) return match;
+  }
+  return "";
 }
 
 export function dedupeSearchRecords<T extends Record<string, unknown>>(sourceRows: T[]): T[] {
@@ -272,7 +285,13 @@ function isSourceBackedAliasMatch(row: Record<string, unknown>, query: string): 
 }
 
 function canonicalAliasTargets(query: string): string[] {
-  return [...(VERIFIED_QUERY_ALIASES[normalizeSearchText(query)] || [])];
+  const clean = normalizeSearchText(query);
+  const targets = [...(VERIFIED_QUERY_ALIASES[clean] || [])];
+  for (const [alias, canonicalNames] of Object.entries(VERIFIED_QUERY_ALIASES)) {
+    if (!canonicalNames.some((name) => normalizeSearchText(name) === clean)) continue;
+    targets.push(/^\w{2,12}$/.test(alias) ? alias.toUpperCase() : alias);
+  }
+  return uniqueStrings(targets);
 }
 
 function primarySearchName(row: Record<string, unknown>): string {

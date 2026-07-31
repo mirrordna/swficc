@@ -16,6 +16,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from http import HTTPStatus
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
@@ -51,6 +52,7 @@ SEARCH_QUERY_SYNONYMS = {
     "cic": ["China Investment Corporation"],
     "gpfg": ["Government Pension Fund Global"],
     "gpif": ["Government Pension Investment Fund Japan"],
+    "hkic": ["Hong Kong Investment Corporation"],
     "pif": ["Public Investment Fund"],
     "qia": ["Qatar Investment Authority"],
     "safe": ["State Administration of Foreign Exchange"],
@@ -121,7 +123,13 @@ def search_query_variants(query):
         return []
     seen = set()
     variants = []
-    for value in [clean, *SEARCH_QUERY_SYNONYMS.get(search_text(clean), [])]:
+    normalized = search_text(clean)
+    reverse_aliases = [
+        alias.upper() if re.fullmatch(r"\w{2,12}", alias) else alias
+        for alias, canonical_names in SEARCH_QUERY_SYNONYMS.items()
+        if any(search_text(name) == normalized for name in canonical_names)
+    ]
+    for value in [clean, *SEARCH_QUERY_SYNONYMS.get(normalized, []), *reverse_aliases]:
         variant = str(value or "").strip()
         key = search_text(variant)
         if not variant or key in seen:
@@ -282,7 +290,7 @@ def search_relevance_score(row, query):
     all_text = search_text(" ".join(str(value) for value in row.values() if isinstance(value, str)))
     terms = [term for term in clean.split() if term]
     short_query = len(clean) <= SHORT_SEARCH_QUERY_MAX
-    alias_targets = [search_text(target) for target in SEARCH_QUERY_SYNONYMS.get(clean, [])]
+    alias_targets = [search_text(target) for target in search_query_variants(query)[1:]]
 
     base_score = 0
     if name == clean:
@@ -1424,12 +1432,23 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
             else:
                 search_rows = []
                 upstream_fact = False
-                for variant in search_query_variants(query):
-                    public_packet = self.public_search_packet(variant, limit=str(safe_limit))
-                    source_packet = self.source_entity_search_packet(variant, limit=str(safe_limit))
-                    upstream_fact = upstream_fact or public_packet.get("fact") is True or source_packet.get("fact") is True
-                    search_rows.extend(self.rows_from_public_search_packet(public_packet))
-                    search_rows.extend(self.rows_from_source_data_packet(source_packet))
+                variants = search_query_variants(query)
+                requests = [("public", variant) for variant in variants] + [("source", variant) for variant in variants]
+
+                def fetch_search_packet(request):
+                    kind, variant = request
+                    if kind == "public":
+                        return kind, self.public_search_packet(variant, limit=str(safe_limit))
+                    return kind, self.source_entity_search_packet(variant, limit=str(safe_limit))
+
+                with ThreadPoolExecutor(max_workers=min(6, len(requests))) as executor:
+                    packets = list(executor.map(fetch_search_packet, requests))
+                for kind, packet in packets:
+                    upstream_fact = upstream_fact or packet.get("fact") is True
+                    if kind == "public":
+                        search_rows.extend(self.rows_from_public_search_packet(packet))
+                    else:
+                        search_rows.extend(self.rows_from_source_data_packet(packet))
                 ranked = rank_search_rows(dedupe_search_rows(search_rows), query)[:safe_limit]
                 body = json.dumps({
                     "status": "ok" if upstream_fact else "unavailable",

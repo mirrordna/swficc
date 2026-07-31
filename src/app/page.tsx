@@ -58,7 +58,7 @@ function worldFlowPairs(transactionRows: Record<string, unknown>[]): WorldFlowPa
   return [...pairs.values()].sort((a, b) => b.deals - a.deals);
 }
 import { useDashboardSessionDisplayName } from "@/lib/dashboardAuth";
-import { businessSearchQueryVariants, dedupeSearchRecords, rankSearchRecords, searchRelevanceScore as businessSearchRelevanceScore, type SearchKind } from "@/lib/searchRelevance";
+import { businessSearchQueryVariants, canonicalSearchName, dedupeSearchRecords, rankSearchRecords, searchRelevanceScore as businessSearchRelevanceScore, type SearchKind } from "@/lib/searchRelevance";
 import { filterSmartSearchIntentRows, smartSearchIntentForQuery, type SmartSearchIntent } from "@/lib/smartSearchIntent";
 import { isShortTextQuery, isTextQueryReady, MIN_TEXT_QUERY_CHARACTERS } from "@/lib/textQueryPolicy";
 
@@ -145,7 +145,7 @@ function storeRenderedSearchPrefetch(query: string, groups: BrdSearchGroup[]): v
 export default function DashboardPage() {
   const rootRef = useGsapReveal<HTMLDivElement>();
   const router = useRouter();
-  const [packets, setPackets] = useState<Packets>({} as Packets);
+  const [packets, setPackets] = useState<Packets>(() => freshHomeSnapshot());
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchPacket, setSearchPacket] = useState<Packet | undefined>();
@@ -159,7 +159,8 @@ export default function DashboardPage() {
   // so it can't find most people. Once the shared minimum is met we fetch the PII-safe
   // /api/people/search/v1 live and feed its matches into the People search category as
   // the primary source (same shape as the entity->transactions join above).
-  const [searchPeoplePacket, setSearchPeoplePacket] = useState<Packet | undefined>();
+  const [searchPeoplePackets, setSearchPeoplePackets] = useState<Packet[]>([]);
+  const [searchNewsPackets, setSearchNewsPackets] = useState<Packet[]>([]);
   const [searchIntentPackets, setSearchIntentPackets] = useState<Packet[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchIntentLoading, setSearchIntentLoading] = useState(false);
@@ -188,16 +189,19 @@ export default function DashboardPage() {
         setPackets((current) => ({ ...snapshot, ...current }));
       }
     }, 0);
-    void loadDashboardPackets((key, packet) => {
-      if (!active) return;
-      setPackets((current) => ({
-        ...current,
-        [key]: shouldReplacePacket(current[key], packet) ? packet : current[key],
-      }));
-    });
+    const refreshTimer = window.setTimeout(() => {
+      void loadDashboardPackets((key, packet) => {
+        if (!active) return;
+        setPackets((current) => ({
+          ...current,
+          [key]: shouldReplacePacket(current[key], packet) ? packet : current[key],
+        }));
+      });
+    }, Object.keys(snapshot).length ? 8_000 : 0);
     return () => {
       active = false;
       window.clearTimeout(snapshotTimer);
+      window.clearTimeout(refreshTimer);
     };
   }, []);
 
@@ -305,6 +309,7 @@ export default function DashboardPage() {
     ...searchEntityPackets.flatMap((packet) => [...rows(packet, "results"), ...rows(packet)]),
   ]), [dashboardEntitySearchRows, searchEntityPackets]);
   const liveSearchGroups = useMemo(() => brdPublicSearchGroups(searchQuery, searchPacket, searchEntityPackets), [searchQuery, searchPacket, searchEntityPackets]);
+  const liveNewsSearchGroups = useMemo(() => newsSearchGroups(searchNewsPackets, searchQuery), [searchNewsPackets, searchQuery]);
   const searchIntent = useMemo(
     () => isTextQueryReady(searchQuery) ? smartSearchIntentForQuery(searchQuery) : null,
     [searchQuery],
@@ -346,12 +351,13 @@ export default function DashboardPage() {
       // matches lead the People category instead of the 25-row pre-loaded slice.
       const primaryLiveGroups = [
         ...entityTransactionSearchGroups(searchTransactionPacket, clean),
-        ...peopleSearchGroups(searchPeoplePacket, clean),
+        ...liveNewsSearchGroups,
+        ...peopleSearchGroups(searchPeoplePackets, clean),
       ];
       return completeSearchGroups(mergeSearchGroups(primaryLiveGroups, baseSearchGroups));
     }
     return dashboardSearchGroups;
-  }, [baseSearchGroups, dashboardSearchGroups, liveSearchGroups, searchLoading, searchIntentLoading, searchQuery, searchTransactionPacket, searchPeoplePacket]);
+  }, [baseSearchGroups, dashboardSearchGroups, liveSearchGroups, liveNewsSearchGroups, searchLoading, searchIntentLoading, searchQuery, searchTransactionPacket, searchPeoplePackets]);
   const searchItems = useMemo(() => searchGroups.flatMap((group) => group.items), [searchGroups]);
 
   useEffect(() => {
@@ -366,6 +372,7 @@ export default function DashboardPage() {
       const resetTimer = window.setTimeout(() => {
         setSearchPacket(undefined);
         setSearchEntityPackets([]);
+        setSearchNewsPackets([]);
         setSearchLoading(false);
       }, 0);
       return () => window.clearTimeout(resetTimer);
@@ -380,6 +387,10 @@ export default function DashboardPage() {
       }
       setSearchLoading(true);
       setSearchEntityPackets([]);
+      setSearchNewsPackets([]);
+      const queryVariants = businessSearchQueryVariants(clean);
+      const canonicalInstitution = canonicalSearchName(clean);
+      const entityQueryVariants = canonicalInstitution ? [canonicalInstitution] : queryVariants;
       const publicSearch = fetchPacket(`/api/v1/public/search?q=${encodeURIComponent(clean)}&limit=25`, 10_000, {
         signal: controller.signal,
         attempts: 1,
@@ -401,11 +412,7 @@ export default function DashboardPage() {
         setSearchPacket(undefined);
       });
       const entitySearchRequests = [
-        fetchPacket(`/v1/swfi/top20?limit=50`, 10_000, {
-          signal: controller.signal,
-          attempts: 1,
-        }),
-        ...businessSearchQueryVariants(clean).map((variant) => (
+        ...entityQueryVariants.map((variant) => (
           fetchPacket(`/api/source-data/search/v1?collection=entities&q=${encodeURIComponent(variant)}&limit=25`, 20_000, {
             signal: controller.signal,
             attempts: 1,
@@ -422,7 +429,18 @@ export default function DashboardPage() {
         if (controller.signal.aborted) return;
         setSearchEntityPackets([]);
       });
-      void Promise.allSettled([publicSearch, entitySearch]).then(() => {
+      const newsSearch = Promise.allSettled(queryVariants.map((variant) => (
+        fetchPacket(`/api/source-intelligence/news/v1?q=${encodeURIComponent(variant)}&limit=25`, 8_000, {
+          signal: controller.signal,
+          attempts: 1,
+        }).then((packet) => {
+          if (controller.signal.aborted || !isFact(packet)) return;
+          setSearchNewsPackets((current) => [...current, packet]);
+        })
+      ))).catch(() => {
+        if (!controller.signal.aborted) setSearchNewsPackets([]);
+      });
+      void Promise.allSettled([publicSearch, entitySearch, newsSearch]).then(() => {
         if (!controller.signal.aborted) setSearchLoading(false);
       });
     }, 120);
@@ -500,22 +518,23 @@ export default function DashboardPage() {
     };
   }, [transactionCandidateKey, searchOpen]);
 
-  // People live search: fetch /api/people/search/v1 for the raw query (the endpoint does
-  // its own PII-safe matching, so no entity-resolve hop is needed). Mirrors the
-  // entity->transactions effect: cache-first, aborts in flight, and every state update is
-  // scheduled from the debounce callback so nothing mutates state synchronously in render.
+  // Search both the entered term and its verified canonical variants. This is required
+  // for institution queries such as ADIA, where a raw substring lookup can return people
+  // named Kapadia while the canonical institution name is the real relationship key.
   useEffect(() => {
     if (!searchOpen) return;
     const clean = searchQuery.trim();
     if (!isTextQueryReady(clean) || smartSearchIntentForQuery(clean)) {
-      const resetTimer = window.setTimeout(() => setSearchPeoplePacket(undefined), 0);
+      const resetTimer = window.setTimeout(() => setSearchPeoplePackets([]), 0);
       return () => window.clearTimeout(resetTimer);
     }
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      void fetchPeopleSearch(clean, controller.signal).then((packet) => {
+      const canonicalInstitution = canonicalSearchName(clean);
+      const variants = canonicalInstitution ? [canonicalInstitution] : businessSearchQueryVariants(clean);
+      void Promise.all(variants.map((variant) => fetchPeopleSearch(variant, controller.signal))).then((packets) => {
         if (controller.signal.aborted) return;
-        setSearchPeoplePacket(packet && isFact(packet) ? packet : undefined);
+        setSearchPeoplePackets(packets.filter((packet): packet is Packet => Boolean(packet && isFact(packet))));
       });
     }, 120);
     return () => {
@@ -1122,6 +1141,7 @@ function BrdSearchModal({
   const queryReady = isTextQueryReady(query);
   const queryShort = isShortTextQuery(query);
   const interpretedIntent = queryReady ? smartSearchIntentForQuery(query) : null;
+  const canonicalInstitution = queryReady ? canonicalSearchName(query) : "";
   const visibleGroups = selectedFilter === "All" ? groups : groups.filter((group) => group.label === selectedFilter);
   const visibleItems = visibleGroups.flatMap((group) => group.items);
   const activeItem = visibleItems[Math.min(activeIndex, Math.max(0, visibleItems.length - 1))];
@@ -1200,6 +1220,11 @@ function BrdSearchModal({
             <span className="font-bold">Interpreted as:</span> {interpretedIntent.explanation}
           </div>
         ) : null}
+        {!interpretedIntent && canonicalInstitution ? (
+          <div className="border-b border-[#D7E5F2] bg-[#F2F7FB] px-5 py-2 text-[12px] text-[#234968]" data-testid="smart-search-canonical-identity">
+            <span className="font-bold">Matched institution:</span> {canonicalInstitution}. Categories update independently from source-backed SWFI records.
+          </div>
+        ) : null}
         <div className="max-h-[56vh] overflow-y-auto px-5 py-4">
           {visibleGroups.map((group) => (
             <section key={group.label} className="mb-5 last:mb-0">
@@ -1220,7 +1245,7 @@ function BrdSearchModal({
                   );
                 }) : (
                   <div className="px-3 py-2 text-[12px] text-[#687385]" aria-live="polite">
-                    {loading && queryReady ? "Searching this category…" : "No matches in this category."}
+                    {loading && queryReady ? "Searching this category…" : emptySearchCategoryMessage(group.label)}
                   </div>
                 )}
               </div>
@@ -1245,6 +1270,14 @@ function BrdSearchModal({
       </div>
     </div>
   );
+}
+
+function emptySearchCategoryMessage(label: string): string {
+  if (label === "People") return "No source-backed people relationship found.";
+  if (label === "News & Articles") return "No source-backed articles found.";
+  if (label === "Transactions") return "No source-backed transactions found.";
+  if (label === "RFPs & Opportunities") return "No source-backed opportunities found.";
+  return "No matching SWFI entity found.";
 }
 
 function brdSearchResultsHref(query: string, category: SearchCategoryLabel): string {
@@ -1618,10 +1651,32 @@ function entityTransactionSearchGroups(packet: Packet | undefined, query: string
 // kept identical to the pre-loaded People group in brdSearchGroups (label=name,
 // detail=title · institution, href=dashboardPersonHref, sourceHref=sourceHref) so the two
 // merge into one visually-consistent category, with these live matches leading.
-function peopleSearchGroups(packet: Packet | undefined, query: string): BrdSearchGroup[] {
-  if (!packet || !isFact(packet) || !isTextQueryReady(query)) return [];
-  const peopleResults = rows(packet, "results").length ? rows(packet, "results") : rows(packet);
-  const items = peopleResults.slice(0, 8).map((row) => ({
+function newsSearchGroups(packets: Packet[], query: string): BrdSearchGroup[] {
+  if (!isTextQueryReady(query)) return [];
+  const newsResults = dedupeSearchRecords(packets.flatMap((packet) => (
+    isFact(packet) ? (rows(packet, "results").length ? rows(packet, "results") : rows(packet)) : []
+  )));
+  const items = newsResults.slice(0, 8).map((row) => ({
+    label: brdText(row.title || row.name),
+    detail: [brdReadTime(row), brdText(row.source, "")].filter(Boolean).join(" · "),
+    href: researchRecordHref(row),
+    sourceHref: sourceHref(row),
+    prefetchRow: row,
+  }));
+  return items.length ? [{ label: "News & Articles", items }] : [];
+}
+
+function peopleSearchGroups(packets: Packet[], query: string): BrdSearchGroup[] {
+  if (!isTextQueryReady(query)) return [];
+  const variants = businessSearchQueryVariants(query);
+  const canonicalQueries = variants.slice(1);
+  const peopleResults = dedupeSearchRecords(packets.flatMap((packet) => (
+    isFact(packet) ? (rows(packet, "results").length ? rows(packet, "results") : rows(packet)) : []
+  )));
+  const relatedPeople = canonicalQueries.length
+    ? peopleResults.filter((row) => canonicalQueries.some((canonical) => businessSearchRelevanceScore(row, canonical, "person") > 0))
+    : rankSearchRecords(peopleResults, query, "person");
+  const items = relatedPeople.slice(0, 8).map((row) => ({
     label: brdText(row.name),
     detail: [brdText(row.title, ""), brdText(row.institution, "")].filter(Boolean).join(" · "),
     href: dashboardPersonHref(row),
@@ -3362,10 +3417,16 @@ function researchRecordHref(row: Record<string, unknown>) {
 
 async function loadDashboardPackets(onPacket: (key: PacketKey, packet: Packet) => void) {
   const entries = DASHBOARD_LOAD_ORDER.map((key) => [key, ENDPOINTS[key]] as [PacketKey, string]);
-  await Promise.all(entries.map(async ([key, path]) => {
-    const packet = await fetchPacket(path, dashboardTimeout(key), { attempts: dashboardAttempts(key) });
-    onPacket(key, packet);
-  }));
+  const workers = Array.from({ length: Math.min(3, entries.length) }, async () => {
+    while (entries.length) {
+      const entry = entries.shift();
+      if (!entry) return;
+      const [key, path] = entry;
+      const packet = await fetchPacket(path, dashboardTimeout(key), { attempts: dashboardAttempts(key) });
+      onPacket(key, packet);
+    }
+  });
+  await Promise.all(workers);
 }
 
 function dashboardAttempts(key: PacketKey) {
