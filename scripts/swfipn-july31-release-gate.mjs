@@ -10,7 +10,7 @@ const receiptPath = path.join(output, "swfipn-july31-release-gate-latest.json");
 const maxAgeMs = 6 * 60 * 60 * 1000;
 
 const receiptFiles = {
-  search: "swfipn-canonical-search-browser-gate-latest.json",
+  search: "swfipn-canonical-search-stability-gate-latest.json",
   visualization: "swfipn-section-visualization-brd-gate-latest.json",
   numeric: "swfipn-numeric-truth-adversarial-latest.json",
   parity: "swfipn-record-level-parity-gate-latest.json",
@@ -53,6 +53,14 @@ function evaluate({ mode, receipts, identity, expectedRelease, sourceOrigin, sta
   const acceptanceIdentity = mode === "production" ? expectedRelease : identity;
 
   add("search_receipt_current_pass", search?.status === "pass" && fresh(search, now), search?.status || "missing");
+  add("search_cold_start_stability", Number(search?.required_cold_start_samples) >= 2
+    && search?.passed_cold_start_samples === search?.required_cold_start_samples
+    && search?.identity_consistent === true,
+  search ? {
+    required: search.required_cold_start_samples,
+    passed: search.passed_cold_start_samples,
+    identity_consistent: search.identity_consistent,
+  } : "missing");
   add("visualization_receipt_current_pass", visualization?.status === "pass" && fresh(visualization, now), visualization?.status || "missing");
   add("numeric_truth_promotion_eligible", numeric?.status === "pass" && numeric?.promotion_eligible === true && fresh(numeric, now), numeric?.source_truth_verdict || numeric?.status || "missing");
   add("fresh_full_mongo_parity", parity?.status === "pass" && /Mongo parity/i.test(String(parity?.scope || "")) && fresh(parity, now), parity?.status || "missing");
@@ -110,7 +118,7 @@ function selfTest() {
   const candidateIdentity = { ...identity };
   const sourceOrigin = "https://dashboard.swfi.com";
   const base = {
-    search: { status: "pass", generated_at, target_mode: "local_candidate", source_backend_origin: sourceOrigin, candidate_identity: candidateIdentity },
+    search: { status: "pass", generated_at, target_mode: "local_candidate", source_backend_origin: sourceOrigin, candidate_identity: candidateIdentity, required_cold_start_samples: 2, passed_cold_start_samples: 2, identity_consistent: true },
     visualization: { status: "pass", generated_at, target_mode: "local_candidate", source_backend_origin: sourceOrigin, candidate_identity: candidateIdentity },
     numeric: { status: "pass", generated_at, origin: sourceOrigin, promotion_eligible: true, source_truth_verdict: "MATCH" },
     parity: { status: "pass", generated_at, backend_origin: sourceOrigin, scope: "record-level live API to Mongo parity by _id" },
@@ -118,7 +126,7 @@ function selfTest() {
   };
   const production = {
     ...base,
-    search: { status: "pass", generated_at, target_mode: "live", source_backend_origin: sourceOrigin, release_identity_pinned: true, tested_release_git_sha: identity.git_sha, tested_release_asset_version: identity.asset_version },
+    search: { status: "pass", generated_at, target_mode: "live", source_backend_origin: sourceOrigin, required_cold_start_samples: 2, passed_cold_start_samples: 2, identity_consistent: true, release_identity_pinned: true, tested_release_git_sha: identity.git_sha, tested_release_asset_version: identity.asset_version },
     visualization: { status: "pass", generated_at, target_mode: "live", source_backend_origin: sourceOrigin, release_identity_pinned: true, tested_release_git_sha: identity.git_sha, tested_release_asset_version: identity.asset_version },
   };
   const cases = [
@@ -131,6 +139,7 @@ function selfTest() {
     evaluate({ mode: "candidate", receipts: base, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "c".repeat(64), now }).status === "blocked",
     evaluate({ mode: "candidate", receipts: { ...base, numeric: { ...base.numeric, origin: "https://wrong.example" } }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).blockers.includes("numeric_source_origin_matches"),
     evaluate({ mode: "candidate", receipts: { ...base, parity: { ...base.parity, backend_origin: "https://wrong.example" } }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).blockers.includes("parity_source_origin_matches"),
+    evaluate({ mode: "candidate", receipts: { ...base, search: { ...base.search, passed_cold_start_samples: 1 } }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).blockers.includes("search_cold_start_stability"),
   ];
   const result = { status: cases.every(Boolean) ? "pass" : "fail", checks: cases.length, passed: cases.filter(Boolean).length };
   console.log(JSON.stringify(result, null, 2));
