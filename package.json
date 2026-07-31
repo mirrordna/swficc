@@ -211,7 +211,9 @@
     "latest:feedback:gate": "node scripts/swfipn-latest-feedback-forensic-gate.mjs",
     "latest:feedback:gate:public": "SWFIPN_ORIGIN=https://dashboard.swfi.com/swficc/ node scripts/swfipn-latest-feedback-forensic-gate.mjs",
     "numeric:truth:adversarial": "node scripts/swfipn-numeric-truth-adversarial-gate.mjs",
-    "parity:semantics:self-test": "node scripts/swfipn-record-level-parity-gate.mjs --self-test && python3 tools/field-parity/swfipn_field_parity_remote.py --self-test"
+    "parity:semantics:self-test": "node scripts/swfipn-record-level-parity-gate.mjs --self-test && python3 tools/field-parity/swfipn_field_parity_remote.py --self-test",
+    "release:july31:gate": "node scripts/swfipn-july31-release-gate.mjs",
+    "release:july31:self-test": "node scripts/swfipn-july31-release-gate.mjs --self-test"
   },
   "dependencies": {
     "d3-geo": "^3.1.1",

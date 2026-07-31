@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import fs from "node:fs";
@@ -10,7 +10,20 @@ const repoRoot = process.cwd();
 const outputDir = path.join(repoRoot, "output");
 const receiptPath = path.join(outputDir, "swfipn-canonical-search-browser-gate-latest.json");
 const entityBudgetMs = 5_000;
+const liveEntityBudgetMs = 8_000;
 const newsBudgetMs = 8_000;
+
+function candidateIdentity() {
+  const gitSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf8" }).trim();
+  const gitDirty = Boolean(execFileSync("git", ["status", "--porcelain"], { cwd: repoRoot, encoding: "utf8" }).trim());
+  let assetVersion = "";
+  try {
+    assetVersion = String(JSON.parse(fs.readFileSync(path.join(outputDir, "swfipn-asset-version-latest.json"), "utf8")).version || "").trim();
+  } catch {
+    // Missing asset identity remains explicit in the receipt.
+  }
+  return { git_sha: gitSha, git_dirty: gitDirty, asset_version: assetVersion || null };
+}
 
 function loadPlaywright() {
   const marker = path.join(repoRoot, "node_modules", "playwright", "package.json");
@@ -69,6 +82,18 @@ async function runQuery(browser, origin, testCase) {
     await page.getByText(new RegExp(testCase.news), { exact: false }).first().waitFor({ timeout: 15_000 });
     const newsMs = Date.now() - startedAt;
     await page.getByText("No source-backed people relationship found.", { exact: true }).waitFor({ timeout: 30_000 });
+    const canonicalSourceHref = await page.getByTestId("smart-search-canonical-source-link").locator("a").getAttribute("data-source-href");
+    const entitySection = page.locator("section").filter({
+      has: page.getByRole("heading", { name: "Entities", exact: true }),
+    }).first();
+    const liveEntityLink = entitySection.getByText(testCase.entity, { exact: true }).first();
+    const liveEntityPresent = await liveEntityLink.waitFor({ state: "visible", timeout: 25_000 }).then(() => true).catch(() => false);
+    const liveEntityMs = Date.now() - startedAt;
+    const liveEntityHref = liveEntityPresent
+      ? await liveEntityLink.evaluate((node) => node.closest("a")?.getAttribute("data-source-href") || "")
+      : "";
+    const sourceLinkMatchesLiveResult = Boolean(canonicalSourceHref)
+      && normalizeComparableUrl(canonicalSourceHref) === normalizeComparableUrl(liveEntityHref);
     const body = await page.locator("body").innerText();
     const screenshotPath = path.join(outputDir, `swfipn-canonical-search-${testCase.id}-latest.png`);
     await page.screenshot({ path: screenshotPath, fullPage: true });
@@ -79,11 +104,19 @@ async function runQuery(browser, origin, testCase) {
         && testCase.forbidden.every((value) => !body.includes(value))
         && entityMs <= newsMs
         && entityMs <= entityBudgetMs
-        && newsMs <= newsBudgetMs,
+        && liveEntityPresent
+        && liveEntityMs <= liveEntityBudgetMs
+        && newsMs <= newsBudgetMs
+        && sourceLinkMatchesLiveResult,
       entity_ms: entityMs,
+      live_entity_ms: liveEntityMs,
       news_ms: newsMs,
-      performance_budget_ms: { entity: entityBudgetMs, news: newsBudgetMs },
-      performance_pass: entityMs <= entityBudgetMs && newsMs <= newsBudgetMs,
+      performance_budget_ms: { canonical_entity: entityBudgetMs, live_entity: liveEntityBudgetMs, news: newsBudgetMs },
+      performance_pass: entityMs <= entityBudgetMs && liveEntityPresent && liveEntityMs <= liveEntityBudgetMs && newsMs <= newsBudgetMs,
+      canonical_source_href: canonicalSourceHref,
+      live_entity_href: liveEntityHref,
+      live_entity_result_present: liveEntityPresent,
+      source_link_matches_live_result: sourceLinkMatchesLiveResult,
       entity: testCase.entity,
       news: testCase.news,
       forbidden_absent: testCase.forbidden.filter((value) => !body.includes(value)),
@@ -92,6 +125,17 @@ async function runQuery(browser, origin, testCase) {
     };
   } finally {
     await page.close();
+  }
+}
+
+function normalizeComparableUrl(value) {
+  try {
+    const parsed = new URL(value);
+    parsed.hash = "";
+    parsed.search = "";
+    return parsed.href.replace(/\/$/, "");
+  } catch {
+    return "";
   }
 }
 
@@ -169,6 +213,11 @@ async function main() {
     for (const testCase of cases) checks.push(await runQuery(browser, origin, testCase));
     checks.push(await runRapidReplacement(browser, origin));
     checks.unshift({ id: "top_aum_first_paint", pass: topAumFirstPaint, assertions: firstPaintAssertions });
+    const testedReleaseGitSha = liveTarget ? String(process.env.SWFIPN_RELEASE_GIT_SHA || "").trim() : "";
+    const testedReleaseAssetVersion = liveTarget ? String(process.env.SWFIPN_RELEASE_ASSET_VERSION || "").trim() : "";
+    const releaseIdentityPinned = !liveTarget
+      || (/^[a-f0-9]{40}$/i.test(testedReleaseGitSha) && Boolean(testedReleaseAssetVersion));
+    const candidate = liveTarget ? null : candidateIdentity();
     const receipt = {
       schema_version: "swfipn.canonical_search_browser_gate.v1",
       generated_at: new Date().toISOString(),
@@ -177,9 +226,11 @@ async function main() {
         : "CANDIDATE_WITH_LIVE_SWFI_SOURCES_NOT_PRODUCTION_ACCEPTANCE",
       target_origin: origin,
       target_mode: liveTarget ? "live" : "local_candidate",
-      tested_release_git_sha: liveTarget ? String(process.env.SWFIPN_RELEASE_GIT_SHA || "").trim() || null : null,
-      tested_release_asset_version: liveTarget ? String(process.env.SWFIPN_RELEASE_ASSET_VERSION || "").trim() || null : null,
-      status: checks.every((check) => check.pass) ? "pass" : "fail",
+      tested_release_git_sha: testedReleaseGitSha || null,
+      tested_release_asset_version: testedReleaseAssetVersion || null,
+      release_identity_pinned: releaseIdentityPinned,
+      candidate_identity: candidate,
+      status: checks.every((check) => check.pass) && releaseIdentityPinned ? "pass" : "fail",
       checked_scope: [
         "top_aum_first_paint",
         "adia_entity_news_people_semantics",
@@ -189,6 +240,7 @@ async function main() {
       unchecked_scope: liveTarget
         ? ["stakeholder_acceptance", "Mongo_record_parity", "global_release_acceptance"]
         : ["deployed_production", "stakeholder_acceptance", "Mongo_record_parity"],
+      bad_news: releaseIdentityPinned ? [] : ["live_target_release_identity_unpinned"],
       checks,
     };
     fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);

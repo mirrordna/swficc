@@ -1,13 +1,28 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { chromium } from "playwright";
 
 const cwd = process.cwd();
-const origin = normalizeOrigin(process.env.SWFIPN_ORIGIN || "http://localhost:3025/swficc/");
+const configuredOrigin = String(process.env.SWFIPN_ORIGIN || "").trim();
+const liveTarget = Boolean(configuredOrigin);
+const origin = normalizeOrigin(configuredOrigin || "http://localhost:3025/swficc/");
 const outputDir = path.join(cwd, "output");
 const receiptPath = path.join(outputDir, "swfipn-section-visualization-brd-gate-latest.json");
 fs.mkdirSync(outputDir, { recursive: true });
+
+function candidateIdentity() {
+  const gitSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf8" }).trim();
+  const gitDirty = Boolean(execFileSync("git", ["status", "--porcelain"], { cwd, encoding: "utf8" }).trim());
+  let assetVersion = "";
+  try {
+    assetVersion = String(JSON.parse(fs.readFileSync(path.join(outputDir, "swfipn-asset-version-latest.json"), "utf8")).version || "").trim();
+  } catch {
+    // Missing asset identity remains explicit in the receipt.
+  }
+  return { git_sha: gitSha, git_dirty: gitDirty, asset_version: assetVersion || null };
+}
 
 const ROUTES = [
   { id: "entities", route: "/profiles/", selector: "[data-brd-section-visualization='profiles']", required: ["Institution Data Visualization", "Total in SWFI", "Items in View", "Leading Category", "Highlighted SWFI Pages"] },
@@ -34,12 +49,30 @@ async function main() {
 
   const failures = checks.flatMap((check) => check.failures.map((failure) => `${check.id}:${failure}`));
   if (consoleErrors.length) failures.push("console_errors_present");
+  const testedReleaseGitSha = liveTarget ? String(process.env.SWFIPN_RELEASE_GIT_SHA || "").trim() : "";
+  const testedReleaseAssetVersion = liveTarget ? String(process.env.SWFIPN_RELEASE_ASSET_VERSION || "").trim() : "";
+  const releaseIdentityPinned = !liveTarget
+    || (/^[a-f0-9]{40}$/i.test(testedReleaseGitSha) && Boolean(testedReleaseAssetVersion));
+  const candidate = liveTarget ? null : candidateIdentity();
+  if (!releaseIdentityPinned) failures.push("live_target_release_identity_unpinned");
   const status = failures.length ? "fail" : "pass";
   const receipt = {
     schema_version: "swfipn.section_visualization_brd_gate.v1",
     generated_at: new Date().toISOString(),
+    evidence_class: liveTarget
+      ? "LIVE_TARGET_SURFACE_BEHAVIOR_NOT_GLOBAL_ACCEPTANCE"
+      : "CANDIDATE_WITH_LIVE_SWFI_SOURCES_NOT_PRODUCTION_ACCEPTANCE",
     origin,
+    target_mode: liveTarget ? "live" : "local_candidate",
+    tested_release_git_sha: testedReleaseGitSha || null,
+    tested_release_asset_version: testedReleaseAssetVersion || null,
+    release_identity_pinned: releaseIdentityPinned,
+    candidate_identity: candidate,
     status,
+    unchecked_scope: liveTarget
+      ? ["stakeholder_acceptance", "Mongo_record_parity", "global_release_acceptance"]
+      : ["deployed_production", "stakeholder_acceptance", "Mongo_record_parity"],
+    bad_news: releaseIdentityPinned ? [] : ["live_target_release_identity_unpinned"],
     summary: {
       routes: checks.length,
       passed_routes: checks.filter((check) => check.status === "pass").length,

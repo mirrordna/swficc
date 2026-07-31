@@ -1276,9 +1276,11 @@ function BrdSearchModal({
           <div className="border-b border-[#D7E5F2] bg-[#F2F7FB] px-5 py-2 text-[12px] text-[#234968]" data-testid="smart-search-canonical-identity">
             <span className="font-bold">Matched institution:</span>{" "}
             {canonicalInstitutionSource ? (
-              <DataLink href={canonicalInstitutionSource} sourceHref={canonicalInstitutionSource} className="font-bold text-[#0B4A83] underline">
-                {canonicalInstitution}
-              </DataLink>
+              <span data-testid="smart-search-canonical-source-link">
+                <DataLink href={canonicalInstitutionSource} sourceHref={canonicalInstitutionSource} className="font-bold text-[#0B4A83] underline">
+                  {canonicalInstitution}
+                </DataLink>
+              </span>
             ) : canonicalInstitution}. Categories update independently from source-backed SWFI records.
           </div>
         ) : null}
@@ -3877,7 +3879,7 @@ function DataLink({ href, sourceHref, className, style, children }: { href: stri
   const target = href;
   const provenance = sourceHref || sourceProvenanceHref(href);
   const recordLink = isCanonicalSwfiRecordHref(href);
-  return <DashboardLink href={target} title={provenance ? "View details" : undefined} data-record-link={recordLink ? "true" : undefined} data-source-state={provenance ? "on-file" : undefined} className={className} style={style}>{children}</DashboardLink>;
+  return <DashboardLink href={target} title={provenance ? "View details" : undefined} data-record-link={recordLink ? "true" : undefined} data-source-state={provenance ? "on-file" : undefined} data-source-href={provenance || undefined} className={className} style={style}>{children}</DashboardLink>;
 }
 
 function isCanonicalSwfiRecordHref(href: string | undefined): boolean {
