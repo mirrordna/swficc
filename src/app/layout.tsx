@@ -18,6 +18,11 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full antialiased">
       <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){function queue(){window.__SWFI_PENDING_SEARCH_OPEN__=true}document.addEventListener("click",function(event){var target=event.target instanceof Element?event.target.closest("[data-swfi-search-trigger]"):null;if(target&&!document.querySelector('[aria-label="Search query"]'))queue()},true);document.addEventListener("keydown",function(event){if((event.metaKey||event.ctrlKey)&&String(event.key).toLowerCase()==="k"){event.preventDefault();queue()}},true)})();`,
+          }}
+        />
         {/* Every final link hands off to www.swfi.com (minutes G/J). Measured
             2026-07-05: the first click paid ~0.9s of DNS+TCP+TLS setup to the
             far origin before the signin page even answered. Pre-establishing

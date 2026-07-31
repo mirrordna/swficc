@@ -173,7 +173,14 @@ export default function DashboardPage() {
   const visualControls = useMemo<DashboardTableControls>(() => ({ rowLimit: 5, sortColumn: 0, sortDir: "asc" }), []);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setClientHydrated(true), 0);
+    const timer = window.setTimeout(() => {
+      setClientHydrated(true);
+      const searchWindow = window as typeof window & { __SWFI_PENDING_SEARCH_OPEN__?: boolean };
+      if (searchWindow.__SWFI_PENDING_SEARCH_OPEN__) {
+        searchWindow.__SWFI_PENDING_SEARCH_OPEN__ = false;
+        setSearchOpen(true);
+      }
+    }, 0);
     return () => window.clearTimeout(timer);
   }, []);
 
@@ -712,6 +719,7 @@ function BrdTopNavigation({ onSearchOpen, dataAsOfLabel, displayName }: { onSear
         <button
           type="button"
           onClick={onSearchOpen}
+          data-swfi-search-trigger
           className="flex min-h-[38px] min-w-0 items-center justify-between gap-3 rounded-[5px] bg-white px-3 text-left text-[12px] text-[#5E6A78] shadow-[0_1px_6px_rgba(40,20,20,0.18)]"
           aria-label="Open Global Search"
         >
