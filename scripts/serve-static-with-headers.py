@@ -16,10 +16,12 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from http import HTTPStatus
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
+from threading import BoundedSemaphore, Lock, RLock
 
 
 SECURITY_HEADERS = {
@@ -46,6 +48,9 @@ SESSION_COOKIE_NAME = "__swfipn_session"
 SESSION_TTL_SECONDS = int(os.environ.get("SWFIPN_AUTH_SESSION_TTL_SECONDS", str(12 * 60 * 60)))
 PUBLIC_JSON_PATH_PREFIXES = ("/api/", "/v1/")
 PUBLIC_SEARCH_CACHE_TTL_SECONDS = int(os.environ.get("SWFIPN_PUBLIC_SEARCH_CACHE_TTL_SECONDS", "300"))
+PUBLIC_SEARCH_CACHE_MAX_ENTRIES = int(os.environ.get("SWFIPN_PUBLIC_SEARCH_CACHE_MAX_ENTRIES", "512"))
+PUBLIC_SEARCH_MAX_UPSTREAM_REQUESTS = int(os.environ.get("SWFIPN_PUBLIC_SEARCH_MAX_UPSTREAM_REQUESTS", "8"))
+PUBLIC_SEARCH_QUEUE_WAIT_SECONDS = float(os.environ.get("SWFIPN_PUBLIC_SEARCH_QUEUE_WAIT_SECONDS", "2"))
 SEARCH_QUERY_SYNONYMS = {
     "adia": ["Abu Dhabi Investment Authority"],
     "adq": ["Abu Dhabi Developmental Holding Company"],
@@ -85,6 +90,36 @@ PUBLIC_RESTRICTED_KEYS = {
     "source_doc_id",
     "source_doc_ids",
 }
+
+
+class BoundedTTLCache:
+    def __init__(self, max_entries, ttl_seconds):
+        self.max_entries = max(1, int(max_entries))
+        self.ttl_seconds = max(1, int(ttl_seconds))
+        self._entries = OrderedDict()
+        self._lock = RLock()
+
+    def get(self, key, default=None):
+        with self._lock:
+            entry = self._entries.get(key)
+            if not entry:
+                return default
+            if time.time() - float(entry.get("stored_at") or 0) > self.ttl_seconds:
+                self._entries.pop(key, None)
+                return default
+            self._entries.move_to_end(key)
+            return entry
+
+    def __setitem__(self, key, value):
+        with self._lock:
+            self._entries[key] = value
+            self._entries.move_to_end(key)
+            while len(self._entries) > self.max_entries:
+                self._entries.popitem(last=False)
+
+    def __len__(self):
+        with self._lock:
+            return len(self._entries)
 
 
 def b64url(data):
@@ -1431,6 +1466,7 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
             safe_limit = 25
         cache_key = f"enhanced-public-search:{query.casefold()}:{safe_limit}"
         cacheable = False
+        cache_state = "BYPASS"
         if not query:
             body = json.dumps({
                 "status": "ok",
@@ -1440,55 +1476,81 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
             }, separators=(",", ":")).encode("utf-8")
         else:
             cached = self.server.public_search_cache.get(cache_key)
-            if cached and time.time() - cached["stored_at"] <= PUBLIC_SEARCH_CACHE_TTL_SECONDS:
+            if cached:
                 body = cached["body"]
                 cacheable = True
+                cache_state = "HIT"
             else:
-                search_rows = []
-                upstream_fact = False
-                # Acronyms need canonical expansion, but expanding an already exact
-                # institution name back to its acronym adds noisy and slower work.
-                variants = upstream_search_query_variants(query)
-                requests = [("public", variant) for variant in variants] + [("source", variant) for variant in variants]
-
-                def fetch_search_packet(request):
-                    kind, variant = request
-                    if kind == "public":
-                        return kind, self.public_search_packet(variant, limit=str(safe_limit))
-                    return kind, self.source_entity_search_packet(variant, limit=str(safe_limit))
-
-                with ThreadPoolExecutor(max_workers=min(6, len(requests))) as executor:
-                    packets = list(executor.map(fetch_search_packet, requests))
-                for kind, packet in packets:
-                    upstream_fact = upstream_fact or packet.get("fact") is True
-                    if kind == "public":
-                        search_rows.extend(self.rows_from_public_search_packet(packet))
+                with self.server.public_search_lock(cache_key):
+                    cached = self.server.public_search_cache.get(cache_key)
+                    if cached:
+                        body = cached["body"]
+                        cacheable = True
+                        cache_state = "COALESCED"
                     else:
-                        search_rows.extend(self.rows_from_source_data_packet(packet))
-                ranked = rank_search_rows(dedupe_search_rows(search_rows), query)[:safe_limit]
-                body = json.dumps({
-                    "status": "ok" if upstream_fact else "unavailable",
-                    "fact": upstream_fact,
-                    "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
-                    "data": {
-                        "results": ranked,
-                        "query": query,
-                        "count": len(ranked),
-                        "count_basis": "ranked_public_plus_entity_variants",
-                    },
-                }, separators=(",", ":")).encode("utf-8")
-                cacheable = upstream_fact
-                if cacheable:
-                    self.server.public_search_cache[cache_key] = {"stored_at": time.time(), "body": body}
+                        body, cacheable, cache_state = self.build_enhanced_public_search(query, safe_limit, cache_key)
         self.send_response(HTTPStatus.OK)
         self.send_security_headers()
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "public, max-age=60, s-maxage=300, stale-while-revalidate=300" if cacheable else "no-store")
+        self.send_header("X-SWFIPN-Proxy-Cache", cache_state)
         self.send_header("X-SWFIPN-Search-Render", "enhanced")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         if not head:
             self.write_body(body)
+
+    def build_enhanced_public_search(self, query, safe_limit, cache_key):
+        acquired = self.server.public_search_upstream_slots.acquire(timeout=PUBLIC_SEARCH_QUEUE_WAIT_SECONDS)
+        if not acquired:
+            body = json.dumps({
+                "status": "unavailable",
+                "fact": False,
+                "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+                "data": {"results": [], "query": query, "count": 0, "reason": "search_capacity_exhausted"},
+            }, separators=(",", ":")).encode("utf-8")
+            return body, False, "BUSY"
+
+        try:
+            search_rows = []
+            upstream_fact = False
+            # Acronyms need canonical expansion, but expanding an already exact
+            # institution name back to its acronym adds noisy and slower work.
+            variants = upstream_search_query_variants(query)
+            requests = [("public", variant) for variant in variants] + [("source", variant) for variant in variants]
+
+            def fetch_search_packet(request):
+                kind, variant = request
+                if kind == "public":
+                    return kind, self.public_search_packet(variant, limit=str(safe_limit))
+                return kind, self.source_entity_search_packet(variant, limit=str(safe_limit))
+
+            with ThreadPoolExecutor(max_workers=min(6, len(requests))) as executor:
+                packets = list(executor.map(fetch_search_packet, requests))
+        finally:
+            self.server.public_search_upstream_slots.release()
+
+        for kind, packet in packets:
+            upstream_fact = upstream_fact or packet.get("fact") is True
+            if kind == "public":
+                search_rows.extend(self.rows_from_public_search_packet(packet))
+            else:
+                search_rows.extend(self.rows_from_source_data_packet(packet))
+        ranked = rank_search_rows(dedupe_search_rows(search_rows), query)[:safe_limit]
+        body = json.dumps({
+            "status": "ok" if upstream_fact else "unavailable",
+            "fact": upstream_fact,
+            "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "data": {
+                "results": ranked,
+                "query": query,
+                "count": len(ranked),
+                "count_basis": "ranked_public_plus_entity_variants",
+            },
+        }, separators=(",", ":")).encode("utf-8")
+        if upstream_fact:
+            self.server.public_search_cache[cache_key] = {"stored_at": time.time(), "body": body}
+        return body, upstream_fact, "MISS"
 
     def public_search_cache_key(self, request_method, backend_path, backend_query):
         if request_method != "GET" or backend_path != "/api/v1/public/search":
@@ -1870,12 +1932,15 @@ class StaticProxyServer(ThreadingHTTPServer):
         self.backend = backend
         self.backend_timeout = backend_timeout
         self.backend_token = backend_token
-        self.public_search_cache = {}
+        self.public_search_cache = BoundedTTLCache(PUBLIC_SEARCH_CACHE_MAX_ENTRIES, PUBLIC_SEARCH_CACHE_TTL_SECONDS)
+        self.public_search_locks = [Lock() for _ in range(64)]
+        self.public_search_upstream_slots = BoundedSemaphore(max(1, PUBLIC_SEARCH_MAX_UPSTREAM_REQUESTS))
         self.auth_username = load_secret(
             "SWFIPN_AUTH_USERNAME",
             "SWFIPN_AUTH_USERNAME_KEYCHAIN_SERVICE",
             ["SWFIPN_AUTH_USERNAME", "SWFI_PREVIEW_AUTH_USERNAME"],
         ).strip()
+
         self.auth_password = load_secret(
             "SWFIPN_AUTH_PASSWORD",
             "SWFIPN_AUTH_PASSWORD_KEYCHAIN_SERVICE",
@@ -1902,6 +1967,10 @@ class StaticProxyServer(ThreadingHTTPServer):
             "SWFIPN_SWFI_SESSION_BRIDGE_LOGIN_ENABLED",
             "",
         ).strip().lower() in {"1", "true", "yes", "on"}
+
+    def public_search_lock(self, cache_key):
+        digest = hashlib.sha256(cache_key.encode("utf-8")).digest()
+        return self.public_search_locks[int.from_bytes(digest[:2], "big") % len(self.public_search_locks)]
 
 
 def env_list(name, default):

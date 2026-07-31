@@ -19,6 +19,8 @@ if [[ -n "$(git -C "$FRONTEND_REPO" status --porcelain --untracked-files=normal)
   exit 2
 fi
 
+(cd "$FRONTEND_REPO" && npm run security:runtime-audit && npm run test:search-gateway)
+
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)-frontend"
 ASSET_VERSION="${SWFIPN_ASSET_VERSION:-$STAMP}"
 GIT_SHA="$(git -C "$FRONTEND_REPO" rev-parse HEAD)"

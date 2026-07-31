@@ -45,6 +45,8 @@ assert.ok(frontendOnlyDeploy.includes("up -d --no-deps --wait --wait-timeout 180
 assert.ok(frontendOnlyDeploy.includes("backend image changed during frontend-only deploy"), "frontend-only deploy must prove backend immutability");
 assert.ok(frontendOnlyDeploy.includes("restoring exact previous web image"), "frontend-only deploy must restore the exact previous web image on failure");
 assert.ok(frontendOnlyDeploy.includes("frontend_only_deploy.v1"), "frontend-only deploy must write a scoped receipt");
+assert.ok(frontendOnlyDeploy.includes("npm run security:runtime-audit"), "frontend-only deploy must reject vulnerable runtime dependencies");
+assert.ok(frontendOnlyDeploy.includes("npm run test:search-gateway"), "frontend-only deploy must run search hardening regressions");
 assert.ok(
   freshnessAudit.includes("--env HOME=/tmp/swfipn-freshness"),
   "freshness verifier must use a writable isolated home",

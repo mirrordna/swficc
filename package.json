@@ -48,7 +48,7 @@
     "brd:search:gate": "node scripts/swfipn-global-search-brd-gate.mjs",
     "brd:search:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ node scripts/swfipn-global-search-brd-gate.mjs",
     "brd:search:relevance": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/swfipn-search-relevance-regression.mjs",
-    "test:search-gateway": "python3 scripts/swfipn-search-gateway-regression.py",
+    "test:search-gateway": "python3 scripts/swfipn-search-gateway-regression.py && python3 scripts/swfipn-search-gateway-concurrency-test.py",
     "search:category:gate": "node scripts/swfipn-search-category-gate.mjs",
     "search:category:gate:public": "SWFIPN_ORIGIN=https://dashboard.swfi.com/swficc/ node scripts/swfipn-search-category-gate.mjs",
     "brd:performance:gate": "node scripts/swfipn-brd-performance-gate.mjs",
@@ -160,6 +160,7 @@
     "mirrorgraph:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ SWFIPN_BACKEND_ORIGIN=https://swfipn.activemirror.ai node scripts/swfipn-mirrorgraph-gate.mjs",
     "self-contained:gate": "node scripts/swfipn-self-contained-stack-gate.mjs",
     "security:hygiene": "node scripts/swfipn-security-hygiene-gate.mjs",
+    "security:runtime-audit": "npm audit --omit=dev --audit-level=high",
     "swfi:agent-governance:gate": "node scripts/swfi-agent-governance-gate.mjs",
     "swfi:mcp:list": "node scripts/swfi-mcp-policy-gateway.mjs --list",
     "swfi:mcp:tool": "node scripts/swfi-mcp-policy-gateway.mjs",
@@ -214,9 +215,11 @@
     "d3-geo": "^3.1.1",
     "echarts": "^6.1.0",
     "gsap": "^3.15.0",
-    "next": "^16.2.10",
+    "next": "^16.2.12",
+    "postcss": "8.5.25",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
+    "sharp": "0.35.3",
     "topojson-client": "^3.1.0"
   },
   "devDependencies": {
@@ -228,14 +231,15 @@
     "@types/react-dom": "^19",
     "@types/topojson-client": "^3.1.5",
     "@types/topojson-specification": "^1.0.5",
-    "eslint": "^9",
-    "eslint-config-next": "^16.2.10",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "^16.2.12",
     "playwright": "^1.60.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^5",
     "world-atlas": "^2.0.2"
   },
   "overrides": {
-    "postcss": "8.5.15"
+    "postcss": "$postcss",
+    "sharp": "$sharp"
   }
 }
