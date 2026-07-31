@@ -48,6 +48,7 @@
     "brd:search:gate": "node scripts/swfipn-global-search-brd-gate.mjs",
     "brd:search:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ node scripts/swfipn-global-search-brd-gate.mjs",
     "brd:search:relevance": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/swfipn-search-relevance-regression.mjs",
+    "test:search-gateway": "python3 scripts/swfipn-search-gateway-regression.py",
     "search:category:gate": "node scripts/swfipn-search-category-gate.mjs",
     "search:category:gate:public": "SWFIPN_ORIGIN=https://dashboard.swfi.com/swficc/ node scripts/swfipn-search-category-gate.mjs",
     "brd:performance:gate": "node scripts/swfipn-brd-performance-gate.mjs",

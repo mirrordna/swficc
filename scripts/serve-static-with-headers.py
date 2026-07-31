@@ -139,6 +139,20 @@ def search_query_variants(query):
     return variants[:3]
 
 
+def is_canonical_search_query(query):
+    normalized = search_text(query)
+    return any(
+        search_text(canonical_name) == normalized
+        for canonical_names in SEARCH_QUERY_SYNONYMS.values()
+        for canonical_name in canonical_names
+    )
+
+
+def upstream_search_query_variants(query):
+    clean = str(query or "").strip()
+    return [clean] if clean and is_canonical_search_query(clean) else search_query_variants(clean)
+
+
 def is_natural_language_intent_query(query):
     """Route supported natural-language intents to the category-aware Next app.
 
@@ -1432,7 +1446,9 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
             else:
                 search_rows = []
                 upstream_fact = False
-                variants = search_query_variants(query)
+                # Acronyms need canonical expansion, but expanding an already exact
+                # institution name back to its acronym adds noisy and slower work.
+                variants = upstream_search_query_variants(query)
                 requests = [("public", variant) for variant in variants] + [("source", variant) for variant in variants]
 
                 def fetch_search_packet(request):
