@@ -16,6 +16,7 @@ spec = importlib.util.spec_from_file_location("swfipn_static_gateway", module_pa
 gateway = importlib.util.module_from_spec(spec)
 assert spec and spec.loader
 spec.loader.exec_module(gateway)
+gateway.PUBLIC_SEARCH_PRIMARY_CACHE_TTL_SECONDS = 2
 
 os.environ["SWFIPN_AUTH_USE_KEYCHAIN"] = "0"
 counter_lock = threading.Lock()
@@ -29,14 +30,23 @@ class MockBackendHandler(BaseHTTPRequestHandler):
         lane = "public" if parsed.path == "/api/v1/public/search" else "source"
         with counter_lock:
             upstream_counts[lane] += 1
-        time.sleep(0.2)
+        time.sleep(0.1 if lane == "public" else 0.8)
+        is_adia = "abu dhabi" in query.casefold()
         record = {
-            "name": "Hong Kong Investment Corporation",
-            "slug": "hong-kong-investment-corporation",
+            "name": "Abu Dhabi Investment Authority" if is_adia else "Hong Kong Investment Corporation",
+            "slug": "abu-dhabi-investment-authority" if is_adia else "hong-kong-investment-corporation",
             "type": "Sovereign Wealth Fund",
-            "country": "Hong Kong",
-            "source_url": "https://www.swfi.com/v1/entities/63502488d68aa29d9a0da8a5",
+            "country": "United Arab Emirates" if is_adia else "Hong Kong",
+            "source_url": "https://www.swfi.com/v1/entities/598cdaa50124e9fd2d05ae3d" if is_adia else "https://www.swfi.com/v1/entities/63502488d68aa29d9a0da8a5",
         }
+        if lane == "source" and is_adia:
+            body = json.dumps({"status": "unavailable", "fact": False, "data": {"rows": []}}).encode("utf-8")
+            self.send_response(503)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         data = {"results": [record], "query": query}
         if lane == "source":
             data["rows"] = [record]
@@ -51,10 +61,16 @@ class MockBackendHandler(BaseHTTPRequestHandler):
         return
 
 
-def request(origin):
-    target = f"{origin}/api/v1/public/search?q=Hong%20Kong%20Investment%20Corporation&limit=25"
+def request(origin, query="Hong Kong Investment Corporation"):
+    target = f"{origin}/api/v1/public/search?{urllib.parse.urlencode({'q': query, 'limit': 25})}"
+    started = time.monotonic()
     with urllib.request.urlopen(target, timeout=10) as response:
-        return response.headers.get("X-SWFIPN-Proxy-Cache"), json.loads(response.read())
+        return (
+            response.headers.get("X-SWFIPN-Proxy-Cache"),
+            json.loads(response.read()),
+            time.monotonic() - started,
+            response.headers.get("Cache-Control"),
+        )
 
 
 mock = ThreadingHTTPServer(("127.0.0.1", 0), MockBackendHandler)
@@ -77,23 +93,68 @@ try:
     with ThreadPoolExecutor(max_workers=10) as executor:
         responses = list(executor.map(lambda _index: request(origin), range(10)))
     counts_after_cold = dict(upstream_counts)
-    warm_state, warm_payload = request(origin)
+    deadline = time.monotonic() + 3
+    warm_state = ""
+    warm_payload = {}
+    while time.monotonic() < deadline:
+        warm_state, warm_payload, _warm_seconds, warm_cache_control = request(origin)
+        if warm_state == "HIT":
+            break
+        time.sleep(0.05)
+    counts_after_exact = dict(upstream_counts)
+    fuzzy_state, fuzzy_payload, fuzzy_seconds, _fuzzy_cache_control = request(origin, "Hong Kong Investment")
+    gateway.PUBLIC_SEARCH_PRIMARY_CACHE_TTL_SECONDS = 0.2
+    request(origin, "Abu Dhabi Investment Authority")
+    time.sleep(0.85)
+    partial_state, partial_payload, _partial_seconds, partial_cache_control = request(origin, "Abu Dhabi Investment Authority")
+    counts_after_partial = dict(upstream_counts)
+    time.sleep(0.5)
+    retried_state, _retried_payload, _retried_seconds, retried_cache_control = request(origin, "Abu Dhabi Investment Authority")
+    time.sleep(0.1)
     checks = {
-        "all_requests_source_backed": all(payload.get("fact") is True for _, payload in responses),
+        "all_requests_source_backed": all(payload.get("fact") is True for _, payload, _seconds, _cache_control in responses),
         "all_requests_canonical": all(
             payload.get("data", {}).get("results", [{}])[0].get("name") == "Hong Kong Investment Corporation"
-            for _, payload in responses
+            for _, payload, _seconds, _cache_control in responses
         ),
         "single_cold_fanout": counts_after_cold == {"public": 1, "source": 1},
-        "coalesced_waiters_observed": any(state == "COALESCED" for state, _ in responses),
+        "primary_response_precedes_enrichment": max(seconds for _state, _payload, seconds, _cache_control in responses) < 0.7,
+        "pending_state_is_explicit": sorted(state for state, _payload, _seconds, _cache_control in responses)
+        == ["MISS_PRIMARY", *(["PRIMARY_PENDING"] * 9)],
+        "pending_responses_are_not_shared_cached": all(
+            cache_control == "no-store" for _state, _payload, _seconds, cache_control in responses
+        ),
+        "pending_payload_is_not_complete": all(
+            payload.get("data", {}).get("enrichment") == "pending"
+            and payload.get("data", {}).get("evidence_lanes") == {"public": True, "source_entity": False}
+            for _state, payload, _seconds, _cache_control in responses
+        ),
         "warm_request_is_hit": warm_state == "HIT",
-        "warm_request_avoids_upstream": upstream_counts == counts_after_cold,
+        "complete_response_is_shared_cacheable": str(warm_cache_control).startswith("public,"),
+        "warm_request_avoids_upstream": counts_after_exact == counts_after_cold,
         "warm_payload_source_backed": warm_payload.get("fact") is True,
+        "warm_payload_is_fully_enriched": warm_payload.get("data", {}).get("enrichment") == "complete"
+        and warm_payload.get("data", {}).get("evidence_lanes") == {"public": True, "source_entity": True},
+        "fuzzy_query_waits_for_full_enrichment": fuzzy_state == "MISS"
+        and fuzzy_seconds >= 0.7
+        and fuzzy_payload.get("data", {}).get("enrichment") == "complete",
+        "fuzzy_query_uses_one_fanout": counts_after_partial == {"public": 3, "source": 3},
+        "failed_enrichment_is_explicitly_partial": partial_state == "PARTIAL"
+        and partial_cache_control == "no-store"
+        and partial_payload.get("data", {}).get("enrichment") == "partial"
+        and partial_payload.get("data", {}).get("evidence_lanes") == {"public": True, "source_entity": False},
+        "partial_result_retries_after_short_ttl": retried_state == "MISS_PRIMARY"
+        and retried_cache_control == "no-store"
+        and upstream_counts == {"public": 3, "source": 4},
     }
     receipt = {
         "status": "pass" if all(checks.values()) else "fail",
         "checks": checks,
-        "cold_cache_states": sorted(state for state, _ in responses),
+        "cold_cache_states": sorted(state for state, _payload, _seconds, _cache_control in responses),
+        "cold_max_seconds": round(max(seconds for _state, _payload, seconds, _cache_control in responses), 3),
+        "fuzzy_seconds": round(fuzzy_seconds, 3),
+        "partial_state": partial_state,
+        "retried_state": retried_state,
         "upstream_counts": upstream_counts,
     }
     print(json.dumps(receipt, indent=2))

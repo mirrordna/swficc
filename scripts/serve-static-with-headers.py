@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from http import HTTPStatus
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
-from threading import BoundedSemaphore, Lock, RLock
+from threading import BoundedSemaphore, Lock, RLock, Thread
 
 
 SECURITY_HEADERS = {
@@ -48,6 +48,7 @@ SESSION_COOKIE_NAME = "__swfipn_session"
 SESSION_TTL_SECONDS = int(os.environ.get("SWFIPN_AUTH_SESSION_TTL_SECONDS", str(12 * 60 * 60)))
 PUBLIC_JSON_PATH_PREFIXES = ("/api/", "/v1/")
 PUBLIC_SEARCH_CACHE_TTL_SECONDS = int(os.environ.get("SWFIPN_PUBLIC_SEARCH_CACHE_TTL_SECONDS", "300"))
+PUBLIC_SEARCH_PRIMARY_CACHE_TTL_SECONDS = float(os.environ.get("SWFIPN_PUBLIC_SEARCH_PRIMARY_CACHE_TTL_SECONDS", "10"))
 PUBLIC_SEARCH_CACHE_MAX_ENTRIES = int(os.environ.get("SWFIPN_PUBLIC_SEARCH_CACHE_MAX_ENTRIES", "512"))
 PUBLIC_SEARCH_MAX_UPSTREAM_REQUESTS = int(os.environ.get("SWFIPN_PUBLIC_SEARCH_MAX_UPSTREAM_REQUESTS", "8"))
 PUBLIC_SEARCH_QUEUE_WAIT_SECONDS = float(os.environ.get("SWFIPN_PUBLIC_SEARCH_QUEUE_WAIT_SECONDS", "2"))
@@ -104,7 +105,8 @@ class BoundedTTLCache:
             entry = self._entries.get(key)
             if not entry:
                 return default
-            if time.time() - float(entry.get("stored_at") or 0) > self.ttl_seconds:
+            ttl_seconds = max(0.1, float(entry.get("ttl_seconds") or self.ttl_seconds))
+            if time.time() - float(entry.get("stored_at") or 0) > ttl_seconds:
                 self._entries.pop(key, None)
                 return default
             self._entries.move_to_end(key)
@@ -186,6 +188,18 @@ def is_canonical_search_query(query):
 def upstream_search_query_variants(query):
     clean = str(query or "").strip()
     return [clean] if clean and is_canonical_search_query(clean) else search_query_variants(clean)
+
+
+def has_exact_canonical_search_result(query, rows):
+    expected_names = {search_text(value) for value in search_query_variants(query)}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        name = search_text(row.get("name") or row.get("institution") or "")
+        source_url = row.get("source_url") or row.get("swfi_url") or ""
+        if name in expected_names and is_canonical_swfi_record_url(source_url):
+            return True
+    return False
 
 
 def is_natural_language_intent_query(query):
@@ -1478,15 +1492,15 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
             cached = self.server.public_search_cache.get(cache_key)
             if cached:
                 body = cached["body"]
-                cacheable = True
-                cache_state = "HIT"
+                cacheable = bool(cached.get("cacheable", True))
+                cache_state = str(cached.get("cache_state") or ("HIT" if cacheable else "PRIMARY_PENDING"))
             else:
                 with self.server.public_search_lock(cache_key):
                     cached = self.server.public_search_cache.get(cache_key)
                     if cached:
                         body = cached["body"]
-                        cacheable = True
-                        cache_state = "COALESCED"
+                        cacheable = bool(cached.get("cacheable", True))
+                        cache_state = "COALESCED" if cacheable else str(cached.get("cache_state") or "PRIMARY_PENDING")
                     else:
                         body, cacheable, cache_state = self.build_enhanced_public_search(query, safe_limit, cache_key)
         self.send_response(HTTPStatus.OK)
@@ -1511,31 +1525,96 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
             }, separators=(",", ":")).encode("utf-8")
             return body, False, "BUSY"
 
+        # Acronyms need canonical expansion, but expanding an already exact
+        # institution name back to its acronym adds noisy and slower work.
+        variants = upstream_search_query_variants(query)
+        requests = [("public", variant) for variant in variants] + [("source", variant) for variant in variants]
+        executor = ThreadPoolExecutor(max_workers=min(6, len(requests)))
+
+        def fetch_search_packet(request):
+            kind, variant = request
+            if kind == "public":
+                return kind, self.public_search_packet(variant, limit=str(safe_limit))
+            return kind, self.source_entity_search_packet(variant, limit=str(safe_limit))
+
+        futures = [(kind, executor.submit(fetch_search_packet, (kind, variant))) for kind, variant in requests]
+        cleanup_deferred = False
         try:
-            search_rows = []
-            upstream_fact = False
-            # Acronyms need canonical expansion, but expanding an already exact
-            # institution name back to its acronym adds noisy and slower work.
-            variants = upstream_search_query_variants(query)
-            requests = [("public", variant) for variant in variants] + [("source", variant) for variant in variants]
+            public_packets = [self.search_future_packet(kind, future) for kind, future in futures if kind == "public"]
+            public_rows = []
+            for _kind, packet in public_packets:
+                public_rows.extend(self.rows_from_public_search_packet(packet))
+            source_futures = [(kind, future) for kind, future in futures if kind == "source"]
+            if has_exact_canonical_search_result(query, public_rows) and any(not future.done() for _kind, future in source_futures):
+                body, _upstream_fact, _complete = self.render_enhanced_public_search(public_packets, query, safe_limit, "pending")
+                job_token = object()
+                self.server.public_search_cache[cache_key] = {
+                    "stored_at": time.time(),
+                    "ttl_seconds": PUBLIC_SEARCH_PRIMARY_CACHE_TTL_SECONDS,
+                    "body": body,
+                    "cacheable": False,
+                    "cache_state": "PRIMARY_PENDING",
+                    "job_token": job_token,
+                }
+                enrichment_thread = Thread(
+                    target=self.finish_enhanced_public_search,
+                    args=(executor, futures, query, safe_limit, cache_key, job_token),
+                    daemon=True,
+                    name="swfipn-search-enrichment",
+                )
+                cleanup_deferred = True
+                try:
+                    enrichment_thread.start()
+                except Exception:
+                    cleanup_deferred = False
+                    raise
+                return body, False, "MISS_PRIMARY"
 
-            def fetch_search_packet(request):
-                kind, variant = request
-                if kind == "public":
-                    return kind, self.public_search_packet(variant, limit=str(safe_limit))
-                return kind, self.source_entity_search_packet(variant, limit=str(safe_limit))
-
-            with ThreadPoolExecutor(max_workers=min(6, len(requests))) as executor:
-                packets = list(executor.map(fetch_search_packet, requests))
+            packets = [self.search_future_packet(kind, future) for kind, future in futures]
+            body, upstream_fact, complete = self.render_enhanced_public_search(packets, query, safe_limit, "complete")
+            if upstream_fact:
+                self.cache_enhanced_public_search(cache_key, body, complete)
+            return body, upstream_fact and complete, "MISS" if complete else "MISS_PARTIAL"
         finally:
+            if not cleanup_deferred:
+                executor.shutdown(wait=False, cancel_futures=True)
+                self.server.public_search_upstream_slots.release()
+
+    def search_future_packet(self, kind, future):
+        try:
+            return future.result()
+        except Exception:
+            key = "results" if kind == "public" else "rows"
+            return kind, {"status": "blocked", "fact": False, "data": {key: []}}
+
+    def finish_enhanced_public_search(self, executor, futures, query, safe_limit, cache_key, job_token):
+        try:
+            packets = [self.search_future_packet(kind, future) for kind, future in futures]
+            body, upstream_fact, complete = self.render_enhanced_public_search(packets, query, safe_limit, "complete")
+            if upstream_fact and self.enrichment_job_is_current(cache_key, job_token):
+                self.cache_enhanced_public_search(cache_key, body, complete)
+        finally:
+            executor.shutdown(wait=False)
             self.server.public_search_upstream_slots.release()
 
+    def enrichment_job_is_current(self, cache_key, job_token):
+        current = self.server.public_search_cache.get(cache_key)
+        return current is None or current.get("job_token") is job_token
+
+    def render_enhanced_public_search(self, packets, query, safe_limit, enrichment):
+        search_rows = []
+        upstream_fact = False
+        evidence_lanes = {"public": False, "source_entity": False}
         for kind, packet in packets:
             upstream_fact = upstream_fact or packet.get("fact") is True
             if kind == "public":
+                evidence_lanes["public"] = evidence_lanes["public"] or packet.get("fact") is True
                 search_rows.extend(self.rows_from_public_search_packet(packet))
             else:
+                evidence_lanes["source_entity"] = evidence_lanes["source_entity"] or packet.get("fact") is True
                 search_rows.extend(self.rows_from_source_data_packet(packet))
+        complete = all(evidence_lanes.values())
+        effective_enrichment = enrichment if enrichment == "pending" else ("complete" if complete else "partial")
         ranked = rank_search_rows(dedupe_search_rows(search_rows), query)[:safe_limit]
         body = json.dumps({
             "status": "ok" if upstream_fact else "unavailable",
@@ -1546,11 +1625,21 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
                 "query": query,
                 "count": len(ranked),
                 "count_basis": "ranked_public_plus_entity_variants",
+                "enrichment": effective_enrichment,
+                "evidence_lanes": evidence_lanes,
             },
         }, separators=(",", ":")).encode("utf-8")
-        if upstream_fact:
-            self.server.public_search_cache[cache_key] = {"stored_at": time.time(), "body": body}
-        return body, upstream_fact, "MISS"
+        return body, upstream_fact, complete
+
+    def cache_enhanced_public_search(self, cache_key, body, complete):
+        entry = {"stored_at": time.time(), "body": body}
+        if not complete:
+            entry.update({
+                "ttl_seconds": PUBLIC_SEARCH_PRIMARY_CACHE_TTL_SECONDS,
+                "cacheable": False,
+                "cache_state": "PARTIAL",
+            })
+        self.server.public_search_cache[cache_key] = entry
 
     def public_search_cache_key(self, request_method, backend_path, backend_query):
         if request_method != "GET" or backend_path != "/api/v1/public/search":

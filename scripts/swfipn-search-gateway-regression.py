@@ -16,6 +16,13 @@ cache["first"] = {"stored_at": time.time(), "body": b"first"}
 cache["second"] = {"stored_at": time.time(), "body": b"second"}
 cache["third"] = {"stored_at": time.time(), "body": b"third"}
 cache["expired"] = {"stored_at": time.time() - 2, "body": b"expired"}
+short_cache = gateway.BoundedTTLCache(max_entries=1, ttl_seconds=60)
+short_cache["short-lived"] = {"stored_at": time.time() - 0.2, "ttl_seconds": 0.1, "body": b"short-lived"}
+
+canonical_hkic = {
+    "name": "Hong Kong Investment Corporation",
+    "source_url": "https://www.swfi.com/v1/entities/63502488d68aa29d9a0da8a5",
+}
 
 server = object.__new__(gateway.StaticProxyServer)
 server.public_search_locks = [gateway.Lock() for _ in range(64)]
@@ -23,6 +30,7 @@ same_lock_coalesces = server.public_search_lock("same-query") is server.public_s
 
 handler = object.__new__(gateway.StaticProxyHandler)
 handler.server = object.__new__(gateway.StaticProxyServer)
+handler.server.public_search_cache = gateway.BoundedTTLCache(max_entries=2, ttl_seconds=60)
 handler.server.public_search_upstream_slots = gateway.BoundedSemaphore(1)
 handler.server.public_search_upstream_slots.acquire()
 original_wait = gateway.PUBLIC_SEARCH_QUEUE_WAIT_SECONDS
@@ -33,6 +41,14 @@ finally:
     gateway.PUBLIC_SEARCH_QUEUE_WAIT_SECONDS = original_wait
     handler.server.public_search_upstream_slots.release()
 busy_payload = json.loads(busy_body)
+
+current_job_token = object()
+stale_job_token = object()
+handler.server.public_search_cache["generation"] = {
+    "stored_at": time.time(),
+    "body": b"pending",
+    "job_token": current_job_token,
+}
 
 checks = {
     "acronym_expands_to_canonical": gateway.upstream_search_query_variants("HKIC")
@@ -47,7 +63,19 @@ checks = {
     "cache_evicts_oldest": cache.get("first") is None,
     "cache_keeps_recent": cache.get("third", {}).get("body") == b"third",
     "cache_expires_stale": cache.get("expired") is None,
+    "cache_honors_entry_ttl": short_cache.get("short-lived") is None,
     "identical_queries_share_lock": same_lock_coalesces,
+    "canonical_exact_result_is_fast_path_eligible": gateway.has_exact_canonical_search_result(
+        "HKIC", [canonical_hkic]
+    ),
+    "fuzzy_result_is_not_fast_path_eligible": not gateway.has_exact_canonical_search_result(
+        "Hong Kong Investment", [canonical_hkic]
+    ),
+    "noncanonical_source_is_not_fast_path_eligible": not gateway.has_exact_canonical_search_result(
+        "HKIC", [{**canonical_hkic, "source_url": "https://example.com/entities/hkic"}]
+    ),
+    "current_enrichment_job_can_publish": handler.enrichment_job_is_current("generation", current_job_token),
+    "stale_enrichment_job_cannot_publish": not handler.enrichment_job_is_current("generation", stale_job_token),
     "capacity_exhaustion_fails_closed": busy_state == "BUSY"
     and busy_cacheable is False
     and busy_payload.get("fact") is False
