@@ -13,7 +13,8 @@ const receiptFiles = {
   search: "swfipn-canonical-search-stability-gate-latest.json",
   visualization: "swfipn-section-visualization-brd-gate-latest.json",
   numeric: "swfipn-numeric-truth-adversarial-latest.json",
-  parity: "swfipn-record-level-parity-gate-latest.json",
+  paritySample: "swfipn-record-level-parity-gate-latest.json",
+  parityFull: "swfipn-record-field-parity-full-latest.json",
   stakeholder: "swfipn-july31-stakeholder-acceptance-latest.json",
 };
 
@@ -49,7 +50,7 @@ function normalizedSourceOrigin(value) {
 function evaluate({ mode, receipts, identity, expectedRelease, sourceOrigin, stakeholderApprovalSha, now = Date.now() }) {
   const checks = [];
   const add = (id, ok, detail = null) => checks.push({ id, status: ok ? "PASS" : "BLOCKED", detail });
-  const { search, visualization, numeric, parity, stakeholder } = receipts;
+  const { search, visualization, numeric, paritySample, parityFull, stakeholder } = receipts;
   const acceptanceIdentity = mode === "production" ? expectedRelease : identity;
 
   add("search_receipt_current_pass", search?.status === "pass" && fresh(search, now), search?.status || "missing");
@@ -63,12 +64,27 @@ function evaluate({ mode, receipts, identity, expectedRelease, sourceOrigin, sta
   } : "missing");
   add("visualization_receipt_current_pass", visualization?.status === "pass" && fresh(visualization, now), visualization?.status || "missing");
   add("numeric_truth_promotion_eligible", numeric?.status === "pass" && numeric?.promotion_eligible === true && fresh(numeric, now), numeric?.source_truth_verdict || numeric?.status || "missing");
-  add("fresh_full_mongo_parity", parity?.status === "pass" && /Mongo parity/i.test(String(parity?.scope || "")) && fresh(parity, now), parity?.status || "missing");
+  add("fresh_sampled_mongo_parity", paritySample?.status === "pass"
+    && /Mongo parity/i.test(String(paritySample?.scope || ""))
+    && fresh(paritySample, now), paritySample?.status || "missing");
+  const fullParityComplete = Number(parityFull?.totals?.count) > 0
+    && Number(parityFull?.totals?.checked) === Number(parityFull?.totals?.count)
+    && Number(parityFull?.totals?.failed) === 0;
+  add("fresh_full_mongo_parity", parityFull?.status === "pass"
+    && /full required-field parity/i.test(String(parityFull?.scope || ""))
+    && parityFull?.partial_run === false
+    && fullParityComplete
+    && fresh(parityFull, now), parityFull ? {
+    status: parityFull.status,
+    partial_run: parityFull.partial_run,
+    totals: parityFull.totals || null,
+  } : "missing");
   for (const [id, receipt, receiptOrigin] of [
     ["search", search, search?.source_backend_origin],
     ["visualization", visualization, visualization?.source_backend_origin],
     ["numeric", numeric, numeric?.origin],
-    ["parity", parity, parity?.backend_origin],
+    ["parity_sample", paritySample, paritySample?.backend_origin],
+    ["parity_full", parityFull, parityFull?.backend_origin],
   ]) {
     const normalizedReceiptOrigin = normalizedSourceOrigin(receiptOrigin);
     add(`${id}_source_origin_matches`, Boolean(receipt)
@@ -121,7 +137,8 @@ function selfTest() {
     search: { status: "pass", generated_at, target_mode: "local_candidate", source_backend_origin: sourceOrigin, candidate_identity: candidateIdentity, required_cold_start_samples: 2, passed_cold_start_samples: 2, identity_consistent: true },
     visualization: { status: "pass", generated_at, target_mode: "local_candidate", source_backend_origin: sourceOrigin, candidate_identity: candidateIdentity },
     numeric: { status: "pass", generated_at, origin: sourceOrigin, promotion_eligible: true, source_truth_verdict: "MATCH" },
-    parity: { status: "pass", generated_at, backend_origin: sourceOrigin, scope: "record-level live API to Mongo parity by _id" },
+    paritySample: { status: "pass", generated_at, backend_origin: sourceOrigin, scope: "record-level live API to Mongo parity by _id" },
+    parityFull: { status: "pass", generated_at, backend_origin: sourceOrigin, scope: "full required-field parity from SWFIPN source API to Mongo by source id", partial_run: false, totals: { count: 100, checked: 100, failed: 0 } },
     stakeholder: { status: "pass", generated_at, release_git_sha: identity.git_sha, asset_version: identity.asset_version, _receipt_sha256: "b".repeat(64) },
   };
   const production = {
@@ -138,8 +155,11 @@ function selfTest() {
     evaluate({ mode: "production", receipts: production, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).status === "blocked",
     evaluate({ mode: "candidate", receipts: base, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "c".repeat(64), now }).status === "blocked",
     evaluate({ mode: "candidate", receipts: { ...base, numeric: { ...base.numeric, origin: "https://wrong.example" } }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).blockers.includes("numeric_source_origin_matches"),
-    evaluate({ mode: "candidate", receipts: { ...base, parity: { ...base.parity, backend_origin: "https://wrong.example" } }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).blockers.includes("parity_source_origin_matches"),
+    evaluate({ mode: "candidate", receipts: { ...base, paritySample: { ...base.paritySample, backend_origin: "https://wrong.example" } }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).blockers.includes("parity_sample_source_origin_matches"),
     evaluate({ mode: "candidate", receipts: { ...base, search: { ...base.search, passed_cold_start_samples: 1 } }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).blockers.includes("search_cold_start_stability"),
+    evaluate({ mode: "candidate", receipts: { ...base, parityFull: { ...base.parityFull, partial_run: true } }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).blockers.includes("fresh_full_mongo_parity"),
+    evaluate({ mode: "candidate", receipts: { ...base, parityFull: { ...base.parityFull, totals: { count: 100, checked: 99, failed: 0 } } }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).blockers.includes("fresh_full_mongo_parity"),
+    evaluate({ mode: "candidate", receipts: { ...base, parityFull: null }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).blockers.includes("fresh_full_mongo_parity"),
   ];
   const result = { status: cases.every(Boolean) ? "pass" : "fail", checks: cases.length, passed: cases.filter(Boolean).length };
   console.log(JSON.stringify(result, null, 2));
@@ -169,7 +189,7 @@ function main() {
     release_source_origin: sourceOrigin,
     receipt_paths: Object.fromEntries(Object.entries(receiptFiles).map(([id, file]) => [id, `output/${file}`])),
     bad_news: result.blockers,
-    checked_scope: ["July_31_search", "section_visualizations", "numeric_truth", "Mongo_parity", "stakeholder_acceptance", "artifact_identity"],
+    checked_scope: ["July_31_search", "section_visualizations", "numeric_truth", "sampled_Mongo_parity", "full_universe_Mongo_parity", "stakeholder_acceptance", "artifact_identity"],
     unchecked_scope: mode === "production" ? ["global_acceptance_outside_July_31_contract"] : ["deployed_production"],
   };
   fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
