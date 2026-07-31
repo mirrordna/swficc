@@ -74,7 +74,8 @@ async function runQuery(browser, origin, testCase) {
       id: testCase.id,
       pass: body.includes(testCase.entity)
         && body.includes(testCase.news)
-        && testCase.forbidden.every((value) => !body.includes(value)),
+        && testCase.forbidden.every((value) => !body.includes(value))
+        && entityMs <= newsMs,
       entity_ms: entityMs,
       news_ms: newsMs,
       entity: testCase.entity,
@@ -82,6 +83,30 @@ async function runQuery(browser, origin, testCase) {
       forbidden_absent: testCase.forbidden.filter((value) => !body.includes(value)),
       screenshot: screenshotPath,
       screenshot_sha256: fileSha256(screenshotPath),
+    };
+  } finally {
+    await page.close();
+  }
+}
+
+async function runRapidReplacement(browser, origin) {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  try {
+    await page.goto(origin, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.getByRole("button", { name: "Open Global Search" }).click();
+    const input = page.getByRole("textbox", { name: "Search query" });
+    await input.fill("ADIA");
+    await page.waitForTimeout(40);
+    await input.fill("Hong Kong Investment Corporation");
+    await page.getByText("Hong Kong Investment Corporation", { exact: true }).first().waitFor({ timeout: 25_000 });
+    const body = await page.locator("body").innerText();
+    return {
+      id: "rapid_query_replacement",
+      pass: body.includes("Matched institution: Hong Kong Investment Corporation")
+        && !body.includes("Matched institution: Abu Dhabi Investment Authority")
+        && !body.includes("Kapadia")
+        && !body.includes("Nadia"),
+      final_query: await input.inputValue(),
     };
   } finally {
     await page.close();
@@ -119,9 +144,15 @@ async function main() {
     browser = await chromium.launch({ headless: true });
     const firstPaintPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     await firstPaintPage.goto(origin, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await firstPaintPage.locator("[data-dashboard-ready]").waitFor({ state: "attached", timeout: 5_000 });
     const firstPaintBody = await firstPaintPage.locator("body").innerText();
-    const topAumFirstPaint = firstPaintBody.includes("Norway Government Pension Fund Global")
-      && firstPaintBody.includes("TOP-RANKED AUM TOTAL");
+    const firstPaintAssertions = {
+      norway_row: firstPaintBody.includes("Norway Government Pension Fund Global"),
+      aum_total_label: firstPaintBody.includes("TOP-RANKED AUM TOTAL"),
+      aum_date_coverage: /\d+\/\d+ dated/.test(firstPaintBody),
+      refresh_scope_label: firstPaintBody.includes("Dashboard refreshed"),
+    };
+    const topAumFirstPaint = Object.values(firstPaintAssertions).every(Boolean);
     await firstPaintPage.close();
 
     const cases = [
@@ -130,7 +161,8 @@ async function main() {
     ];
     const checks = [];
     for (const testCase of cases) checks.push(await runQuery(browser, origin, testCase));
-    checks.unshift({ id: "top_aum_first_paint", pass: topAumFirstPaint });
+    checks.push(await runRapidReplacement(browser, origin));
+    checks.unshift({ id: "top_aum_first_paint", pass: topAumFirstPaint, assertions: firstPaintAssertions });
     const receipt = {
       schema_version: "swfipn.canonical_search_browser_gate.v1",
       generated_at: new Date().toISOString(),

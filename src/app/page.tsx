@@ -83,6 +83,7 @@ const NEWS_REFRESH_INTERVAL_MS = 5 * 60_000;
 const NEWS_REFRESH_MIN_GAP_MS = 60_000;
 const NEWS_REFRESH_EVENT = "swfi:refresh-news";
 const SEARCH_PREFETCH_CACHE_PREFIX = "swfipn.search.prefetch.v1:";
+const HOME_SNAPSHOT_MAX_AGE_MS = 6 * 60 * 60_000;
 const DASHBOARD_LOAD_ORDER: PacketKey[] = ["top20", "allocators30", "sectorFlows", "transactions30", "rfps", "mandates", "metrics", "institutionTypes", "allocators90", "entities", "people", "news"];
 const SEARCH_CATEGORY_LABELS = ["All", "Entities", "RFPs & Opportunities", "Transactions", "News & Articles", "People"] as const;
 const insightNav = [
@@ -135,7 +136,18 @@ function storeRenderedSearchPrefetch(query: string, groups: BrdSearchGroup[]): v
     window.sessionStorage.setItem(searchPrefetchCacheKey(query), JSON.stringify({
       query: query.trim(),
       stored_at: Date.now(),
-      packet: { status: "ok", fact: true, data: { results } },
+      packet: {
+        status: "preview",
+        fact: false,
+        prefetch_only: true,
+        result_qualifier: "derived_render_prefetch",
+        provenance: {
+          source: "source_backed_rendered_rows",
+          query: query.trim(),
+          authority: "non_authoritative_navigation_preview",
+        },
+        data: { results },
+      },
     }));
   } catch {
     // Session storage is an optimization only; the results page still fetches live.
@@ -162,7 +174,10 @@ export default function DashboardPage() {
   const [searchPeoplePackets, setSearchPeoplePackets] = useState<Packet[]>([]);
   const [searchNewsPackets, setSearchNewsPackets] = useState<Packet[]>([]);
   const [searchIntentPackets, setSearchIntentPackets] = useState<Packet[]>([]);
-  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchCoreLoading, setSearchCoreLoading] = useState(false);
+  const [searchNewsLoading, setSearchNewsLoading] = useState(false);
+  const [searchTransactionLoading, setSearchTransactionLoading] = useState(false);
+  const [searchPeopleLoading, setSearchPeopleLoading] = useState(false);
   const [searchIntentLoading, setSearchIntentLoading] = useState(false);
   const [activeSearchIndex, setActiveSearchIndex] = useState(0);
   const [newsTab, setNewsTab] = useState<"latest" | "referenced" | "topics">("latest");
@@ -171,6 +186,7 @@ export default function DashboardPage() {
   const [expandedPanel, setExpandedPanel] = useState("");
   const [clientHydrated, setClientHydrated] = useState(false);
   const visualControls = useMemo<DashboardTableControls>(() => ({ rowLimit: 5, sortColumn: 0, sortDir: "asc" }), []);
+  const searchLoading = searchCoreLoading || searchNewsLoading || searchTransactionLoading || searchPeopleLoading;
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -380,7 +396,8 @@ export default function DashboardPage() {
         setSearchPacket(undefined);
         setSearchEntityPackets([]);
         setSearchNewsPackets([]);
-        setSearchLoading(false);
+        setSearchCoreLoading(false);
+        setSearchNewsLoading(false);
       }, 0);
       return () => window.clearTimeout(resetTimer);
     }
@@ -389,10 +406,12 @@ export default function DashboardPage() {
       if (smartSearchIntentForQuery(clean)) {
         setSearchPacket(undefined);
         setSearchEntityPackets([]);
-        setSearchLoading(false);
+        setSearchCoreLoading(false);
+        setSearchNewsLoading(false);
         return;
       }
-      setSearchLoading(true);
+      setSearchCoreLoading(true);
+      setSearchNewsLoading(true);
       setSearchEntityPackets([]);
       setSearchNewsPackets([]);
       const queryVariants = businessSearchQueryVariants(clean);
@@ -405,6 +424,7 @@ export default function DashboardPage() {
         if (controller.signal.aborted) return;
         setSearchPacket(packet);
         if (!isFact(packet)) return;
+        setSearchCoreLoading(false);
         try {
           window.sessionStorage.setItem(searchPrefetchCacheKey(clean), JSON.stringify({
             query: clean,
@@ -430,11 +450,13 @@ export default function DashboardPage() {
         const packet = await request;
         if (controller.signal.aborted || !isFact(packet)) return;
         setSearchEntityPackets((current) => [...current, packet]);
+        setSearchCoreLoading(false);
       })).then(() => {
-        if (controller.signal.aborted) return;
+        if (!controller.signal.aborted) setSearchCoreLoading(false);
       }).catch(() => {
         if (controller.signal.aborted) return;
         setSearchEntityPackets([]);
+        setSearchCoreLoading(false);
       });
       const newsSearch = Promise.allSettled(queryVariants.map((variant) => (
         fetchPacket(`/api/source-intelligence/news/v1?q=${encodeURIComponent(variant)}&limit=25`, 8_000, {
@@ -446,10 +468,10 @@ export default function DashboardPage() {
         })
       ))).catch(() => {
         if (!controller.signal.aborted) setSearchNewsPackets([]);
+      }).finally(() => {
+        if (!controller.signal.aborted) setSearchNewsLoading(false);
       });
-      void Promise.allSettled([publicSearch, entitySearch, newsSearch]).then(() => {
-        if (!controller.signal.aborted) setSearchLoading(false);
-      });
+      void Promise.allSettled([publicSearch, entitySearch, newsSearch]);
     }, 120);
     return () => {
       window.clearTimeout(timer);
@@ -506,8 +528,10 @@ export default function DashboardPage() {
     const timer = window.setTimeout(() => {
       if (!names.length) {
         setSearchTransactionPacket(undefined);
+        setSearchTransactionLoading(false);
         return;
       }
+      setSearchTransactionLoading(true);
       // Fetch the candidates' transactions in PARALLEL (alias target first, cache-first),
       // then use the first candidate in order that returns rows. The alias target is
       // resolvable from the synonym map without waiting for the slow cold entity search,
@@ -517,6 +541,8 @@ export default function DashboardPage() {
           if (controller.signal.aborted) return;
           const hit = packets.find((packet) => packet && isFact(packet) && (rows(packet, "results").length || rows(packet).length));
           setSearchTransactionPacket(hit || undefined);
+        }).finally(() => {
+          if (!controller.signal.aborted) setSearchTransactionLoading(false);
         });
     }, names.length ? 120 : 0);
     return () => {
@@ -532,16 +558,22 @@ export default function DashboardPage() {
     if (!searchOpen) return;
     const clean = searchQuery.trim();
     if (!isTextQueryReady(clean) || smartSearchIntentForQuery(clean)) {
-      const resetTimer = window.setTimeout(() => setSearchPeoplePackets([]), 0);
+      const resetTimer = window.setTimeout(() => {
+        setSearchPeoplePackets([]);
+        setSearchPeopleLoading(false);
+      }, 0);
       return () => window.clearTimeout(resetTimer);
     }
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       const canonicalInstitution = canonicalSearchName(clean);
       const variants = canonicalInstitution ? [canonicalInstitution] : businessSearchQueryVariants(clean);
+      setSearchPeopleLoading(true);
       void Promise.all(variants.map((variant) => fetchPeopleSearch(variant, controller.signal))).then((packets) => {
         if (controller.signal.aborted) return;
         setSearchPeoplePackets(packets.filter((packet): packet is Packet => Boolean(packet && isFact(packet))));
+      }).finally(() => {
+        if (!controller.signal.aborted) setSearchPeopleLoading(false);
       });
     }, 120);
     return () => {
@@ -603,7 +635,10 @@ export default function DashboardPage() {
           onQueryChange={(nextQuery) => {
             const ready = isTextQueryReady(nextQuery);
             const hasIntent = ready && Boolean(smartSearchIntentForQuery(nextQuery));
-            setSearchLoading(ready && !hasIntent);
+            setSearchCoreLoading(ready && !hasIntent);
+            setSearchNewsLoading(ready && !hasIntent);
+            setSearchTransactionLoading(ready && !hasIntent);
+            setSearchPeopleLoading(ready && !hasIntent);
             setSearchIntentLoading(hasIntent);
             setSearchQuery(nextQuery);
           }}
@@ -611,6 +646,12 @@ export default function DashboardPage() {
           onClose={() => setSearchOpen(false)}
           flatItems={searchItems}
           loading={searchLoading || searchIntentLoading}
+          loadingCategories={{
+            Entities: searchCoreLoading,
+            Transactions: searchTransactionLoading,
+            "News & Articles": searchNewsLoading,
+            People: searchPeopleLoading,
+          }}
         />
       ) : null}
     </div>
@@ -734,7 +775,7 @@ function BrdTopNavigation({ onSearchOpen, dataAsOfLabel, displayName }: { onSear
               </DashboardLink>
             ))}
           </nav>
-          <div className="hidden text-right text-[11px] leading-tight text-white/82 2xl:block">
+          <div className="hidden text-right text-[11px] leading-tight text-white/82 xl:block">
             <div className="font-extrabold text-white">{currentDateLabel}</div>
             <div>{dataAsOfLabel}</div>
           </div>
@@ -1130,6 +1171,7 @@ function BrdSearchModal({
   activeIndex,
   flatItems,
   loading,
+  loadingCategories,
   onQueryChange,
   onActiveIndexChange,
   onClose,
@@ -1139,6 +1181,7 @@ function BrdSearchModal({
   activeIndex: number;
   flatItems: BrdSearchItem[];
   loading: boolean;
+  loadingCategories: Partial<Record<SearchCategoryLabel, boolean>>;
   onQueryChange: (query: string) => void;
   onActiveIndexChange: (index: number) => void;
   onClose: () => void;
@@ -1253,7 +1296,7 @@ function BrdSearchModal({
                   );
                 }) : (
                   <div className="px-3 py-2 text-[12px] text-[#687385]" aria-live="polite">
-                    {loading && queryReady ? "Searching this category…" : emptySearchCategoryMessage(group.label)}
+                    {loadingCategories[group.label as SearchCategoryLabel] && queryReady ? "Searching this category…" : emptySearchCategoryMessage(group.label)}
                   </div>
                 )}
               </div>
@@ -1774,7 +1817,7 @@ function brdNewestRows(
 ): { headers: string[]; rows: Cell[][] } {
   if (tab === "transactions") {
     return {
-      headers: ["Name", "Buyer Entity", "Amount (USD)", "Date"],
+      headers: ["Name", "Buyer Entity", "Disclosed Amount", "Date"],
       rows: transactionRows.map((row) => [
         dealCell(row),
         buyerCell(row),
@@ -1810,12 +1853,17 @@ function brdNewestRows(
 }
 
 function brdCompassTopRows(rfpRows: Record<string, unknown>[]): Cell[][] {
-  const buckets = new Map<string, { amount: number; count: number }>();
+  const buckets = new Map<string, { amount: number; count: number; currencies: Set<string> }>();
   for (const row of rfpRows) {
     const label = brdText(row.investment_type || row.strategy || row.asset_class_or_strategy || row.type, "Not disclosed");
-    const current = buckets.get(label) || { amount: 0, count: 0 };
+    const current = buckets.get(label) || { amount: 0, count: 0, currencies: new Set<string>() };
     current.count += 1;
-    current.amount += numericSortValue(cleanMoney(row.amount_display || row.capital_display || row.amount)) || 0;
+    const amount = numericSortValue(cleanMoney(row.amount_display || row.capital_display || row.amount)) || 0;
+    const currency = disclosedCurrency(row);
+    if (amount && currency) {
+      current.amount += amount;
+      current.currencies.add(currency);
+    }
     buckets.set(label, current);
   }
   return [...buckets.entries()]
@@ -1823,7 +1871,9 @@ function brdCompassTopRows(rfpRows: Record<string, unknown>[]): Cell[][] {
     .slice(0, 10)
     .map(([label, bucket]) => [
       { label, href: `/mandates/?filter=${encodeURIComponent(label)}` },
-      bucket.amount ? compactMoney(bucket.amount) : "Not disclosed",
+      bucket.amount && bucket.currencies.size === 1
+        ? compactCurrency(bucket.amount, [...bucket.currencies][0])
+        : "Not disclosed",
       bucket.count.toLocaleString("en-US"),
     ]);
 }
@@ -2040,7 +2090,7 @@ function ConceptKpiCard({ label, value, note, href, series, color, statusLabel =
         <MiniSparkline series={series} color={color} large />
       </div>
       <div className="mt-2 flex min-h-[14px] items-center justify-between gap-2 text-[10.5px]">
-        {statusLabel ? <span className="shrink-0 font-bold text-[#1A9A68]">{statusLabel}</span> : null}
+        {statusLabel ? <span className="shrink-0 font-bold text-[#A45B00]">{statusLabel}</span> : null}
         <span className="min-w-0 truncate text-[#7B8996]">{note}</span>
       </div>
       {sourceLabel ? <span hidden data-source-label={sourceLabel} /> : null}
@@ -2080,7 +2130,7 @@ function ExpandablePanel({ id, title, href, expanded, onToggle, children, detail
 
 function CapitalByCountry({ topPacket, topRows, sectorRows, flows = [], sourcesPending = false }: { topPacket?: Packet; topRows: Record<string, unknown>[]; sectorRows: Record<string, unknown>[]; flows?: WorldFlowPair[]; sourcesPending?: boolean }) {
   const totalAum = totalAumValue(topPacket, topRows);
-  const sectorCapital = sumNumbers(sectorRows.map(sectorValue));
+  const sectorCapital = sumNumbers(sectorRows.map(sectorCapitalValue));
   // Ranked by institution count (always known, one unit) — never by a bar
   // scale that mixes AUM currencies with row counts. Currency-backed AUM
   // shows as a text value per row.
@@ -2088,14 +2138,17 @@ function CapitalByCountry({ topPacket, topRows, sectorRows, flows = [], sourcesP
   const display = nodes.slice(0, 8);
   const maxCount = Math.max(1, ...display.map((node) => node.count));
   const topCountry = display[0];
-  const topCountryShare = topCountry?.aum && topCountry.aumCurrency === "USD" && totalAum ? Math.round((topCountry.aum / totalAum) * 100) : 0;
+  const displayedUsdAum = sumNumbers(nodes.filter((node) => node.aumCurrency === "USD").map((node) => node.aum));
+  const topCountryShare = topCountry?.aum && topCountry.aumCurrency === "USD" && displayedUsdAum
+    ? Math.round((topCountry.aum / displayedUsdAum) * 100)
+    : 0;
   const countries = knownDistinctCount(topRows.map((row) => row.country));
   const mapPending = sourcesPending && display.length === 0;
   const stats = [
     { label: "Countries", value: countries ? compactNumber(countries) : "Not disclosed", href: "/profiles", note: "Profile locations" },
     { label: "Profiles", value: topRows.length ? compactNumber(topRows.length) : "Not disclosed", href: "/profiles", note: "Loaded ranking rows" },
     { label: "Top country", value: topCountry ? topCountry.country : "Not disclosed", href: topCountry ? `/profiles/?filter=${encodeURIComponent(topCountry.country)}` : "/profiles", note: topCountryShare ? `${topCountryShare}% of displayed AUM` : "By institutions in loaded rows" },
-    { label: "Ranking total", value: totalAum ? compactNumber(totalAum) : "Not disclosed", href: "/profiles/?filter=Sovereign%20Wealth%20Fund&entity_type=Sovereign%20Wealth%20Fund" },
+    { label: "Universe AUM", value: totalAum ? compactNumber(totalAum) : "Not disclosed", href: "/profiles/?filter=Sovereign%20Wealth%20Fund&entity_type=Sovereign%20Wealth%20Fund", note: "Backend ranked universe" },
   ];
   return (
     <div className="grid gap-3">
@@ -2383,9 +2436,10 @@ function AiInsightsPanel({ topInvestors, marketRows, fundraisingRows, newsRows, 
   sectorRows: Record<string, unknown>[];
 }) {
   const curiosityRows = capitalCuriosityRows({ sectorRows, marketRows, fundraisingRows, newsRows }).slice(0, 3);
+  const largestUsdDeal = largestUsdDeals(marketRows, 1)[0];
   const insights = [
     { label: "Latest allocator activity", row: topInvestors[0], href: "/allocators?days=30", detail: topInvestors[0] ? `${brdText(topInvestors[0].name)} · ${recordDate(topInvestors[0])}` : DASHBOARD_EMPTY },
-    { label: "Largest recent deal", row: marketRows[0], href: "/deals", detail: marketRows[0] ? `${brdText(marketRows[0].title || marketRows[0].name)} · ${cleanMoney(marketRows[0].amount_display || marketRows[0].capital_display || marketRows[0].amount)}` : DASHBOARD_EMPTY },
+    { label: "Largest recent USD deal", row: largestUsdDeal, href: "/deals", detail: largestUsdDeal ? `${brdText(largestUsdDeal.title || largestUsdDeal.name)} · ${compactMoney(usdDealAmount(largestUsdDeal))}` : DASHBOARD_EMPTY },
     { label: "Open mandate deadline", row: fundraisingRows[0], href: "/mandates", detail: fundraisingRows[0] ? `${brdText(fundraisingRows[0].title || fundraisingRows[0].name)} · ${timelineDate(fundraisingRows[0])}` : DASHBOARD_EMPTY },
     { label: "Latest intelligence", row: newsRows[0], href: newsRows[0] ? researchRecordHref(newsRows[0]) : "/intelligence", detail: newsRows[0] ? brdText(newsRows[0].title || newsRows[0].name) : DASHBOARD_EMPTY },
   ];
@@ -2587,7 +2641,7 @@ function ActivityFeedPanel({ marketRows, newsRows, fundraisingRows }: {
 }
 
 function DealIntelligencePanel({ rows: sourceRows, sectorRows }: { rows: Record<string, unknown>[]; sectorRows: Record<string, unknown>[] }) {
-  const topDeals = [...sourceRows].sort((a, b) => amountValue(b) - amountValue(a)).slice(0, 4);
+  const topDeals = largestUsdDeals(sourceRows, 4);
   const topDeal = topDeals[0];
   const topSector = sectorRows[0];
   const gauge = dealGaugePercent(sectorRows);
@@ -2772,10 +2826,10 @@ function unifiedIntelligenceRows({
     });
   }
 
-  const deal = [...marketRows].sort((a, b) => amountValue(b) - amountValue(a))[0];
+  const deal = largestUsdDeals(marketRows, 1)[0];
   if (deal) {
     const source = sourceHref(deal);
-    const amount = amountValue(deal);
+    const amount = usdDealAmount(deal);
     insights.push({
       label: "Deal",
       title: brdText(deal.title || deal.name),
@@ -2851,8 +2905,10 @@ function NewsTicker({ rows: sourceRows }: { rows: Record<string, unknown>[] }) {
 
 function dashboardMetricCards(packets: Packets, topAumRows: Record<string, unknown>[], sectorRows: Record<string, unknown>[]) {
   const totalAum = totalAumValue(packets.top20, topAumRows);
+  const aumCoverage = aumEvidenceCoverage(topAumRows);
+  const aumUniverse = numberValue(packetData(packets.top20).total || packetData(packets.top20).source_total_count);
   const activeAllocators = numericSortValue(packetCount(packets.allocators90, "count")) || 0;
-  const sectorCapital = sumNumbers(sectorRows.map(sectorValue));
+  const sectorCapital = sumNumbers(sectorRows.map(sectorCapitalValue));
   const rfps = metricNumber(packets.metrics, "rfps") || packetCountNumber(packets.rfps) || 0;
   const swfs = metricNumber(packets.metrics, "swfs") || 0;
   const research = metricNumber(packets.metrics, "news") || packetCountNumber(packets.news) || 0;
@@ -2865,14 +2921,20 @@ function dashboardMetricCards(packets: Packets, topAumRows: Record<string, unkno
     {
       label: "TOP-RANKED AUM TOTAL",
       value: settled(packets.top20, totalAumDisplay(packets.top20, topAumRows)),
-      note: "Top AUM ranking",
+      note: aumUniverse ? `${aumUniverse.toLocaleString("en-US")} active entities` : "Backend ranked universe",
       href: "/profiles/?filter=Sovereign%20Wealth%20Fund&entity_type=Sovereign%20Wealth%20Fund",
       // Rank-order AUM values are a distribution, not a time series — drawn
       // as a line they read as a downtrend that never happened (minutes F).
       series: [],
       color: "#0A66C2",
-      statusLabel: packets.top20 === undefined ? "" : totalAum ? "" : "Not disclosed",
-      explain: "Assets under management summed across SWFI's top-AUM ranking. Shown only when one declared currency backs the sum — mixed-currency totals are suppressed rather than mislabeled. Click → the ranked institutions.",
+      statusLabel: packets.top20 === undefined
+        ? ""
+        : totalAum && aumCoverage.complete
+          ? ""
+          : totalAum
+            ? `${aumCoverage.dated}/${aumCoverage.disclosed} dated`
+            : "Not disclosed",
+      explain: `Assets under management across the backend ranked universe; the evidence warning describes the ${aumCoverage.disclosed} rows loaded into this dashboard view, not the universe total. ${aumCoverageSummary(aumCoverage)} Mixed-currency totals are suppressed rather than mislabeled. Click → the ranked institutions.`,
     },
     {
       label: "ACTIVE ALLOCATORS",
@@ -3050,14 +3112,14 @@ function PipelineInsightDetail({ transactionRows, rfpRows, sectorRows }: {
   rfpRows: Record<string, unknown>[];
   sectorRows: Record<string, unknown>[];
 }) {
-  const dealRows = [...transactionRows].sort((a, b) => amountValue(b) - amountValue(a)).slice(0, 5);
+  const dealRows = largestUsdDeals(transactionRows, 5);
   const fundraisingRows = [...rfpRows].sort((a, b) => deadlineTime(a) - deadlineTime(b)).slice(0, 5);
   const trendRows = sectorRows.slice(0, 6);
   const maxDeal = Math.max(1, ...dealRows.map(amountValue));
   const maxTrend = Math.max(1, ...trendRows.map(sectorValue));
   return (
     <div className="grid gap-3 xl:grid-cols-3">
-      <VisualPanel title="Largest Recent Deals" source={ENDPOINTS.transactions30} empty={DASHBOARD_EMPTY} hasRows={dealRows.length > 0}>
+      <VisualPanel title="Largest Recent Deals (USD)" source={ENDPOINTS.transactions30} empty={DASHBOARD_EMPTY} hasRows={dealRows.length > 0}>
         <div className="grid gap-2">
           {dealRows.map((row, index) => {
             const value = amountValue(row);
@@ -3350,6 +3412,34 @@ function commonAumCurrency(rowsToUse: Record<string, unknown>[]) {
   return currencies.size === 1 ? [...currencies][0] : "";
 }
 
+type AumEvidenceCoverage = {
+  disclosed: number;
+  dated: number;
+  conflicts: number;
+  complete: boolean;
+};
+
+function aumEvidenceCoverage(rowsToUse: Record<string, unknown>[]): AumEvidenceCoverage {
+  const disclosedRows = rowsToUse.filter((row) => numberValue(row.aum_usd || row.aum || row.assets));
+  const dated = disclosedRows.filter((row) => text(row.aum_date || row.as_of_date, "").trim()).length;
+  const conflicts = disclosedRows.filter((row) => text(row.aum_history_conflict, "").trim()).length;
+  return {
+    disclosed: disclosedRows.length,
+    dated,
+    conflicts,
+    complete: disclosedRows.length > 0 && dated === disclosedRows.length && conflicts === 0,
+  };
+}
+
+function aumCoverageSummary(coverage: AumEvidenceCoverage): string {
+  if (!coverage.disclosed) return "No disclosed AUM rows are currently available."
+  const issues = [
+    coverage.dated < coverage.disclosed ? `${coverage.disclosed - coverage.dated} rows lack an AUM as-of date` : "",
+    coverage.conflicts ? `${coverage.conflicts} rows carry a source-history conflict marker` : "",
+  ].filter(Boolean);
+  return issues.length ? `${issues.join("; ")}.` : `All ${coverage.disclosed} displayed rows carry an AUM as-of date with no source-history conflict marker.`;
+}
+
 function sumNumbers(values: number[]) {
   return values.reduce((total, value) => total + (Number.isFinite(value) ? value : 0), 0);
 }
@@ -3458,13 +3548,16 @@ function shouldReplacePacket(current: Packet | undefined, incoming: Packet) {
 }
 
 function freshHomeSnapshot(): Packets {
-  const today = new Date().toISOString().slice(0, 10);
-  return Object.fromEntries(
-    Object.entries(HOME_PACKET_SNAPSHOT as Partial<Packets>).filter(([, packet]) => {
-      const generatedAt = typeof packet?.generated_at === "string" ? packet.generated_at : "";
-      return generatedAt.startsWith(today);
-    }),
-  ) as Packets;
+  const snapshot = HOME_PACKET_SNAPSHOT as Partial<Packets>;
+  const required = DASHBOARD_LOAD_ORDER.every((key) => {
+    const packet = snapshot[key];
+    const generatedMs = Date.parse(typeof packet?.generated_at === "string" ? packet.generated_at : "");
+    return isFact(packet)
+      && Number.isFinite(generatedMs)
+      && Date.now() - generatedMs >= 0
+      && Date.now() - generatedMs <= HOME_SNAPSHOT_MAX_AGE_MS;
+  });
+  return required ? { ...snapshot } as Packets : {} as Packets;
 }
 
 function isTransportGap(packet: Packet) {
@@ -3503,8 +3596,8 @@ function dataAsOfLabelFor(packet?: Packet) {
     : {};
   const value = text(packet?.generated_at || provenance.fetched_at, "");
   const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) return "Data as of latest SWFI update";
-  return `Data as of ${new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit", year: "numeric" }).format(new Date(parsed))}`;
+  if (!Number.isFinite(parsed)) return "Dashboard refresh time unavailable";
+  return `Dashboard refreshed ${new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit", year: "numeric" }).format(new Date(parsed))}`;
 }
 
 function packetCount(packet: Packet | undefined, key = "rows") {
@@ -3562,9 +3655,30 @@ function amountValue(row: Record<string, unknown>) {
   return numericSortValue(display) ?? 0;
 }
 
-function sectorValue(row: Record<string, unknown>) {
+function usdDealAmount(row: Record<string, unknown>) {
+  return disclosedCurrency(row) === "USD" ? amountValue(row) : 0;
+}
+
+function largestUsdDeals(rowsToUse: Record<string, unknown>[], limit: number) {
+  return rowsToUse
+    .filter((row) => usdDealAmount(row) > 0)
+    .sort((a, b) => usdDealAmount(b) - usdDealAmount(a))
+    .slice(0, limit);
+}
+
+function disclosedCurrency(row: Record<string, unknown>) {
+  const direct = text(row.currency || row.aum_currency || row.amount_currency, "").trim().toUpperCase();
+  if (direct) return direct;
+  return /^\s*(?:US)?\$/i.test(text(row.amount_display || row.capital_display, "")) ? "USD" : "";
+}
+
+function sectorCapitalValue(row: Record<string, unknown>) {
   const capital = cleanMoney(row.capital_display || row.capital_deployed || row.capital);
-  return numericSortValue(capital) ?? numericSortValue(text(row.count, "")) ?? 0;
+  return numericSortValue(capital) ?? 0;
+}
+
+function sectorValue(row: Record<string, unknown>) {
+  return sectorCapitalValue(row) || numericSortValue(text(row.count, "")) || 0;
 }
 
 function deadlineTime(row: Record<string, unknown>) {

@@ -209,7 +209,8 @@
     "feedback:objective:gate": "node scripts/swfipn-feedback-objective-gate.mjs",
     "feedback:objective:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ node scripts/swfipn-feedback-objective-gate.mjs",
     "latest:feedback:gate": "node scripts/swfipn-latest-feedback-forensic-gate.mjs",
-    "latest:feedback:gate:public": "SWFIPN_ORIGIN=https://dashboard.swfi.com/swficc/ node scripts/swfipn-latest-feedback-forensic-gate.mjs"
+    "latest:feedback:gate:public": "SWFIPN_ORIGIN=https://dashboard.swfi.com/swficc/ node scripts/swfipn-latest-feedback-forensic-gate.mjs",
+    "numeric:truth:adversarial": "node scripts/swfipn-numeric-truth-adversarial-gate.mjs"
   },
   "dependencies": {
     "d3-geo": "^3.1.1",

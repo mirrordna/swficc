@@ -12,10 +12,11 @@ const endpoints = {
   allocators30: "/api/allocator-activity/v1?days=30&limit=25&page=1&sort=deal_count&direction=desc",
   allocators90: "/api/allocator-activity/v1?days=90&limit=1&count_only=1",
   rfps: "/api/live-opportunities/v1?limit=25&page=1",
-  transactions30: "/api/recent-transactions/v1?days=30&limit=25&page=1",
+  mandates: "/api/live-mandates/v1?limit=25&page=1",
+  transactions30: "/api/recent-transactions/v1?days=30&limit=50&page=1",
   entities: "/api/source-data/search/v1?collection=entities&limit=25&page=1",
   people: "/api/source-data/search/v1?collection=people&limit=25&page=1",
-  top20: "/v1/swfi/top20?limit=5",
+  top20: "/v1/swfi/top20?limit=25",
   news: "/api/source-intelligence/news/v1?limit=25",
   sectorFlows: "/api/sector-flows/v1?days=365",
 };
@@ -62,7 +63,9 @@ const entries = settledEntries
 const skipped = settledEntries
   .filter((entry) => !entry.packet)
   .map((entry) => ({ key: entry.key, reason: entry.error }));
-if (!entries.length) throw new Error("No fact packets available for home snapshot");
+if (skipped.length) {
+  throw new Error(`Incomplete home snapshot: ${skipped.map((entry) => `${entry.key}=${entry.reason}`).join(", ")}`);
+}
 const snapshot = Object.fromEntries(entries);
 const body = `import type { Packet } from "@/lib/sourcePackets";
 

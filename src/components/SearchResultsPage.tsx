@@ -56,7 +56,10 @@ function cachedPacket(query: string): Packet | null {
     const parsed = JSON.parse(raw) as { query?: string; stored_at?: number; packet?: Packet };
     if (String(parsed.query || "").trim().toLowerCase() !== query.trim().toLowerCase()) return null;
     if (!parsed.stored_at || Date.now() - parsed.stored_at > 60_000) return null;
-    return parsed.packet && isFact(parsed.packet) ? parsed.packet : null;
+    if (!parsed.packet || parsed.packet.prefetch_only !== true || parsed.packet.fact !== false) return null;
+    const previewRows = packetRows(parsed.packet);
+    const sourceBound = previewRows.length > 0 && previewRows.every((row) => sourceHref(row).startsWith("https://www.swfi.com/"));
+    return sourceBound ? parsed.packet : null;
   } catch {
     return null;
   }
@@ -718,7 +721,10 @@ function searchResultDetail(row: CategorizedSearchRow): string {
   const values = category === "transactions"
     ? [
         transactionBuyer(row),
-        meaningfulMoney(row.amount_display || row.capital_display || row.native_amount_display || row.amount || row.capital),
+        meaningfulMoney(
+          row.amount_display || row.capital_display || row.native_amount_display || row.amount || row.capital,
+          row.currency || row.amount_currency,
+        ),
         meaningfulText(row.closed_at || row.activity_date || row.relevant_date || row.announced_at),
         meaningfulText(row.industry || row.sector || row.investment_type),
       ]
@@ -738,7 +744,7 @@ function searchResultDetail(row: CategorizedSearchRow): string {
               Number(row.activity_count || row.deal_count || 0) > 0
                 ? `${Number(row.activity_count || row.deal_count).toLocaleString("en-US")} activities in 90 days`
                 : "",
-              meaningfulMoney(row.aum || row.assets || row.managed_assets),
+              meaningfulMoney(row.aum || row.assets || row.managed_assets, row.aum_currency || row.currency),
             ];
   return values.filter(Boolean).join(" / ") || "Details available on SWFI";
 }
@@ -765,7 +771,18 @@ function meaningfulText(value: unknown): string {
   return /^(not disclosed|unavailable|loading)$/i.test(clean) ? "" : clean;
 }
 
-function meaningfulMoney(value: unknown): string {
+function meaningfulMoney(value: unknown, currencyValue?: unknown): string {
+  const currency = meaningfulText(currencyValue).toUpperCase();
+  const numeric = typeof value === "number" ? value : typeof value === "string" && /^-?[0-9,.]+$/.test(value.trim())
+    ? Number(value.replace(/,/g, ""))
+    : Number.NaN;
+  if (Number.isFinite(numeric)) {
+    if (!currency) return "";
+    const clean = currency === "USD" || currency === "$"
+      ? money(numeric)
+      : `${currency} ${numeric.toLocaleString("en-US")}`;
+    return /^(not disclosed|unavailable)$/i.test(clean) ? "" : clean;
+  }
   const clean = money(value);
   return /^(not disclosed|unavailable)$/i.test(clean) ? "" : clean;
 }
