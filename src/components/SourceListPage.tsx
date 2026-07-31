@@ -145,8 +145,8 @@ const CONFIG: Record<Kind, { title: string; endpoint: string; columns: string[];
 
 function rowCells(kind: Kind, row: Row): Cell[] {
   const href = sourceHref(row);
-  if (kind === "profiles") return [profileCell(row), businessText(row.type), businessText(row.country || row.region), disclosedMoney(row.aum || row.assets), businessText(row.entity_status || (row.defunct === true ? "defunct" : "active"))];
-  if (kind === "comparisons") return [profileCell(row), businessText(row.type || row.entity_type), compactParts([row.country, row.region]), disclosedMoney(row.aum || row.assets), businessText(row.type || row.entity_type), businessText(row.entity_status || (row.defunct === true ? "defunct" : "active"))];
+  if (kind === "profiles") return [profileCell(row), businessText(row.type), businessText(row.country || row.region), disclosedMoney(row.aum || row.assets, row.aum_currency || row.currency), businessText(row.entity_status || (row.defunct === true ? "defunct" : "active"))];
+  if (kind === "comparisons") return [profileCell(row), businessText(row.type || row.entity_type), compactParts([row.country, row.region]), disclosedMoney(row.aum || row.assets, row.aum_currency || row.currency), businessText(row.type || row.entity_type), businessText(row.entity_status || (row.defunct === true ? "defunct" : "active"))];
   if (kind === "allocators") {
     return [
       allocatorProfileCell(row),
@@ -154,9 +154,9 @@ function rowCells(kind: Kind, row: Row): Cell[] {
       text(row.country, NOT_DISCLOSED),
       text(row.region, NOT_DISCLOSED),
       text(row.deal_count || row.activity_count, "0"),
-      disclosedMoney(row.total_deal_value_display || row.total_deal_value),
+      disclosedMoney(row.total_deal_value_display || row.total_deal_value, row.total_deal_value_currency || row.currency),
       text(row.last_transaction_date || row.latest_transaction_date || row.most_recent_activity_date, NOT_DISCLOSED),
-      disclosedMoney(row.aum || row.assets),
+      disclosedMoney(row.aum || row.assets, row.aum_currency || row.currency),
     ];
   }
   if (kind === "people") {
@@ -182,11 +182,11 @@ function rowCells(kind: Kind, row: Row): Cell[] {
       transactionFactCell(row, text(row.buyer_region || row.region)),
       transactionFactCell(row, text(row.sector || row.industry)),
       transactionFactCell(row, text(row.investment_type || row.type)),
-      transactionFactCell(row, disclosedMoney(row.amount_display || row.capital_display || row.amount || row.capital || row.value)),
+      transactionFactCell(row, disclosedMoney(row.amount_display || row.capital_display || row.amount || row.capital || row.value, row.amount_currency || row.currency)),
       transactionFactCell(row, text(row.closed_at || row.announced_at || row.date)),
     ];
   }
-  if (kind === "mandates") return [mandateCell(row), text(row.institution), text(row.strategy || row.asset_class_or_strategy), disclosedMoney(row.amount_display || row.amount), text(row.deadline || row.due_at), citation(href, "/mandates/")];
+  if (kind === "mandates") return [mandateCell(row), text(row.institution), text(row.strategy || row.asset_class_or_strategy), disclosedMoney(row.amount_display || row.amount, row.amount_currency || row.currency), text(row.deadline || row.due_at), citation(href, "/mandates/")];
   if (kind === "research" || kind === "intelligence") {
     const researchHref = researchSourceHref(row);
     const excerpt = text(row.excerpt, "").replace(/\s+/g, " ").trim();
@@ -197,7 +197,7 @@ function rowCells(kind: Kind, row: Row): Cell[] {
       citation(researchHref, "/intelligence/"),
     ];
   }
-  if (kind === "search") return [text(row.title || row.name), linked(text(row.institution || row.name), href, "/search/"), text(row.sector), disclosedMoney(row.amount_display || row.capital_display || row.amount || row.capital || row.value), citation(href, "/search/")];
+  if (kind === "search") return [text(row.title || row.name), linked(text(row.institution || row.name), href, "/search/"), text(row.sector), disclosedMoney(row.amount_display || row.capital_display || row.amount || row.capital || row.value, row.amount_currency || row.currency), citation(href, "/search/")];
   return [];
 }
 
@@ -1267,7 +1267,7 @@ function searchRowsFromPackets(packets: Record<string, Packet>): Cell[][] {
         "Institution",
         linked(text(row.name), href),
         compactParts([row.type, row.country || row.region]),
-        money(row.aum || row.assets),
+        disclosedMoney(row.aum || row.assets, row.aum_currency || row.currency),
         citation(href, "/profiles/"),
       ]);
     });
@@ -1293,7 +1293,7 @@ function searchRowsFromPackets(packets: Record<string, Packet>): Cell[][] {
         "Strategy",
         transactionCell(row),
         text(row.institution),
-        compactParts([row.sector, disclosedMoney(row.amount_display || row.capital_display || row.amount || row.capital || row.value)]),
+        compactParts([row.sector, disclosedMoney(row.amount_display || row.capital_display || row.amount || row.capital || row.value, row.amount_currency || row.currency)]),
         citation(href, "/deals/"),
       ]);
     });
@@ -1366,10 +1366,32 @@ function dealCountLabel(value: unknown): string {
   return `${numeric.toLocaleString("en-US")} ${numeric === 1 ? "deal" : "deals"}`;
 }
 
-function disclosedMoney(value: unknown): string {
-  if (value == null || value === "" || value === 0 || value === "0" || value === "$0") return NOT_DISCLOSED;
-  const display = money(value);
+function disclosedMoney(value: unknown, currencyValue?: unknown): string {
+  if (value == null || value === "") return NOT_DISCLOSED;
+  const raw = text(value, "").trim();
+  const currency = disclosedCurrencyCode(raw, currencyValue);
+  const numeric = typeof value === "number"
+    ? value
+    : /^-?[0-9,.]+$/.test(raw) ? Number(raw.replace(/,/g, "")) : Number.NaN;
+  if (Number.isFinite(numeric)) {
+    if (!currency) return NOT_DISCLOSED;
+    const compact = money(numeric);
+    return currency === "USD" ? compact : `${currency} ${compact.replace(/^\$/, "")}`;
+  }
+  if (!currency) return NOT_DISCLOSED;
+  const display = raw;
   return display === SOURCE_GAP ? NOT_DISCLOSED : display;
+}
+
+function disclosedCurrencyCode(display: string, currencyValue?: unknown): string {
+  const explicit = text(currencyValue, "").trim().toUpperCase();
+  if (explicit) return explicit === "$" ? "USD" : explicit;
+  if (/^\s*(?:US)?\$/i.test(display)) return "USD";
+  if (/^\s*£/.test(display)) return "GBP";
+  if (/^\s*€/.test(display)) return "EUR";
+  if (/^\s*¥/.test(display)) return "JPY";
+  const code = display.match(/^\s*([A-Z]{3})\b/);
+  return code ? code[1] : "";
 }
 
 function sourceHref(row: Row): string | undefined {
@@ -2024,9 +2046,9 @@ function sectionNoun(kind: Kind): string {
 }
 
 function sectionMoneyDisplay(kind: Kind, row: Row): string {
-  if (kind === "transactions" || kind === "deals") return disclosedMoney(row.amount_display || row.amount || row.value);
-  if (kind === "mandates" || kind === "alerts") return disclosedMoney(row.amount_display || row.amount);
-  return disclosedMoney(row.aum || row.assets);
+  if (kind === "transactions" || kind === "deals") return disclosedMoney(row.amount_display || row.amount || row.value, row.amount_currency || row.currency);
+  if (kind === "mandates" || kind === "alerts") return disclosedMoney(row.amount_display || row.amount, row.amount_currency || row.currency);
+  return disclosedMoney(row.aum || row.assets, row.aum_currency || row.currency);
 }
 
 function sectionDateDisplay(stamp: number): string {
@@ -2434,13 +2456,20 @@ function CompassVisualization({ rows: sourceRows, totalRows, incompleteCoverage 
   const investmentTypeRows = bucketRows(sourceRows, (row) => businessText(row.investment_type || row.strategy || row.asset_class_or_strategy || row.type));
   const regionRows = bucketRows(sourceRows, (row) => businessText(row.region || row.country));
   const monthRows = bucketRows(sourceRows, (row) => monthBucket(row.posted_at || row.created_at || row.published_at || row.deadline || row.due_at)).reverse();
-  const disclosedAmounts = sourceRows.map((row) => numericSortValue(disclosedMoney(row.amount_display || row.capital_display || row.amount || row.capital))).filter((value): value is number => typeof value === "number");
-  const totalCapital = disclosedAmounts.reduce((sum, value) => sum + value, 0);
+  const disclosedAmounts = sourceRows.map((row) => {
+    const raw = text(row.amount_display || row.capital_display || row.amount || row.capital, "");
+    const currency = disclosedCurrencyCode(raw, row.amount_currency || row.currency);
+    const value = numericSortValue(disclosedMoney(raw, currency));
+    return value == null || !currency ? null : { currency, value };
+  }).filter((entry): entry is { currency: string; value: number } => entry !== null);
+  const disclosedCurrencies = new Set(disclosedAmounts.map((entry) => entry.currency));
+  const comparableCurrency = disclosedCurrencies.size === 1 ? [...disclosedCurrencies][0] : "";
+  const totalCapital = comparableCurrency ? disclosedAmounts.reduce((sum, entry) => sum + entry.value, 0) : 0;
   const averageTicket = disclosedAmounts.length ? totalCapital / disclosedAmounts.length : 0;
   const summary = [
     [incompleteCoverage ? "Observed RFP Records" : "Total RFP Records", (incompleteCoverage ? sourceRows.length : totalRows).toLocaleString("en-US")],
-    [incompleteCoverage ? "Capital Sought in Loaded Rows" : "Total Capital Sought", totalCapital ? compactMoney(totalCapital) : NOT_DISCLOSED],
-    [incompleteCoverage ? "Average Disclosed Ticket" : "Average Ticket Size", averageTicket ? compactMoney(averageTicket) : NOT_DISCLOSED],
+    [incompleteCoverage ? "Capital Sought in Loaded Rows" : "Total Capital Sought", comparableCurrency ? disclosedMoney(totalCapital, comparableCurrency) : NOT_DISCLOSED],
+    [incompleteCoverage ? "Average Disclosed Ticket" : "Average Ticket Size", comparableCurrency && disclosedAmounts.length ? disclosedMoney(averageTicket, comparableCurrency) : NOT_DISCLOSED],
   ] as const;
   const { focusTerms, toggleFocusTerm, clearFocusTerms } = useFocusTerms();
   const now = useNowOnce();
@@ -2562,19 +2591,6 @@ function bucketRows(sourceRows: Row[], labelFor: (row: Row) => string) {
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
 }
 
-function compactMoney(value: number) {
-  const units: [number, string][] = [
-    [1_000_000_000_000, "T"],
-    [1_000_000_000, "B"],
-    [1_000_000, "M"],
-    [1_000, "K"],
-  ];
-  const unit = units.find(([size]) => Math.abs(value) >= size);
-  if (!unit) return `$${value.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
-  const scaled = value / unit[0];
-  return `$${scaled.toLocaleString("en-US", { maximumFractionDigits: scaled >= 100 ? 0 : 1 })}${unit[1]}`;
-}
-
 function monthBucket(value: unknown) {
   const parsed = Date.parse(text(value, ""));
   if (!Number.isFinite(parsed)) return NOT_DISCLOSED;
@@ -2626,7 +2642,7 @@ function DealEnginePanel() {
     ? rows(packets.ticketSize).map((row) => [
       businessText(row.label || row.band),
       dealCountLabel(row.deals || row.count),
-      disclosedMoney(row.capital_display || row.capital_usd),
+      disclosedMoney(row.capital_display || row.capital_usd, row.capital_currency || (row.capital_usd ? "USD" : row.currency)),
     ])
     : [];
   const frequencyRows = isFact(packets.frequency)
@@ -2646,7 +2662,7 @@ function DealEnginePanel() {
         ],
       },
       dealTransactionCell(row),
-      disclosedMoney(row.amount_display || row.total_amount || row.amount),
+      disclosedMoney(row.amount_display || row.total_amount || row.amount, row.amount_currency || row.currency),
     ])
     : [];
   const latestTransactionDate = (row: Row): string => text(row.activity_date || row.announced_at || row.relevant_date || row.closed_at || row.date, "");
@@ -2662,7 +2678,7 @@ function DealEnginePanel() {
         transactionCell(row),
         entityListCell(row, "buyer"),
         transactionFactCell(row, text(row.industry || row.sector)),
-        transactionFactCell(row, disclosedMoney(row.amount_display || row.capital_display || row.amount || row.capital || row.value)),
+        transactionFactCell(row, disclosedMoney(row.amount_display || row.capital_display || row.amount || row.capital || row.value, row.amount_currency || row.currency)),
         transactionFactCell(row, latestTransactionDate(row) || NOT_DISCLOSED),
       ])
     : [];

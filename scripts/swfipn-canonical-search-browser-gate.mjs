@@ -9,6 +9,8 @@ import path from "node:path";
 const repoRoot = process.cwd();
 const outputDir = path.join(repoRoot, "output");
 const receiptPath = path.join(outputDir, "swfipn-canonical-search-browser-gate-latest.json");
+const entityBudgetMs = 5_000;
+const newsBudgetMs = 8_000;
 
 function loadPlaywright() {
   const marker = path.join(repoRoot, "node_modules", "playwright", "package.json");
@@ -75,9 +77,13 @@ async function runQuery(browser, origin, testCase) {
       pass: body.includes(testCase.entity)
         && body.includes(testCase.news)
         && testCase.forbidden.every((value) => !body.includes(value))
-        && entityMs <= newsMs,
+        && entityMs <= newsMs
+        && entityMs <= entityBudgetMs
+        && newsMs <= newsBudgetMs,
       entity_ms: entityMs,
       news_ms: newsMs,
+      performance_budget_ms: { entity: entityBudgetMs, news: newsBudgetMs },
+      performance_pass: entityMs <= entityBudgetMs && newsMs <= newsBudgetMs,
       entity: testCase.entity,
       news: testCase.news,
       forbidden_absent: testCase.forbidden.filter((value) => !body.includes(value)),

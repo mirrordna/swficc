@@ -29,7 +29,6 @@ const specs = {
         kind: "number",
         live: (row) => liveValue(row, ["assets", "aum"]),
         source: (doc) => sourceNumberValue(doc, ["assets", "managedAssets"]),
-        zeroNullEquivalent: true,
       },
     ],
   },
@@ -57,7 +56,7 @@ const specs = {
       stringField("region", ["region"]),
       stringField("industry", ["industry"]),
       stringField("investment_type", ["investment_type"], ["investmentType"]),
-      numberField("amount", ["amount", "capital", "value"], ["amount"], { zeroNullEquivalent: true }),
+      numberField("amount", ["amount", "capital", "value"], ["amount"]),
       dateField("closed_at", ["closed_at", "activity_date", "relevant_date"], ["closedAt", "announcedAt"]),
       {
         id: "buyer_entity",
@@ -85,7 +84,7 @@ const specs = {
       stringField("country", ["country"]),
       stringField("region", ["region"]),
       stringField("investment_type", ["investment_type", "strategy", "asset_class_or_strategy"], ["investmentType"]),
-      numberField("amount", ["amount", "value"], ["amount"], { zeroNullEquivalent: true }),
+      numberField("amount", ["amount", "value"], ["amount"]),
       dateField("due_at", ["due_at", "deadline", "relevant_date"], ["dueAt"]),
       dateField("posted_at", ["posted_at"], ["postedAt"]),
     ],
@@ -172,13 +171,12 @@ function stringField(id, liveFields, sourceFields = liveFields) {
   };
 }
 
-function numberField(id, liveFields, sourceFields = liveFields, options = {}) {
+function numberField(id, liveFields, sourceFields = liveFields) {
   return {
     id,
     kind: "number",
     live: (row) => liveValue(row, liveFields),
     source: (doc) => sourceValue(doc, sourceFields),
-    ...options,
   };
 }
 
@@ -340,23 +338,26 @@ function scalarDate(value) {
 function scalarNumber(value) {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (value && typeof value === "object" && value.$numberLong) return Number(value.$numberLong);
-  const parsed = Number(String(value ?? "").replace(/[^0-9.-]/g, ""));
+  const clean = String(value ?? "").replace(/[^0-9.-]/g, "");
+  if (!clean) return NaN;
+  const parsed = Number(clean);
   return Number.isFinite(parsed) ? parsed : NaN;
 }
 
 function compareField(field, row, doc) {
   const live = field.live(row);
   const source = field.source(doc);
-  if (field.skipIfDisclosureGap && (isDisclosureGap(live) || isDisclosureGap(source))) {
-    return { field: field.id, status: "skipped", reason: "disclosure_gap", live: text(live), source: text(source) };
+  if (field.skipIfDisclosureGap) {
+    const liveGap = isDisclosureGap(live);
+    const sourceGap = isDisclosureGap(source);
+    if (liveGap && sourceGap) return { field: field.id, status: "skipped", reason: "both_missing", live: text(live), source: text(source) };
+    if (liveGap !== sourceGap) return { field: field.id, status: "mismatch", reason: "one_side_missing", live: text(live), source: text(source) };
   }
   if (field.kind === "number") {
     const liveNum = scalarNumber(live);
     const sourceNum = scalarNumber(source);
-    if (field.zeroNullEquivalent && ((Number.isNaN(liveNum) && sourceNum === 0) || (liveNum === 0 && Number.isNaN(sourceNum)))) {
-      return { field: field.id, status: "allowed_normalization", reason: "zero_null_equivalent", live: text(live), source: text(source) };
-    }
     if (Number.isNaN(liveNum) && Number.isNaN(sourceNum)) return { field: field.id, status: "skipped", reason: "both_missing" };
+    if (Number.isNaN(liveNum) !== Number.isNaN(sourceNum)) return { field: field.id, status: "mismatch", reason: "one_side_missing", live: text(live), source: text(source) };
     if (liveNum === sourceNum) return { field: field.id, status: "match", live: liveNum, source: sourceNum };
     return { field: field.id, status: "mismatch", live: text(live), source: text(source) };
   }
@@ -479,8 +480,8 @@ async function run() {
     live_collections: liveCollections,
     collection_results: collectionResults,
     rules: {
-      zero_null_equivalent: "Allowed for numeric unknown values such as assets/AUM/amount.",
-      disclosure_gap: "Not disclosed / blank values are skipped rather than treated as drift.",
+      missing_zero_distinct: "Missing numeric values and explicit zero are distinct; one-sided absence is a mismatch.",
+      disclosure_gap: "Only bilateral disclosure gaps are skipped; a gap on one side is a mismatch.",
       person_name_variant: "First/middle/last name variants are allowed when one contains the other.",
     },
     failures,
@@ -508,7 +509,24 @@ async function run() {
   if (failures.length) process.exit(1);
 }
 
-run().catch((error) => {
+function selfTest() {
+  const number = { id: "amount", kind: "number", live: (row) => row.live, source: (doc) => doc.source };
+  const string = { id: "country", kind: "string", live: (row) => row.live, source: (doc) => doc.source, skipIfDisclosureGap: true };
+  const checks = [
+    compareField(number, { live: undefined }, { source: 0 }).status === "mismatch",
+    compareField(number, { live: 0 }, { source: undefined }).status === "mismatch",
+    compareField(number, { live: undefined }, { source: undefined }).status === "skipped",
+    compareField(number, { live: 0 }, { source: 0 }).status === "match",
+    compareField(string, { live: "" }, { source: "United States" }).status === "mismatch",
+    compareField(string, { live: "Not disclosed" }, { source: "" }).status === "skipped",
+  ];
+  const receipt = { status: checks.every(Boolean) ? "pass" : "fail", checks: checks.length, passed: checks.filter(Boolean).length };
+  console.log(JSON.stringify(receipt, null, 2));
+  if (receipt.status !== "pass") process.exit(1);
+}
+
+const execution = process.argv.includes("--self-test") ? Promise.resolve(selfTest()) : run();
+execution.catch((error) => {
   fs.mkdirSync(outputDir, { recursive: true });
   fs.writeFileSync(receiptPath, `${JSON.stringify({
     status: "fail",

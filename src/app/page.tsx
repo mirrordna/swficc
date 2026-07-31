@@ -58,7 +58,7 @@ function worldFlowPairs(transactionRows: Record<string, unknown>[]): WorldFlowPa
   return [...pairs.values()].sort((a, b) => b.deals - a.deals);
 }
 import { useDashboardSessionDisplayName } from "@/lib/dashboardAuth";
-import { businessSearchQueryVariants, canonicalSearchName, dedupeSearchRecords, rankSearchRecords, searchRelevanceScore as businessSearchRelevanceScore, type SearchKind } from "@/lib/searchRelevance";
+import { businessSearchQueryVariants, canonicalSearchName, canonicalSearchSourceUrl, dedupeSearchRecords, rankSearchRecords, searchRelevanceScore as businessSearchRelevanceScore, type SearchKind } from "@/lib/searchRelevance";
 import { filterSmartSearchIntentRows, smartSearchIntentForQuery, type SmartSearchIntent } from "@/lib/smartSearchIntent";
 import { isShortTextQuery, isTextQueryReady, MIN_TEXT_QUERY_CHARACTERS } from "@/lib/textQueryPolicy";
 
@@ -1193,6 +1193,7 @@ function BrdSearchModal({
   const queryShort = isShortTextQuery(query);
   const interpretedIntent = queryReady ? smartSearchIntentForQuery(query) : null;
   const canonicalInstitution = queryReady ? canonicalSearchName(query) : "";
+  const canonicalInstitutionSource = queryReady ? canonicalSearchSourceUrl(query) : "";
   const visibleGroups = selectedFilter === "All" ? groups : groups.filter((group) => group.label === selectedFilter);
   const visibleItems = visibleGroups.flatMap((group) => group.items);
   const activeItem = visibleItems[Math.min(activeIndex, Math.max(0, visibleItems.length - 1))];
@@ -1273,7 +1274,12 @@ function BrdSearchModal({
         ) : null}
         {!interpretedIntent && canonicalInstitution ? (
           <div className="border-b border-[#D7E5F2] bg-[#F2F7FB] px-5 py-2 text-[12px] text-[#234968]" data-testid="smart-search-canonical-identity">
-            <span className="font-bold">Matched institution:</span> {canonicalInstitution}. Categories update independently from source-backed SWFI records.
+            <span className="font-bold">Matched institution:</span>{" "}
+            {canonicalInstitutionSource ? (
+              <DataLink href={canonicalInstitutionSource} sourceHref={canonicalInstitutionSource} className="font-bold text-[#0B4A83] underline">
+                {canonicalInstitution}
+              </DataLink>
+            ) : canonicalInstitution}. Categories update independently from source-backed SWFI records.
           </div>
         ) : null}
         <div className="max-h-[56vh] overflow-y-auto px-5 py-4">

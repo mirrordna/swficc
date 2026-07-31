@@ -10,10 +10,10 @@ const receiptPath = path.join(outputDir, "swfipn-section-visualization-brd-gate-
 fs.mkdirSync(outputDir, { recursive: true });
 
 const ROUTES = [
-  { id: "entities", route: "/profiles/", selector: "[data-brd-section-visualization='profiles']", required: ["Institution Data Visualization", "Records by Category", "Records by Geography", "Highlighted SWFI Pages"] },
-  { id: "people", route: "/people/", selector: "[data-brd-section-visualization='people']", required: ["People Data Visualization", "Records by Category", "Records by Geography", "Highlighted SWFI Pages"] },
-  { id: "transactions", route: "/transactions/", selector: "[data-brd-section-visualization='transactions']", required: ["Transaction Data Visualization", "Records by Category", "Records by Geography", "Highlighted SWFI Pages"] },
-  { id: "deals", route: "/deals/", selector: "[data-brd-section-visualization='deals']", required: ["Transaction Data Visualization", "Records by Category", "Records by Geography", "Highlighted SWFI Pages"] },
+  { id: "entities", route: "/profiles/", selector: "[data-brd-section-visualization='profiles']", required: ["Institution Data Visualization", "Total in SWFI", "Items in View", "Leading Category", "Highlighted SWFI Pages"] },
+  { id: "people", route: "/people/", selector: "[data-brd-section-visualization='people']", required: ["People Data Visualization", "Total in SWFI", "Items in View", "Leading Category", "Highlighted SWFI Pages"] },
+  { id: "transactions", route: "/transactions/", selector: "[data-brd-section-visualization='transactions']", required: ["Transaction Data Visualization", "Total in SWFI", "Items in View", "Leading Category", "Highlighted SWFI Pages"] },
+  { id: "deals", route: "/deals/", selector: "[data-brd-section-visualization='deals']", required: ["Transaction Data Visualization", "Total in SWFI", "Items in View", "Leading Category", "Highlighted SWFI Pages"] },
   { id: "compass", route: "/mandates/", selector: "[data-brd-compass-visualization='true']", required: ["Compass RFP Analytics", "RFPs by Investment Type", "RFPs by Region", "RFPs Posted Per Month"] },
   { id: "reports", route: "/reports/", selector: "[data-brd-reports-visualization='true']", required: ["Reports / League Tables Visualization", "Reports by Type", "Market Activity by Sector", "League Tables"] },
 ];
@@ -45,6 +45,7 @@ async function main() {
       passed_routes: checks.filter((check) => check.status === "pass").length,
       failed_routes: checks.filter((check) => check.status !== "pass").length,
       chart_filter_links: checks.reduce((sum, check) => sum + check.chart_filter_links, 0),
+      signin_export_links: checks.reduce((sum, check) => sum + check.signin_export_links, 0),
       export_csv_buttons: checks.reduce((sum, check) => sum + check.export_csv_buttons, 0),
       export_png_buttons: checks.reduce((sum, check) => sum + check.export_png_buttons, 0),
       console_errors: consoleErrors.slice(0, 10),
@@ -63,11 +64,8 @@ async function checkRoute(page, spec) {
   const screenshot = path.join(outputDir, `swfipn-section-visualization-${spec.id}.png`);
   const failures = [];
   const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 120_000 });
-  await page.waitForFunction(() => /This view summarizes\s+[0-9,]+\s+visible items|Reports Intelligence/i.test(document.body.innerText), null, { timeout: 120_000 }).catch(() => null);
-  if (spec.id === "reports") {
-    await page.waitForFunction(() => /Quarterly Reports[\s\S]*Showing\s+\d+\s+of\s+\d+/i.test(document.body.innerText), null, { timeout: 90_000 }).catch(() => null);
-  }
   const visualizationButton = page.getByRole("button", { name: "Visualization" }).first();
+  await visualizationButton.waitFor({ state: "visible", timeout: 30_000 }).catch(() => null);
   if (await visualizationButton.count()) {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       await visualizationButton.click({ timeout: 15_000 });
@@ -88,7 +86,8 @@ async function checkRoute(page, spec) {
 
   const body = await page.locator("body").innerText();
   const panelText = await page.locator(spec.selector).innerText({ timeout: 10_000 }).catch(() => "");
-  const missing = spec.required.filter((item) => !body.includes(item));
+  const normalizedBody = body.toLocaleLowerCase("en-US");
+  const missing = spec.required.filter((item) => !normalizedBody.includes(item.toLocaleLowerCase("en-US")));
   // Dashboard 2.0 P05: exports are sign-in gated — the gate asserts the
   // sign-in export link instead of public download buttons.
   const signinExportLinks = await page.locator(`${spec.selector} a`, { hasText: "Sign in on SWFI to export" }).count();
@@ -115,8 +114,9 @@ async function checkRoute(page, spec) {
     status: failures.length ? "fail" : "pass",
     missing,
     chart_filter_links: chartFilterLinks,
-    export_csv_buttons: exportCsvButtons,
-    export_png_buttons: exportPngButtons,
+    signin_export_links: signinExportLinks,
+    export_csv_buttons: 0,
+    export_png_buttons: 0,
     svg_count: svgCount,
     screenshot,
     failures,

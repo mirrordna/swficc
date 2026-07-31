@@ -47,6 +47,13 @@ const VERIFIED_QUERY_ALIASES: Readonly<Record<string, readonly string[]>> = {
   "family offices": ["Family Office"],
 };
 
+// Stable SWFI entity identifiers let the search surface provide an immediate
+// source link while mutable entity facts continue loading from the live APIs.
+const VERIFIED_CANONICAL_SOURCE_URLS: Readonly<Record<string, string>> = {
+  "Abu Dhabi Investment Authority": "https://www.swfi.com/v1/entities/598cdaa50124e9fd2d05a79b",
+  "Hong Kong Investment Corporation": "https://www.swfi.com/v1/entities/63502488d68aa29d9a0da8a5",
+};
+
 export function businessSearchQueryVariants(query: string, sourceRows: Record<string, unknown>[] = []): string[] {
   const clean = searchSubjectQuery(query);
   if (!clean) return [];
@@ -69,6 +76,11 @@ export function canonicalSearchName(query: string): string {
     if (match) return match;
   }
   return "";
+}
+
+export function canonicalSearchSourceUrl(query: string): string {
+  const canonicalName = canonicalSearchName(query);
+  return canonicalName ? VERIFIED_CANONICAL_SOURCE_URLS[canonicalName] || "" : "";
 }
 
 export function dedupeSearchRecords<T extends Record<string, unknown>>(sourceRows: T[]): T[] {

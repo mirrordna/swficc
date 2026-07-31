@@ -65,9 +65,8 @@ def scalar_number(value: Any) -> float:
         except Exception:
             return math.nan
     clean = re.sub(r"[^0-9.\-]", "", text(value))
-    # JavaScript Number("") is zero; retain the existing gate's semantics.
     if clean == "":
-        return 0.0
+        return math.nan
     try:
         number = float(clean)
         return number if math.isfinite(number) else math.nan
@@ -137,7 +136,6 @@ class FieldSpec:
     source: Callable[[dict[str, Any]], Any]
     skip_disclosure_gap: bool = False
     allow_includes: bool = False
-    zero_null_equivalent: bool = False
 
 
 def string_field(field_id: str, live_names: list[str], source_names: list[str] | None = None) -> FieldSpec:
@@ -158,7 +156,6 @@ def number_field(field_id: str, live_names: list[str], source_names: list[str] |
         "number",
         lambda row: first_value(row, live_names),
         lambda doc: first_value(doc, source_names),
-        zero_null_equivalent=True,
     )
 
 
@@ -182,7 +179,7 @@ SPECS: dict[str, dict[str, Any]] = {
             string_field("type", ["type"]),
             string_field("country", ["country"]),
             string_field("region", ["region"]),
-            FieldSpec("assets", "number", lambda row: first_value(row, ["assets", "aum"]), lambda doc: first_positive(doc, ["assets", "managedAssets"]), zero_null_equivalent=True),
+            FieldSpec("assets", "number", lambda row: first_value(row, ["assets", "aum"]), lambda doc: first_positive(doc, ["assets", "managedAssets"])),
         ],
     },
     "people": {
@@ -236,15 +233,20 @@ SPECS: dict[str, dict[str, Any]] = {
 def compare_field(spec: FieldSpec, row: dict[str, Any], doc: dict[str, Any]) -> dict[str, Any]:
     live = spec.live(row)
     source = spec.source(doc)
-    if spec.skip_disclosure_gap and (is_disclosure_gap(live) or is_disclosure_gap(source)):
-        return {"field": spec.field_id, "status": "skipped", "reason": "disclosure_gap"}
+    if spec.skip_disclosure_gap:
+        live_gap = is_disclosure_gap(live)
+        source_gap = is_disclosure_gap(source)
+        if live_gap and source_gap:
+            return {"field": spec.field_id, "status": "skipped", "reason": "both_missing"}
+        if live_gap != source_gap:
+            return {"field": spec.field_id, "status": "mismatch", "reason": "one_side_missing", "live": text(live), "source": text(source)}
     if spec.kind == "number":
         live_number = scalar_number(live)
         source_number = scalar_number(source)
-        if spec.zero_null_equivalent and ((math.isnan(live_number) and source_number == 0) or (live_number == 0 and math.isnan(source_number))):
-            return {"field": spec.field_id, "status": "allowed_normalization", "reason": "zero_null_equivalent"}
         if math.isnan(live_number) and math.isnan(source_number):
             return {"field": spec.field_id, "status": "skipped", "reason": "both_missing"}
+        if math.isnan(live_number) != math.isnan(source_number):
+            return {"field": spec.field_id, "status": "mismatch", "reason": "one_side_missing", "live": text(live), "source": text(source)}
         if live_number == source_number:
             return {"field": spec.field_id, "status": "match"}
         if math.isfinite(live_number) and math.isfinite(source_number) and abs(live_number - source_number) < 1:
@@ -521,8 +523,12 @@ def self_test() -> int:
     assert compare_field(SPECS["transactions"]["fields"][6], transaction, mongo_transaction)["status"] == "match"
     assert compare_field(SPECS["transactions"]["fields"][7], transaction, mongo_transaction)["status"] == "skipped"
     assert compare_field(SPECS["entities"]["fields"][0], {"name": "A"}, {"name": "B"})["status"] == "mismatch"
+    assert compare_field(SPECS["entities"]["fields"][4], {}, {"assets": 0})["status"] == "mismatch"
+    assert compare_field(SPECS["entities"]["fields"][4], {"assets": 0}, {})["status"] == "mismatch"
+    assert compare_field(SPECS["entities"]["fields"][2], {}, {"country": "UAE"})["status"] == "mismatch"
+    assert compare_field(SPECS["entities"]["fields"][2], {}, {})["status"] == "skipped"
     assert civil_date_from_millis(569510352000000) == "20017-01-24"
-    print(json.dumps({"status": "pass", "checks": 7}))
+    print(json.dumps({"status": "pass", "checks": 11}))
     return 0
 
 
