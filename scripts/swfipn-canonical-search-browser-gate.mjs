@@ -30,7 +30,7 @@ function reservePort() {
 async function waitForOrigin(origin, child) {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
-    if (child.exitCode !== null) throw new Error(`static_server_exited_${child.exitCode}`);
+    if (child && child.exitCode !== null) throw new Error(`static_server_exited_${child.exitCode}`);
     try {
       const response = await fetch(origin, { signal: AbortSignal.timeout(1_000) });
       if (response.ok) return;
@@ -90,19 +90,27 @@ async function runQuery(browser, origin, testCase) {
 
 async function main() {
   fs.mkdirSync(outputDir, { recursive: true });
-  if (!fs.existsSync(path.join(repoRoot, "out", "index.html"))) {
-    throw new Error("built_static_export_missing: run npm run build first");
+  const configuredOrigin = String(process.env.SWFIPN_ORIGIN || "").trim();
+  const liveTarget = Boolean(configuredOrigin);
+  let child = null;
+  let origin;
+  if (liveTarget) {
+    origin = `${configuredOrigin.replace(/\/+$/, "")}/`;
+  } else {
+    if (!fs.existsSync(path.join(repoRoot, "out", "index.html"))) {
+      throw new Error("built_static_export_missing: run npm run build first");
+    }
+    const port = await reservePort();
+    origin = `http://127.0.0.1:${port}/swficc/`;
+    child = spawn("python3", [
+      path.join(repoRoot, "scripts", "serve-static-with-headers.py"),
+      "--host", "127.0.0.1",
+      "--port", String(port),
+      "--root", path.join(repoRoot, "out"),
+      "--backend", process.env.SWFIPN_BACKEND_ORIGIN || "https://dashboard.swfi.com",
+      "--backend-timeout", "12",
+    ], { cwd: repoRoot, stdio: "ignore" });
   }
-  const port = await reservePort();
-  const origin = `http://127.0.0.1:${port}/swficc/`;
-  const child = spawn("python3", [
-    path.join(repoRoot, "scripts", "serve-static-with-headers.py"),
-    "--host", "127.0.0.1",
-    "--port", String(port),
-    "--root", path.join(repoRoot, "out"),
-    "--backend", process.env.SWFIPN_BACKEND_ORIGIN || "https://dashboard.swfi.com",
-    "--backend-timeout", "12",
-  ], { cwd: repoRoot, stdio: "ignore" });
 
   let browser;
   try {
@@ -126,10 +134,23 @@ async function main() {
     const receipt = {
       schema_version: "swfipn.canonical_search_browser_gate.v1",
       generated_at: new Date().toISOString(),
-      evidence_class: "CANDIDATE_WITH_LIVE_SWFI_SOURCES_NOT_PRODUCTION_ACCEPTANCE",
+      evidence_class: liveTarget
+        ? "LIVE_TARGET_SURFACE_BEHAVIOR_NOT_GLOBAL_ACCEPTANCE"
+        : "CANDIDATE_WITH_LIVE_SWFI_SOURCES_NOT_PRODUCTION_ACCEPTANCE",
+      target_origin: origin,
+      target_mode: liveTarget ? "live" : "local_candidate",
+      tested_release_git_sha: liveTarget ? String(process.env.SWFIPN_RELEASE_GIT_SHA || "").trim() || null : null,
+      tested_release_asset_version: liveTarget ? String(process.env.SWFIPN_RELEASE_ASSET_VERSION || "").trim() || null : null,
       status: checks.every((check) => check.pass) ? "pass" : "fail",
-      checked_scope: ["top_aum_first_paint", "adia_entity_news_people_semantics", "hkic_entity_news_people_semantics"],
-      unchecked_scope: ["deployed_production", "stakeholder_acceptance", "Mongo_record_parity"],
+      checked_scope: [
+        "top_aum_first_paint",
+        "adia_entity_news_people_semantics",
+        "hkic_entity_news_people_semantics",
+        ...(liveTarget ? ["live_target_browser_behavior"] : []),
+      ],
+      unchecked_scope: liveTarget
+        ? ["stakeholder_acceptance", "Mongo_record_parity", "global_release_acceptance"]
+        : ["deployed_production", "stakeholder_acceptance", "Mongo_record_parity"],
       checks,
     };
     fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
