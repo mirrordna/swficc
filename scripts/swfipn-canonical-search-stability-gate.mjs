@@ -60,6 +60,12 @@ function runSample(index) {
           pass: check.pass,
         }))
       : [],
+    network_trace: Array.isArray(receipt?.checks)
+      ? receipt.checks.filter((check) => check.id === "adia" || check.id === "hkic").map((check) => ({
+          id: check.id,
+          events: check.network_trace || [],
+        }))
+      : [],
   };
 }
 

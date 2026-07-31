@@ -81,6 +81,31 @@ async function timedVisibility(locator, startedAt, timeout) {
 async function runQuery(browser, origin, testCase) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const startedAt = Date.now();
+  const networkTrace = [];
+  const relevantPath = (value) => /\/api\/(?:v1\/public\/search|source-data\/search\/v1|source-intelligence\/news\/v1|people\/search\/v1|entity-transactions\/v1)/.test(value);
+  page.on("response", (response) => {
+    const url = new URL(response.url());
+    if (!relevantPath(url.pathname)) return;
+    const headers = response.headers();
+    networkTrace.push({
+      event: "response",
+      at_ms: Date.now() - startedAt,
+      path: `${url.pathname}${url.search}`,
+      status: response.status(),
+      proxy_cache: headers["x-swfipn-proxy-cache"] || null,
+      search_render: headers["x-swfipn-search-render"] || null,
+    });
+  });
+  page.on("requestfailed", (request) => {
+    const url = new URL(request.url());
+    if (!relevantPath(url.pathname)) return;
+    networkTrace.push({
+      event: "request_failed",
+      at_ms: Date.now() - startedAt,
+      path: `${url.pathname}${url.search}`,
+      error: request.failure()?.errorText || "unknown",
+    });
+  });
   try {
     await page.goto(origin, { waitUntil: "domcontentloaded", timeout: 30_000 });
     await page.getByRole("button", { name: "Open Global Search" }).click();
@@ -138,6 +163,7 @@ async function runQuery(browser, origin, testCase) {
       news_result_present: newsResult.present,
       people_empty_state_present: peopleEmptyState.present,
       source_link_matches_live_result: sourceLinkMatchesLiveResult,
+      network_trace: networkTrace.sort((left, right) => left.at_ms - right.at_ms),
       entity: testCase.entity,
       news: testCase.news,
       forbidden_absent: testCase.forbidden.filter((value) => !body.includes(value)),
