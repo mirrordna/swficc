@@ -127,6 +127,9 @@ try:
     retried_state, _retried_payload, _retried_seconds, retried_cache_control = request(origin, "Abu Dhabi Investment")
     time.sleep(0.1)
     checks = {
+        "known_aliases_use_one_canonical_upstream_query": gateway.upstream_search_query_variants("ADIA")
+        == ["Abu Dhabi Investment Authority"]
+        and gateway.upstream_search_query_variants("HKIC") == ["Hong Kong Investment Corporation"],
         "all_requests_source_backed": all(payload.get("fact") is True for _, payload, _seconds, _cache_control in responses),
         "all_requests_canonical": all(
             payload.get("data", {}).get("results", [{}])[0].get("name") == "Hong Kong Investment Corporation"

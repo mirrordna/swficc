@@ -187,7 +187,12 @@ def is_canonical_search_query(query):
 
 def upstream_search_query_variants(query):
     clean = str(query or "").strip()
-    return [clean] if clean and is_canonical_search_query(clean) else search_query_variants(clean)
+    if not clean:
+        return []
+    canonical_names = SEARCH_QUERY_SYNONYMS.get(search_text(clean), [])
+    if canonical_names:
+        return [canonical_names[0]]
+    return [clean] if is_canonical_search_query(clean) else search_query_variants(clean)
 
 
 def has_exact_canonical_search_result(query, rows):
