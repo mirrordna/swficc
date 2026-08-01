@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 
 const repoRoot = process.cwd();
@@ -13,14 +16,18 @@ const deploy = hasArg("--deploy") || process.env.SWFIPN_ACCEPTANCE_DEPLOY === "1
 const includeShare = hasArg("--share") || process.env.SWFIPN_ACCEPTANCE_SHARE === "1";
 const skipBuild = hasArg("--skip-build") || process.env.SWFIPN_ACCEPTANCE_SKIP_BUILD === "1";
 const port = Number(argValue("--port") || process.env.SWFIPN_ACCEPTANCE_PORT || 8399);
-const publicOrigin = normalizeOrigin(process.env.SWFIPN_ORIGIN || "https://swfipn.activemirror.ai/swficc/");
+const publicOrigin = normalizeOrigin(process.env.SWFIPN_ORIGIN || "https://dashboard.swfi.com/swficc/");
 const localOrigin = normalizeOrigin(`http://127.0.0.1:${port}/swficc/`);
-const backendOrigin = (process.env.SWFIPN_BACKEND_ORIGIN || "https://swfipn.activemirror.ai").replace(/\/$/, "");
+const backendOrigin = (process.env.SWFIPN_BACKEND_ORIGIN || "https://dashboard.swfi.com").replace(/\/$/, "");
 let activeOrigin = target === "local" ? localOrigin : publicOrigin;
+let atomicWriteSequence = 0;
 const commandTimeoutMs = Number(process.env.SWFIPN_ACCEPTANCE_COMMAND_TIMEOUT_MS || 1_200_000);
 const remoteHost = process.env.SWFIPN_RUNTIME_REMOTE_HOST || process.env.SWFIPN_HOST || "swfipn-do";
 const remoteRoot = process.env.SWFIPN_REMOTE_ROOT || "/opt/swfipn-acceptance";
+const runtimeLocal = process.env.SWFIPN_RUNTIME_LOCAL === "1";
+const runtimeLocalRoot = process.env.SWFIPN_RUNTIME_LOCAL_ROOT || remoteRoot;
 const composeProject = process.env.SWFIPN_COMPOSE_PROJECT || "swfipn_acceptance";
+const runStartedAtMs = Date.now();
 
 function argValue(name) {
   const index = process.argv.indexOf(name);
@@ -38,6 +45,37 @@ function normalizeOrigin(value) {
 function tail(value, max = 5000) {
   const text = String(value || "");
   return text.length > max ? text.slice(text.length - max) : text;
+}
+
+function atomicWriteText(destination, payload) {
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  atomicWriteSequence += 1;
+  const temporary = path.join(path.dirname(destination), `.${path.basename(destination)}.${process.pid}.${atomicWriteSequence}.tmp`);
+  let handle;
+  try {
+    handle = fs.openSync(temporary, "wx");
+    fs.writeFileSync(handle, payload, "utf8");
+    fs.fsyncSync(handle);
+    fs.closeSync(handle);
+    handle = undefined;
+    fs.renameSync(temporary, destination);
+    const directoryHandle = fs.openSync(path.dirname(destination), "r");
+    try {
+      fs.fsyncSync(directoryHandle);
+    } finally {
+      fs.closeSync(directoryHandle);
+    }
+  } finally {
+    if (handle !== undefined) fs.closeSync(handle);
+    fs.rmSync(temporary, { force: true });
+  }
+  return createHash("sha256").update(payload).digest("hex");
+}
+
+function writeHashedArtifact(destination, payload) {
+  const sha256 = atomicWriteText(destination, payload);
+  atomicWriteText(`${destination}.sha256`, `${sha256}  ${path.basename(destination)}\n`);
+  return sha256;
 }
 
 function runCommand(id, command, args, options = {}) {
@@ -101,6 +139,28 @@ function packageJsonCheck() {
   }
 }
 
+function browserProviderCheck() {
+  const files = [
+    "scripts/swfipn-runtime-staleness-gate.mjs",
+    "scripts/swfipn-closeout-gate.mjs",
+    "scripts/swfipn-link-mapping-leakage-gate.mjs",
+    "scripts/swfipn-visible-link-escape-gate.mjs",
+    "scripts/swfipn-kp-acceptance-gate.mjs",
+    "scripts/swfipn-acceptance-criteria-gate.mjs",
+    "scripts/swfipn-gc1-link-proof.mjs",
+    "scripts/swfipn-share-gate.mjs",
+  ];
+  const hardCodedChromeChannel = /channel\s*:\s*["']chrome["']/;
+  const failures = files.filter((file) => hardCodedChromeChannel.test(fs.readFileSync(path.join(repoRoot, file), "utf8")));
+  return {
+    id: "browser_provider_contract",
+    kind: "preflight",
+    ok: failures.length === 0,
+    contract: "acceptance gates use the Chromium bundled in the pinned Playwright image",
+    failures,
+  };
+}
+
 function gitCheck() {
   const result = runCommand("git_status", "git", ["status", "--short"]);
   return {
@@ -141,31 +201,177 @@ function gitDiffStats() {
   };
 }
 
+function receiptTimestampState(body, minFreshAtMs = 0, maxFutureAtMs = Date.now() + 60_000) {
+  const timestampField = body.generated_at ? "generated_at" : (body.timestamp ? "timestamp" : "");
+  const receiptTimestamp = timestampField ? body[timestampField] : "";
+  const receiptTimeMs = receiptTimestamp ? Date.parse(receiptTimestamp) : Number.NaN;
+  const timestampValid = Number.isFinite(receiptTimeMs) && receiptTimeMs <= maxFutureAtMs;
+  return {
+    timestampField,
+    receiptTimestamp,
+    timestampValid,
+    fresh: timestampValid && (!minFreshAtMs || receiptTimeMs >= minFreshAtMs - 1000),
+  };
+}
+
 function receiptSummary(file, allowedStatuses = ["pass", "complete", "pass_with_quarantine", "go", "go_with_caveat"], minFreshAtMs = 0) {
   const absolute = path.join(outputDir, file);
   try {
     const stat = fs.statSync(absolute);
-    const body = JSON.parse(fs.readFileSync(absolute, "utf8"));
+    const raw = fs.readFileSync(absolute);
+    const body = JSON.parse(raw.toString("utf8"));
+    const sha256 = createHash("sha256").update(raw).digest("hex");
     const inferredStatus = body.status || body.final_verdict || (body.collapse_detected === false ? "pass" : "");
-    const generatedAtMs = body.generated_at ? Date.parse(body.generated_at) : Number.NaN;
-    const receiptTimeMs = Number.isFinite(generatedAtMs) ? generatedAtMs : stat.mtimeMs;
-    const fresh = !minFreshAtMs || receiptTimeMs >= minFreshAtMs - 1000;
+    const { timestampField, receiptTimestamp, timestampValid, fresh } = receiptTimestampState(body, minFreshAtMs);
     return {
       file,
+      sha256,
+      byte_count: raw.length,
+      schema_version: body.schema_version || null,
       ok: fresh && allowedStatuses.includes(inferredStatus),
-      status: fresh ? inferredStatus : "stale",
-      stale: !fresh,
-      generated_at: body.generated_at || "",
+      status: timestampValid ? (fresh ? inferredStatus : "stale") : "invalid_timestamp",
+      stale: timestampValid && !fresh,
+      timestamp_valid: timestampValid,
+      timestamp_field: timestampField,
+      generated_at: receiptTimestamp,
       mtime: stat.mtime.toISOString(),
       summary: body.summary || null,
       failures: [
-        ...(fresh ? [] : [`receipt_stale_before_current_run:${body.generated_at || stat.mtime.toISOString()}`]),
+        ...(timestampValid ? [] : ["receipt_missing_valid_top_level_timestamp"]),
+        ...(timestampValid && !fresh ? [`receipt_stale_before_current_run:${receiptTimestamp}`] : []),
         ...(Array.isArray(body.failures) ? body.failures.slice(0, 8) : []),
       ],
     };
   } catch (error) {
     return { file, ok: false, status: "missing", error: error.message };
   }
+}
+
+function receiptTimestampSelfTest() {
+  const now = Date.now();
+  const validGenerated = { generated_at: new Date(now).toISOString() };
+  const validTimestamp = { timestamp: new Date(now).toISOString() };
+  const invalid = { generated_at: "not-a-date" };
+  const stale = { generated_at: new Date(now - 60_000).toISOString() };
+  assert.deepEqual(receiptTimestampState(validGenerated, 0, now + 60_000), {
+    timestampField: "generated_at",
+    receiptTimestamp: validGenerated.generated_at,
+    timestampValid: true,
+    fresh: true,
+  });
+  assert.deepEqual(receiptTimestampState(validTimestamp, 0, now + 60_000), {
+    timestampField: "timestamp",
+    receiptTimestamp: validTimestamp.timestamp,
+    timestampValid: true,
+    fresh: true,
+  });
+  assert.equal(receiptTimestampState({}, 0, now + 60_000).timestampValid, false);
+  assert.equal(receiptTimestampState(invalid, 0, now + 60_000).timestampValid, false);
+  assert.equal(receiptTimestampState(stale, now, now + 60_000).fresh, false);
+  assert.equal(receiptTimestampState({ generated_at: new Date(now + 60_001).toISOString() }, 0, now + 60_000).timestampValid, false);
+  assert.equal(
+    hostRuntimePath("/opt/swfipn-acceptance/releases/example", "/host/opt/swfipn-acceptance", "/opt/swfipn-acceptance"),
+    "/host/opt/swfipn-acceptance/releases/example",
+  );
+  assert.equal(
+    canonicalRuntimePath("/host/opt/swfipn-acceptance/releases/example", "/host/opt/swfipn-acceptance", "/opt/swfipn-acceptance"),
+    "/opt/swfipn-acceptance/releases/example",
+  );
+  assert.equal(hostRuntimePath("/etc/passwd", "/host/opt/swfipn-acceptance", "/opt/swfipn-acceptance"), "");
+  assert.equal(canonicalRuntimePath("/host/etc/passwd", "/host/opt/swfipn-acceptance", "/opt/swfipn-acceptance"), "");
+  assert.deepEqual(parseContainerImages("/swfipn_acceptance-swfipn-web-1 sha256:aaa\n/swfipn_acceptance-swfi2-backend-1 sha256:bbb\n"), {
+    frontend: "sha256:aaa",
+    backend: "sha256:bbb",
+  });
+  assert.equal(usableDeployReceipt({ status: "pass", release: "/opt/swfipn-acceptance/releases/example" }), false);
+  assert.equal(usableDeployReceipt({
+    schema_version: "swfipn.strict_acceptance_deploy.v9",
+    status: "pass",
+    release: "/opt/swfipn-acceptance/releases/example",
+  }), true);
+  assert.equal(usableDeployReceipt({
+    schema_version: "swfipn.frontend_only_deploy.v1",
+    status: "pass",
+    release: "/opt/swfipn-acceptance/releases/example",
+    frontend_git_sha: "a".repeat(40),
+    frontend_image_id: `sha256:${"b".repeat(64)}`,
+    backend_image_id: `sha256:${"c".repeat(64)}`,
+    backend_unchanged: true,
+  }), true);
+  assert.equal(usableDeployReceipt({
+    schema_version: "swfipn.frontend_only_deploy.v1",
+    status: "pass",
+    release: "/opt/swfipn-acceptance/releases/example",
+    backend_unchanged: false,
+  }), false);
+  assert.equal(usableDeployReceipt({
+    schema_version: "swfipn.deployment_receipt.v1",
+    status: "DEPLOYED_HEALTHY_PENDING_PUBLIC_ACCEPTANCE",
+    release: "/opt/swfipn-acceptance/releases/example",
+  }), true);
+  assert.equal(usableDeployReceipt({
+    schema_version: "swfipn.unknown.v1",
+    status: "DEPLOYED_HEALTHY_PENDING_PUBLIC_ACCEPTANCE",
+    release: "/opt/swfipn-acceptance/releases/example",
+  }), false);
+  assert.equal(usableDeployReceipt({ status: "pass" }), false);
+  const blockedExternalStep = {
+    id: "api_dns_key_lifecycle",
+    ok: true,
+    non_blocking: true,
+    checked_scope: "external_api_product",
+    receipt: {
+      file: "api.json",
+      ok: false,
+      status: "blocked",
+      summary: { blockers: ["dns_not_cut_over"] },
+    },
+  };
+  assert.deepEqual(blockingFailures([blockedExternalStep]), []);
+  assert.deepEqual(externalWatches([blockedExternalStep]), [{
+    id: "api_dns_key_lifecycle",
+    scope: "external_api_product",
+    status: "BLOCKED",
+    receipt: "api.json",
+    blockers: ["dns_not_cut_over"],
+  }]);
+  assert.equal(matrixRow("External API", "external_api", [blockedExternalStep], ["api_dns_key_lifecycle"]).status, "WATCH");
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "swfipn-harness-self-test-"));
+  try {
+    const destination = path.join(tempDir, "receipt.json");
+    const sha256 = writeHashedArtifact(destination, "{\"status\":\"pass\"}\n");
+    assert.equal(fs.readFileSync(destination, "utf8"), "{\"status\":\"pass\"}\n");
+    assert.equal(fs.readFileSync(`${destination}.sha256`, "utf8"), `${sha256}  receipt.json\n`);
+    writeHashedArtifact(destination, "{\"status\":\"fail\"}\n");
+    assert.equal(fs.readFileSync(destination, "utf8"), "{\"status\":\"fail\"}\n");
+    const manifest = receiptManifestForSteps([
+      { receipt: { file: "fixture.json", sha256: "a".repeat(64), byte_count: 24, schema_version: "swfipn.fixture.v1", generated_at: validGenerated.generated_at, ok: true } },
+    ]);
+    assert.equal(manifest.requiredReceipts[0].path, "output/fixture.json");
+    assert.equal(manifest.inputReceiptManifestSha256.length, 64);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+function receiptManifestForSteps(steps) {
+  const requiredReceipts = steps
+    .filter((step) => step.receipt?.file && step.receipt?.sha256)
+    .map((step) => ({
+      path: path.posix.join("output", step.receipt.file),
+      sha256: step.receipt.sha256,
+      byte_count: step.receipt.byte_count,
+      schema_version: step.receipt.schema_version,
+      generated_at: step.receipt.generated_at,
+      passed: Boolean(step.receipt.ok),
+    }));
+  const manifestPayload = requiredReceipts
+    .map((item) => `${item.path}\0${item.sha256 || "missing"}`)
+    .join("\n");
+  return {
+    requiredReceipts,
+    inputReceiptManifestSha256: createHash("sha256").update(manifestPayload).digest("hex"),
+  };
 }
 
 function readOutputJson(file) {
@@ -176,28 +382,65 @@ function readOutputJson(file) {
   }
 }
 
+function usableDeployReceipt(receipt) {
+  if (!receipt?.release) return false;
+  if (receipt.schema_version === "swfipn.deployment_receipt.v1") {
+    return receipt.status === "DEPLOYED_HEALTHY_PENDING_PUBLIC_ACCEPTANCE";
+  }
+  if (["swfipn.strict_acceptance_deploy.v5", "swfipn.strict_acceptance_deploy.v9"].includes(receipt.schema_version)) {
+    return receipt.status === "pass";
+  }
+  if (receipt.schema_version === "swfipn.frontend_only_deploy.v1") {
+    return receipt.status === "pass"
+      && receipt.backend_unchanged === true
+      && /^[a-f0-9]{40}$/i.test(receipt.frontend_git_sha || "")
+      && /^sha256:[a-f0-9]{64}$/i.test(receipt.frontend_image_id || "")
+      && /^sha256:[a-f0-9]{64}$/i.test(receipt.backend_image_id || "");
+  }
+  return false;
+}
+
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, "'\\''")}'`;
 }
 
 function deployReceipt() {
   const receipt = readOutputJson("swfipn-strict-acceptance-deploy-latest.json");
-  if (receipt.status !== "pass" || !receipt.release) {
+  if (!usableDeployReceipt(receipt)) {
     return { ok: false, receipt, failures: [`deploy_receipt_${receipt.status || "missing"}`] };
   }
   return { ok: true, receipt, failures: [] };
+}
+
+function canonicalRuntimePath(hostPath, hostRoot = runtimeLocalRoot, canonicalRoot = remoteRoot) {
+  const relative = path.relative(hostRoot, hostPath);
+  if (!relative || relative === ".") return canonicalRoot;
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return "";
+  return path.join(canonicalRoot, relative);
+}
+
+function hostRuntimePath(canonicalPath, hostRoot = runtimeLocalRoot, canonicalRoot = remoteRoot) {
+  const relative = path.relative(canonicalRoot, canonicalPath);
+  if (!relative || relative === ".") return hostRoot;
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return "";
+  return path.join(hostRoot, relative);
 }
 
 function remoteCurrentProof() {
   if (target !== "public") return { id: "remote_current_release", kind: "remote", ok: true, skipped: true };
   const deploy = deployReceipt();
   if (!deploy.ok) return { id: "remote_current_release", kind: "remote", ok: false, failures: deploy.failures };
-  const result = runCommand("remote_current_release", "ssh", [remoteHost, `readlink -f ${shellQuote(`${remoteRoot}/current`)}`], { timeout: 60_000 });
-  const current = result.stdout_tail.trim();
+  const result = runtimeLocal
+    ? runCommand("remote_current_release", "readlink", ["-f", path.join(runtimeLocalRoot, "current")], { timeout: 60_000 })
+    : runCommand("remote_current_release", "ssh", [remoteHost, `readlink -f ${shellQuote(`${remoteRoot}/current`)}`], { timeout: 60_000 });
+  const observedCurrent = result.stdout_tail.trim();
+  const current = runtimeLocal ? canonicalRuntimePath(observedCurrent) : observedCurrent;
   return {
     ...result,
     kind: "remote",
-    remote_host: remoteHost,
+    runtime_mode: runtimeLocal ? "local_digitalocean_host" : "remote_ssh",
+    remote_host: runtimeLocal ? null : remoteHost,
+    observed_current_release: observedCurrent,
     expected_release: deploy.receipt.release,
     current_release: current,
     ok: result.ok && current === deploy.receipt.release,
@@ -229,15 +472,50 @@ function serviceHealthy(service) {
   return !health || health === "healthy" || health === "running";
 }
 
+function parseContainerImages(stdout) {
+  const images = { frontend: "", backend: "" };
+  for (const line of String(stdout || "").trim().split("\n")) {
+    const [name = "", image = ""] = line.trim().split(/\s+/, 2);
+    if (name.includes("swfipn-web")) images.frontend = image;
+    if (name.includes("swfi2-backend")) images.backend = image;
+  }
+  return images;
+}
+
 function remoteContainerProof() {
   if (target !== "public") return { id: "remote_container_health", kind: "remote", ok: true, skipped: true };
   const deploy = deployReceipt();
   if (!deploy.ok) return { id: "remote_container_health", kind: "remote", ok: false, failures: deploy.failures };
-  const command = [
-    `cd ${shellQuote(deploy.receipt.release)}`,
-    `SWFIPN_DOMAIN=${shellQuote(new URL(publicOrigin).hostname)} docker compose -p ${shellQuote(composeProject)} -f compose.acceptance.yml ps --format json`,
-  ].join(" && ");
-  const result = runCommand("remote_container_health", "ssh", [remoteHost, command], { timeout: 90_000, maxBuffer: 20 * 1024 * 1024, tailMax: 25 * 1024 * 1024 });
+  const hostRelease = runtimeLocal ? hostRuntimePath(deploy.receipt.release) : "";
+  if (runtimeLocal && !hostRelease) {
+    return {
+      id: "remote_container_health",
+      kind: "remote",
+      runtime_mode: "local_digitalocean_host",
+      ok: false,
+      failures: [`release_outside_runtime_root:${deploy.receipt.release}`],
+    };
+  }
+  const result = runtimeLocal
+    ? runCommand("remote_container_health", "docker", [
+        "compose",
+        "-p",
+        composeProject,
+        "-f",
+        path.join(hostRelease, "compose.acceptance.yml"),
+        "ps",
+        "--format",
+        "json",
+      ], {
+        env: { SWFIPN_DOMAIN: new URL(publicOrigin).hostname },
+        timeout: 90_000,
+        maxBuffer: 20 * 1024 * 1024,
+        tailMax: 25 * 1024 * 1024,
+      })
+    : runCommand("remote_container_health", "ssh", [remoteHost, [
+        `cd ${shellQuote(deploy.receipt.release)}`,
+        `SWFIPN_DOMAIN=${shellQuote(new URL(publicOrigin).hostname)} docker compose -p ${shellQuote(composeProject)} -f compose.acceptance.yml ps --format json`,
+      ].join(" && ")], { timeout: 90_000, maxBuffer: 20 * 1024 * 1024, tailMax: 25 * 1024 * 1024 });
   const services = parseComposePs(result.stdout_tail);
   const failures = [];
   const expected = ["swfi2-backend", "swfipn-web", "caddy"];
@@ -249,12 +527,31 @@ function remoteContainerProof() {
     }
     if (!serviceHealthy(match)) failures.push(`unhealthy_service:${name}:${match.State || ""}:${match.Health || ""}`);
   }
+  const containerNames = [
+    `${composeProject}-swfipn-web-1`,
+    `${composeProject}-swfi2-backend-1`,
+  ];
+  const imageProof = runtimeLocal
+    ? runCommand("remote_container_images", "docker", ["inspect", "--format", "{{.Name}} {{.Image}}", ...containerNames], { timeout: 60_000 })
+    : runCommand("remote_container_images", "ssh", [remoteHost, `docker inspect --format '{{.Name}} {{.Image}}' ${containerNames.map(shellQuote).join(" ")}`], { timeout: 60_000 });
+  const observedImages = parseContainerImages(imageProof.stdout_tail);
+  for (const [kind, expected] of [
+    ["frontend", deploy.receipt.frontend_image_id],
+    ["backend", deploy.receipt.backend_image_id],
+  ]) {
+    if (!expected) continue;
+    if (!imageProof.ok) failures.push(`container_image_inspect_failed:${kind}`);
+    else if (observedImages[kind] !== expected) failures.push(`${kind}_image_${observedImages[kind] || "missing"}_ne_${expected}`);
+  }
   return {
     ...result,
     kind: "remote",
-    remote_host: remoteHost,
+    runtime_mode: runtimeLocal ? "local_digitalocean_host" : "remote_ssh",
+    remote_host: runtimeLocal ? null : remoteHost,
     release: deploy.receipt.release,
     services,
+    container_images: observedImages,
+    image_proof: imageProof,
     failures,
     ok: result.ok && failures.length === 0,
   };
@@ -344,16 +641,53 @@ function npmGate(id, script, receipt, env = {}, allowedStatuses) {
   };
 }
 
+function npmNonBlockingEvidenceGate(id, script, receipt, env = {}) {
+  const step = npmGate(id, script, receipt, env, ["pass"]);
+  const externallyBlocked = step.receipt?.status === "blocked";
+  return {
+    ...step,
+    ok: step.ok || externallyBlocked,
+    non_blocking: externallyBlocked,
+    checked_scope: "external_api_product",
+    dashboard_acceptance_impact: "none",
+  };
+}
+
+function blockingFailures(steps) {
+  return steps.filter((step) => !step.ok && !step.non_blocking);
+}
+
+function externalWatches(steps) {
+  return steps
+    .filter((step) => step.non_blocking && step.receipt?.ok !== true)
+    .map((step) => ({
+      id: step.id,
+      scope: step.checked_scope || "external",
+      status: String(step.receipt?.status || "unknown").toUpperCase(),
+      receipt: step.receipt?.file || null,
+      blockers: Array.isArray(step.receipt?.summary?.blockers)
+        ? step.receipt.summary.blockers
+        : [],
+    }));
+}
+
 function writeReceipt(steps) {
-  const failures = steps.filter((step) => !step.ok);
+  const failures = blockingFailures(steps);
+  const watches = externalWatches(steps);
+  const { requiredReceipts, inputReceiptManifestSha256 } = receiptManifestForSteps(steps);
   const receipt = {
-    schema_version: "swfipn.acceptance_lock.v2",
+    schema_version: "swfipn.acceptance_lock.v3",
     generated_at: new Date().toISOString(),
+    receipt_contract_version: "swfipn.receipt_envelope.v1",
+    run_started_at: new Date(runStartedAtMs).toISOString(),
+    input_receipt_manifest_sha256: inputReceiptManifestSha256,
+    required_receipts: requiredReceipts,
     target,
     origin: activeOrigin,
     status: failures.length ? "fail" : "pass",
-    final_verdict: failures.length ? "no_go" : "go",
+    final_verdict: failures.length ? "no_go" : watches.length ? "go_with_external_watch" : "go",
     blockers: failures.map((step) => step.id),
+    external_watches: watches,
     sendable: failures.length === 0 && target === "public",
     deploy_requested: deploy,
     share_gate_requested: includeShare,
@@ -378,8 +712,8 @@ function writeReceipt(steps) {
     steps,
     failures,
   };
-  fs.writeFileSync(jsonPath, `${JSON.stringify(receipt, null, 2)}\n`);
-  fs.writeFileSync(markdownPath, renderMarkdown(receipt));
+  writeHashedArtifact(jsonPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  atomicWriteText(markdownPath, renderMarkdown(receipt));
   return receipt;
 }
 
@@ -389,12 +723,20 @@ function matrixRow(requirement, id, steps, stepIds) {
   }
   const relevant = steps.filter((step) => stepIds.includes(step.id));
   const failures = relevant.filter((step) => !step.ok);
+  const watches = relevant.filter((step) => step.non_blocking && step.receipt?.ok !== true);
   return {
     id,
     requirement,
-    status: relevant.length === stepIds.length && failures.length === 0 ? "PASS" : "FAIL",
+    status: relevant.length !== stepIds.length
+      ? "FAIL"
+      : failures.length
+        ? "FAIL"
+        : watches.length
+          ? "WATCH"
+          : "PASS",
     evidence: relevant.map((step) => step.receipt?.file || step.screenshot || step.url || step.command || step.id),
     failures: failures.map((step) => step.id),
+    watches: watches.map((step) => step.id),
   };
 }
 
@@ -428,6 +770,14 @@ function renderMarkdown(receipt) {
   } else {
     for (const failure of receipt.failures) lines.push(`- ${failure.id}: ${failure.error || failure.stderr_tail || JSON.stringify(failure.failures || failure.receipt?.failures || [])}`);
   }
+  lines.push("", "## External Watches", "");
+  if (!receipt.external_watches.length) {
+    lines.push("None.");
+  } else {
+    for (const watch of receipt.external_watches) {
+      lines.push(`- ${watch.id} (${watch.scope}): ${watch.status}; ${watch.blockers.join(", ") || "see receipt"}`);
+    }
+  }
   lines.push("");
   return `${lines.join("\n")}\n`;
 }
@@ -438,6 +788,7 @@ async function main() {
   let localServer = null;
   try {
     steps.push(packageJsonCheck());
+    steps.push(browserProviderCheck());
     steps.push(gitCheck());
 
     if (target === "local" && !skipBuild) {
@@ -489,29 +840,28 @@ async function main() {
       env: {
         SWFIPN_ORIGIN: target === "public" ? publicOrigin : activeOrigin,
         SWFIPN_BACKEND_ORIGIN: backendOrigin,
-        SWFIPN_RUNTIME_REMOTE_CHECK: target === "public" ? "1" : "0",
+        SWFIPN_RUNTIME_REMOTE_CHECK: target === "public" && !runtimeLocal ? "1" : "0",
         SWFIPN_RUNTIME_REMOTE_HOST: remoteHost,
       },
       timeout: 300_000,
     });
     const runtimeReceipt = receiptSummary("swfipn-runtime-staleness-gate-latest.json", undefined, runtimeStaleness.started_at_ms);
     steps.push({ ...runtimeStaleness, receipt: runtimeReceipt, ok: runtimeStaleness.ok && runtimeReceipt.ok });
-    steps.push(npmGate("closeout", target === "public" ? "closeout:gate:public" : "closeout:gate", "swfipn-closeout-gate-latest.json", gateEnv));
-    steps.push(npmGate("map_leakage", target === "public" ? "map-leakage:gate:public" : "map-leakage:gate", "swfipn-link-mapping-leakage-gate-latest.json", gateEnv));
-    steps.push(npmGate("search_categories", target === "public" ? "search:category:gate:public" : "search:category:gate", "swfipn-search-category-gate-latest.json", gateEnv));
-    steps.push(npmGate("link_escape", target === "public" ? "link:escape:gate:public" : "link:escape:gate", "swfipn-visible-link-escape-gate-latest.json", gateEnv));
-    steps.push(npmGate("kp_acceptance", target === "public" ? "kp:gate:public" : "kp:gate", "swfipn-kp-acceptance-gate-latest.json", gateEnv));
-    steps.push(npmGate("acceptance_criteria", target === "public" ? "acceptance:gate:public" : "acceptance:gate", "swfipn-acceptance-criteria-gate-latest.json", gateEnv));
+    steps.push(npmGate("closeout", "closeout:gate", "swfipn-closeout-gate-latest.json", gateEnv));
+    steps.push(npmGate("map_leakage", "map-leakage:gate", "swfipn-link-mapping-leakage-gate-latest.json", gateEnv));
+    steps.push(npmGate("search_categories", "search:category:gate", "swfipn-search-category-gate-latest.json", gateEnv));
+    steps.push(npmGate("link_escape", "link:escape:gate", "swfipn-visible-link-escape-gate-latest.json", gateEnv));
+    steps.push(npmGate("kp_acceptance", "kp:gate", "swfipn-kp-acceptance-gate-latest.json", gateEnv));
+    steps.push(npmGate("acceptance_criteria", "acceptance:gate", "swfipn-acceptance-criteria-gate-latest.json", gateEnv));
     if (target === "public") {
-      steps.push(npmGate(
+      steps.push(npmNonBlockingEvidenceGate(
         "api_dns_key_lifecycle",
         "brd:api-dns:gate:public",
         "swfipn-api-dns-key-lifecycle-latest.json",
         {
           SWFIPN_API_PRODUCTION_ORIGIN: "https://api.swfi.com",
           SWFIPN_API_ACCEPTANCE_ORIGIN: backendOrigin,
-        },
-        ["pass", "blocked"]
+        }
       ));
     }
     if (includeShare) {
@@ -523,13 +873,13 @@ async function main() {
         ["scripts/swfipn-gc1-link-proof.mjs"],
         { env: { SWFIPN_ORIGIN: publicOrigin }, timeout: 120_000 }
       ));
-      steps.push(npmGate("share_gate", "share:gate:public", "swfipn-share-gate-latest.json", { SWFIPN_ORIGIN: publicOrigin }));
     }
     fs.rmSync(path.join(outputDir, "swfipn-acceptance-lock-tool-latest.json"), { force: true });
     const acceptanceLockTool = runCommand("acceptance_lock_tool", "python3", [
       "tools/loop-budget/swficc_acceptance_lock.py",
       "--repo", ".",
       "--out", "output/swfipn-acceptance-lock-tool-latest.json",
+      "--not-before", new Date(runStartedAtMs).toISOString(),
         "--receipt", "output/swfipn-acceptance-criteria-gate-latest.json",
         "--receipt", "output/swfipn-kp-acceptance-gate-latest.json",
         "--receipt", "output/swfipn-link-mapping-leakage-gate-latest.json",
@@ -553,6 +903,9 @@ async function main() {
       ...loopCollapse,
       receipt: receiptSummary("swfipn-loop-collapse-latest.json", undefined, loopCollapse.started_at_ms),
     });
+    if (includeShare) {
+      steps.push(npmGate("share_gate", "share:gate", "swfipn-share-gate-latest.json", { SWFIPN_ORIGIN: publicOrigin }));
+    }
     writeReceipt(steps);
 
     const receipt = writeReceipt(steps);
@@ -571,18 +924,30 @@ async function main() {
   }
 }
 
-main().catch((error) => {
+const entrypoint = hasArg("--self-test")
+  ? Promise.resolve().then(() => {
+      receiptTimestampSelfTest();
+      assert.equal(browserProviderCheck().ok, true);
+      console.log(JSON.stringify({ status: "pass", self_test: true }));
+    })
+  : main();
+
+entrypoint.catch((error) => {
   fs.mkdirSync(outputDir, { recursive: true });
   const receipt = {
-    schema_version: "swfipn.acceptance_lock.v2",
+    schema_version: "swfipn.acceptance_lock.v3",
     generated_at: new Date().toISOString(),
+    receipt_contract_version: "swfipn.receipt_envelope.v1",
+    run_started_at: new Date(runStartedAtMs).toISOString(),
+    input_receipt_manifest_sha256: createHash("sha256").update("").digest("hex"),
+    required_receipts: [],
     target,
     origin: activeOrigin,
     status: "fail",
     error: error.stack || error.message,
   };
-  fs.writeFileSync(jsonPath, `${JSON.stringify(receipt, null, 2)}\n`);
-  fs.writeFileSync(markdownPath, `# SWFIPN Acceptance Lock\n\nStatus: fail\n\n${error.stack || error.message}\n`);
+  writeHashedArtifact(jsonPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  atomicWriteText(markdownPath, `# SWFIPN Acceptance Lock\n\nStatus: fail\n\n${error.stack || error.message}\n`);
   console.error(error);
   process.exit(1);
 });

@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dashboard.swfi.com/schemas/swfipn-receipt-envelope.v1.json",
+  "title": "SWFIPN authoritative receipt envelope",
+  "type": "object",
+  "required": ["schema_version"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*\\.v[0-9]+$"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "status": { "type": "string", "minLength": 1 },
+    "result": { "type": "string", "minLength": 1 },
+    "verdict": { "type": "string", "minLength": 1 },
+    "gate_status": { "type": "string", "minLength": 1 },
+    "final_verdict": { "type": "string", "minLength": 1 },
+    "sendable": { "type": "boolean" },
+    "failures": { "type": "array" },
+    "blockers": { "type": "array" },
+    "checked_scope": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "unchecked_scope": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "allOf": [
+    {
+      "anyOf": [
+        { "required": ["generated_at"] },
+        { "required": ["timestamp"] }
+      ]
+    },
+    {
+      "anyOf": [
+        { "required": ["status"] },
+        { "required": ["result"] },
+        { "required": ["verdict"] },
+        { "required": ["gate_status"] },
+        { "required": ["final_verdict"] }
+      ]
+    }
+  ],
+  "additionalProperties": true
+}

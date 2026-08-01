@@ -380,7 +380,7 @@ async function run() {
     console.error(`[link-escape] inspecting ${route}`);
     let lastResult;
     for (let attempt = 1; attempt <= routeAttempts; attempt += 1) {
-      const browser = await chromium.launch({ channel: "chrome", headless: true, timeout: 30_000 });
+      const browser = await chromium.launch({ headless: true, timeout: 30_000 });
       try {
         lastResult = await withTimeout(inspectRoute(browser, route), routeTimeoutMs, `route:${route}:attempt:${attempt}`);
       } catch (error) {

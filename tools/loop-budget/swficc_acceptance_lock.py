@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import argparse, datetime as dt, json, os, re, subprocess
+import argparse, datetime as dt, hashlib, json, os, re, subprocess
 from pathlib import Path
 from typing import Any
 DEFAULT_RECEIPTS=[
@@ -32,6 +32,10 @@ CRITERIA=['Dashboard look and feel is consistent with SWFI website.','Public /sw
 LEAK_PATTERNS=[r'\bobject[_\s-]?id\b',r'\bdatabase[_\s-]?id\b',r'\bdebug\b',r'\bstack trace\b',r'\btraceback\b',r'\bActive Mirror\b',r'\broute ledger\b',r'\bsource gap\b',r'\binternal diagnostic',r'\bNaN\b']
 SKIP_DIRS={'.git','node_modules','.next','dist','build','coverage','__pycache__','.venv','venv','output','logs','out','tmp','tools','scripts','schemas','configs'}
 SCAN_SUFFIXES={'.html','.tsx','.jsx','.ts','.js','.vue','.svelte'}
+PASS_STATUSES={'pass','pass_with_quarantine','passed','ok','green','success','complete','go','go_with_caveat'}
+FAIL_STATUSES={'fail','failed','blocked','no_go','error'}
+TOP_LEVEL_STATUS_KEYS=('status','result','verdict','gate_status','final_verdict')
+SCHEMA_VERSION_PATTERN=re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.-]*\.v[0-9]+$')
 def now_iso(): return dt.datetime.now(dt.timezone.utc).isoformat()
 def run_cmd(repo:Path,cmd:list[str]):
     try:
@@ -57,6 +61,23 @@ def load_json(path:Path)->Any:
     try: return json.loads(path.read_text(encoding='utf-8'))
     except FileNotFoundError: return None
     except Exception as e: return {'_parse_error':str(e)}
+def load_receipt(path:Path):
+    try:
+        raw=path.read_bytes()
+    except FileNotFoundError:
+        return None,{'exists':False,'sha256':None,'byte_count':0}
+    except Exception as e:
+        return {'_parse_error':str(e)},{'exists':True,'sha256':None,'byte_count':0}
+    metadata={'exists':True,'sha256':hashlib.sha256(raw).hexdigest(),'byte_count':len(raw)}
+    try:
+        return json.loads(raw),metadata
+    except Exception as e:
+        return {'_parse_error':str(e)},metadata
+def contained_receipt_path(repo:Path,relative:str):
+    candidate=(repo/relative).resolve()
+    if not candidate.is_relative_to(repo):
+        raise ValueError(f'receipt input escapes repository: {relative}')
+    return candidate
 def find_key_values(obj,wanted):
     vals=[]
     if isinstance(obj,dict):
@@ -67,19 +88,112 @@ def find_key_values(obj,wanted):
         for x in obj: vals+=find_key_values(x,wanted)
     return vals
 def receipt_passed(obj):
-    if obj is None or (isinstance(obj,dict) and '_parse_error' in obj): return False
-    if isinstance(obj,dict):
-        top_status=str(obj.get('status') or obj.get('result') or obj.get('verdict') or obj.get('gate_status') or obj.get('final_verdict') or '').lower()
-        if top_status in {'fail','failed','blocked','no_go','error'}: return False
-        if top_status in {'pass','pass_with_quarantine','passed','ok','green','success','go','go_with_caveat'}:
-            if obj.get('sendable') is False: return False
-            return True
-    for v in find_key_values(obj,{'status','result','verdict','gate_status'}):
-        if isinstance(v,str) and v.lower() in {'pass','pass_with_quarantine','passed','ok','green','success'}: return True
-    if any(v is True for v in find_key_values(obj,{'pass','passed','success','sendable'})): return True
-    flat=json.dumps(obj).lower()
-    if '"fail"' in flat or '"failed"' in flat or '"no_go"' in flat: return False
-    return False
+    if not isinstance(obj,dict) or '_parse_error' in obj: return False
+    statuses=[str(obj[key]).strip().lower() for key in TOP_LEVEL_STATUS_KEYS if obj.get(key) is not None]
+    if not statuses or any(status in FAIL_STATUSES for status in statuses): return False
+    if any(status not in PASS_STATUSES for status in statuses): return False
+    if obj.get('sendable') is False: return False
+    if isinstance(obj.get('failures'),list) and obj['failures']: return False
+    if isinstance(obj.get('blockers'),list) and obj['blockers']: return False
+    return True
+
+def parse_receipt_time(obj):
+    if not isinstance(obj,dict): return None
+    raw=obj.get('generated_at') or obj.get('timestamp')
+    if not isinstance(raw,str) or not raw.strip(): return None
+    try:
+        value=dt.datetime.fromisoformat(raw.strip().replace('Z','+00:00'))
+        if value.tzinfo is None: value=value.replace(tzinfo=dt.timezone.utc)
+        return value.astimezone(dt.timezone.utc)
+    except ValueError:
+        return None
+
+def receipt_fresh(obj,not_before,now,future_skew):
+    generated_at=parse_receipt_time(obj)
+    return generated_at is not None and generated_at >= not_before-dt.timedelta(seconds=1) and generated_at <= now+future_skew
+
+def receipt_contract_errors(obj):
+    if not isinstance(obj,dict): return ['receipt_not_object']
+    if '_parse_error' in obj: return [f"receipt_parse_error:{obj['_parse_error']}"]
+    errors=[]
+    schema_version=obj.get('schema_version')
+    if not isinstance(schema_version,str) or not SCHEMA_VERSION_PATTERN.fullmatch(schema_version):
+        errors.append('schema_version_missing_or_invalid')
+    statuses=[str(obj[key]).strip().lower() for key in TOP_LEVEL_STATUS_KEYS if obj.get(key) is not None]
+    if not statuses:
+        errors.append('authoritative_top_level_verdict_missing')
+    elif any(status not in PASS_STATUSES|FAIL_STATUSES for status in statuses):
+        errors.append('authoritative_top_level_verdict_unknown')
+    elif any(status in PASS_STATUSES for status in statuses) and any(status in FAIL_STATUSES for status in statuses):
+        errors.append('authoritative_top_level_verdict_conflict')
+    if parse_receipt_time(obj) is None: errors.append('generated_at_missing_or_invalid')
+    if 'sendable' in obj and not isinstance(obj['sendable'],bool): errors.append('sendable_not_boolean')
+    for key in ('failures','blockers'):
+        if key in obj and not isinstance(obj[key],list): errors.append(f'{key}_not_array')
+    return errors
+
+def atomic_write_text(path:Path,payload:str):
+    path.parent.mkdir(parents=True,exist_ok=True)
+    temporary=path.with_name(f'.{path.name}.{os.getpid()}.tmp')
+    temporary.unlink(missing_ok=True)
+    try:
+        with temporary.open('x',encoding='utf-8') as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary,path)
+        directory_fd=os.open(path.parent,os.O_RDONLY)
+        try: os.fsync(directory_fd)
+        finally: os.close(directory_fd)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return hashlib.sha256(payload.encode('utf-8')).hexdigest()
+
+def receipt_passed_self_test():
+    passing=[
+        {'status':'pass'},
+        {'final_verdict':'go_with_caveat'},
+        {'status':'pass','sendable':True,'failures':[],'blockers':[]},
+    ]
+    failing=[
+        None,
+        [],
+        {'checks':[{'status':'pass'}]},
+        {'status':'unknown','checks':[{'status':'pass'}]},
+        {'status':'pass','final_verdict':'no_go'},
+        {'status':'pass','sendable':False},
+        {'status':'pass','failures':['nested gate failed']},
+        {'status':'pass','blockers':['missing source proof']},
+        {'_parse_error':'bad json'},
+    ]
+    assert all(receipt_passed(value) for value in passing)
+    assert not any(receipt_passed(value) for value in failing)
+    now=dt.datetime(2026,8,1,12,0,tzinfo=dt.timezone.utc)
+    not_before=now-dt.timedelta(minutes=5)
+    skew=dt.timedelta(seconds=60)
+    assert receipt_fresh({'generated_at':'2026-08-01T11:59:00Z'},not_before,now,skew)
+    assert receipt_fresh({'timestamp':'2026-08-01T12:00:30+00:00'},not_before,now,skew)
+    assert not receipt_fresh({'generated_at':'2026-08-01T11:00:00Z'},not_before,now,skew)
+    assert not receipt_fresh({'generated_at':'2026-08-01T12:01:01Z'},not_before,now,skew)
+    assert not receipt_fresh({'generated_at':'not-a-date'},not_before,now,skew)
+    assert not receipt_fresh({},not_before,now,skew)
+    valid={'schema_version':'swfipn.example.v1','generated_at':'2026-08-01T12:00:00Z','status':'pass','failures':[]}
+    assert receipt_contract_errors(valid)==[]
+    assert 'schema_version_missing_or_invalid' in receipt_contract_errors({'generated_at':'2026-08-01T12:00:00Z','status':'pass'})
+    assert 'authoritative_top_level_verdict_conflict' in receipt_contract_errors({**valid,'final_verdict':'no_go'})
+    assert 'failures_not_array' in receipt_contract_errors({**valid,'failures':'none'})
+    schema_path=Path(__file__).resolve().parents[2]/'schemas'/'swfipn-receipt-envelope.schema.json'
+    schema=json.loads(schema_path.read_text(encoding='utf-8'))
+    assert schema['$id'].endswith('swfipn-receipt-envelope.v1.json')
+    assert schema['required']==['schema_version']
+    fixture_root=Path('/tmp/swfi-receipt-contract-fixture').resolve()
+    assert contained_receipt_path(fixture_root,'output/receipt.json')==fixture_root/'output'/'receipt.json'
+    try:
+        contained_receipt_path(fixture_root,'../escaped.json')
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('receipt path escape was accepted')
 def receipt_blocker_summary(rel:str,obj:Any)->str:
     label=rel.replace('output/','').replace('-latest.json','')
     if obj is None:
@@ -299,19 +413,47 @@ def write_status_doc(repo,verdict,blockers,phase2,data_quality_caveats=None):
         required_sentence = 'The current `/swficc` dashboard/terminal scope is deployed, source-backed, and sendable for validation with receipts.'
         final_sentence = 'No blockers are open inside the current `/swficc` dashboard/terminal validation scope. Full BRD Phase 2 remains active because the explicit deferred productization bucket and production `api.swfi.com` DNS cutover are not complete.'
     lines += ['', '## Required wording','', f'Use: “{required_sentence}”','', 'Use: “corresponding SWFI core platform record/profile page through SWFI sign-in handoff.”','', 'Do not use: “Full BRD Phase 2 is complete.”','', 'Do not use: “All SWFI.com pages are fully migrated.”','', '## Final acceptance sentence','', final_sentence]
-    (docs/'swfipn-acceptance-status.md').write_text('\n'.join(lines)+'\n',encoding='utf-8')
+    atomic_write_text(docs/'swfipn-acceptance-status.md','\n'.join(lines)+'\n')
 def main():
-    ap=argparse.ArgumentParser(); ap.add_argument('--repo',default='.'); ap.add_argument('--out',default='output/swfipn-acceptance-lock-latest.json'); ap.add_argument('--receipt',action='append',default=[]); args=ap.parse_args()
+    ap=argparse.ArgumentParser(); ap.add_argument('--repo',default='.'); ap.add_argument('--out',default='output/swfipn-acceptance-lock-latest.json'); ap.add_argument('--receipt',action='append',default=[]); ap.add_argument('--not-before',default=''); ap.add_argument('--max-receipt-age-seconds',type=int,default=21600); ap.add_argument('--max-future-skew-seconds',type=int,default=60); ap.add_argument('--self-test',action='store_true'); args=ap.parse_args()
+    if args.self_test:
+        receipt_passed_self_test()
+        print(json.dumps({'status':'pass','self_test':True}))
+        return 0
+    if args.max_receipt_age_seconds < 0 or args.max_future_skew_seconds < 0:
+        raise ValueError('receipt age and future skew must be non-negative')
     repo=Path(args.repo).resolve(); receipt_paths=args.receipt or DEFAULT_RECEIPTS
+    if len(receipt_paths)!=len(set(receipt_paths)):
+        raise ValueError('duplicate receipt inputs are not allowed')
+    now=dt.datetime.now(dt.timezone.utc)
+    if args.not_before:
+        not_before=dt.datetime.fromisoformat(args.not_before.replace('Z','+00:00'))
+        if not_before.tzinfo is None: not_before=not_before.replace(tzinfo=dt.timezone.utc)
+        not_before=not_before.astimezone(dt.timezone.utc)
+    else:
+        not_before=now-dt.timedelta(seconds=args.max_receipt_age_seconds)
+    future_skew=dt.timedelta(seconds=args.max_future_skew_seconds)
     req=[]; all_pass=True; route_count=None; hidden_count=None; hidden_details=[]; data_quality_caveats=[]; failed_receipts=[]
     for rel in receipt_paths:
-        obj=load_json(repo/rel); passed=receipt_passed(obj); all_pass=all_pass and passed
+        try:
+            source_path=contained_receipt_path(repo,rel)
+            obj,source_metadata=load_receipt(source_path)
+            path_error=None
+        except ValueError as exc:
+            obj={'_parse_error':str(exc)}
+            source_metadata={'exists':False,'sha256':None,'byte_count':0}
+            path_error=str(exc)
+        contract_errors=receipt_contract_errors(obj); contract_valid=not contract_errors; authoritative=receipt_passed(obj); fresh=receipt_fresh(obj,not_before,now,future_skew); passed=contract_valid and authoritative and fresh; all_pass=all_pass and passed
         if 'route-ledger' in rel: route_count,hidden_count,hidden_details=get_route_counts(obj)
         if caveat:=manifest_caveat(obj): data_quality_caveats.append(caveat)
         if 'record-field-parity-full' in rel: data_quality_caveats.extend(field_parity_caveats(obj))
         if not passed:
-            failed_receipts.append(receipt_blocker_summary(rel,obj))
-        req.append({'path':rel,'exists':(repo/rel).exists(),'passed':passed,'parse_error':obj.get('_parse_error') if isinstance(obj,dict) and '_parse_error' in obj else None})
+            reasons=[]
+            if not contract_valid: reasons.append('receipt_contract_invalid=' + ','.join(contract_errors))
+            if not authoritative: reasons.append('authoritative_top_level_verdict=false')
+            if not fresh: reasons.append(f'fresh_for_run=false:not_before={not_before.isoformat()}')
+            failed_receipts.append(receipt_blocker_summary(rel,obj) + ('; ' + '; '.join(reasons) if reasons else ''))
+        req.append({'path':rel,**source_metadata,'passed':passed,'receipt_contract_version':'swfipn.receipt_envelope.v1','receipt_contract_valid':contract_valid,'receipt_contract_errors':contract_errors,'schema_version':obj.get('schema_version') if isinstance(obj,dict) else None,'authoritative_top_level_verdict':authoritative,'fresh_for_run':fresh,'generated_at':(obj.get('generated_at') or obj.get('timestamp')) if isinstance(obj,dict) else None,'path_error':path_error,'parse_error':obj.get('_parse_error') if isinstance(obj,dict) and '_parse_error' in obj else None})
     leakage=scan_internal_leakage(repo)
     blockers=[]
     if not all_pass: blockers.extend(failed_receipts)
@@ -320,9 +462,10 @@ def main():
     hidden_blockers=[r for r in hidden_details if r.get('class')!='uncontracted_route_hidden_from_public_navigation']
     verdict='no_go' if blockers else ('go_with_caveat' if hidden_blockers or data_quality_caveats else 'go')
     matrix=[{'criterion':c,'status':'pass' if not blockers or c!='Existing gate receipts remain passing.' else 'needs_review','evidence':'See required receipts and scans.','blocker': bool(blockers and c=='Existing gate receipts remain passing.')} for c in CRITERIA]
-    receipt={'timestamp':now_iso(),'git_commit':git_commit(repo),'tested_scope':'Current /swficc dashboard/terminal validation scope.','loop_budget':{'builder_passes':1,'prosecutor_passes':1,'max_internal_refinements_per_pass':1,'extra_passes_allowed':False,'extra_pass_reason_required':'new external evidence only'},'criteria_matrix':matrix,'required_receipts':req,'command_list_run':[{'command':'git rev-parse HEAD','status':'ok'},{'command':'required receipt inspection','status':'ok'},{'command':'internal leakage scan','status':leakage['status']},{'command':'git diff --numstat baseline','status':'ok'}],'working_tree_diff':git_diff_stats(repo),'route_sample_count':route_count,'hidden_internal_route_count':hidden_count,'hidden_internal_routes':hidden_details,'hidden_internal_route_blockers':hidden_blockers,'data_quality_caveats':data_quality_caveats,'unauth_redirect_result':'pass_if_canonical_swfi_links_and_swfi_auth_behavior_passed','auth_route_result':'pass_if_route_ledger_and_e2e_gates_passed','internal_leakage_scan_result':leakage,'mobile_responsive_check_result':'not independently tested by this script; rely on E2E/browser receipts if present','blockers':blockers,'phase_2_non_blockers':phase2,'final_verdict':verdict,'safe_final_sentence':'No blockers are open inside the current `/swficc` dashboard/terminal validation scope. Full BRD Phase 2 remains active because the explicit deferred productization bucket and production `api.swfi.com` DNS cutover are not complete.' if verdict!='no_go' else 'Blockers remain within current `/swficc` dashboard/terminal validation scope.'}
-    out=repo/args.out; out.parent.mkdir(parents=True,exist_ok=True); out.write_text(json.dumps(receipt,indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
+    generated_at=now_iso(); manifest_payload='\n'.join(f"{item['path']}\0{item['sha256'] or 'missing'}" for item in req).encode('utf-8')
+    receipt={'schema_version':'swfipn.acceptance_lock.v3','generated_at':generated_at,'timestamp':generated_at,'receipt_contract_version':'swfipn.receipt_envelope.v1','input_receipt_manifest_sha256':hashlib.sha256(manifest_payload).hexdigest(),'git_commit':git_commit(repo),'tested_scope':'Current /swficc dashboard/terminal validation scope.','loop_budget':{'builder_passes':1,'prosecutor_passes':1,'max_internal_refinements_per_pass':1,'extra_passes_allowed':False,'extra_pass_reason_required':'new external evidence only'},'criteria_matrix':matrix,'required_receipts':req,'command_list_run':[{'command':'git rev-parse HEAD','status':'ok'},{'command':'required receipt inspection','status':'ok'},{'command':'internal leakage scan','status':leakage['status']},{'command':'git diff --numstat baseline','status':'ok'}],'working_tree_diff':git_diff_stats(repo),'route_sample_count':route_count,'hidden_internal_route_count':hidden_count,'hidden_internal_routes':hidden_details,'hidden_internal_route_blockers':hidden_blockers,'data_quality_caveats':data_quality_caveats,'unauth_redirect_result':'pass_if_canonical_swfi_links_and_swfi_auth_behavior_passed','auth_route_result':'pass_if_route_ledger_and_e2e_gates_passed','internal_leakage_scan_result':leakage,'mobile_responsive_check_result':'not independently tested by this script; rely on E2E/browser receipts if present','blockers':blockers,'phase_2_non_blockers':phase2,'final_verdict':verdict,'safe_final_sentence':'No blockers are open inside the current `/swficc` dashboard/terminal validation scope. Full BRD Phase 2 remains active because the explicit deferred productization bucket and production `api.swfi.com` DNS cutover are not complete.' if verdict!='no_go' else 'Blockers remain within current `/swficc` dashboard/terminal validation scope.'}
+    out=repo/args.out; receipt_payload=json.dumps(receipt,indent=2,ensure_ascii=False)+'\n'; receipt_sha256=atomic_write_text(out,receipt_payload); atomic_write_text(out.with_suffix(out.suffix+'.sha256'),f'{receipt_sha256}  {out.name}\n')
     write_status_doc(repo,verdict,blockers,phase2,data_quality_caveats)
-    print(json.dumps({'wrote':str(out),'verdict':verdict,'blockers':blockers,'route_sample_count':route_count,'hidden_internal_route_count':hidden_count},indent=2))
+    print(json.dumps({'wrote':str(out),'receipt_sha256':receipt_sha256,'verdict':verdict,'blockers':blockers,'route_sample_count':route_count,'hidden_internal_route_count':hidden_count},indent=2))
     return 1 if verdict=='no_go' else 0
 if __name__=='__main__': raise SystemExit(main())

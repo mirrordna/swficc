@@ -473,7 +473,7 @@ function matrixLine(label, check) {
 async function run() {
   fs.mkdirSync(outputDir, { recursive: true });
   const { chromium } = loadPlaywright();
-  const browser = await chromium.launch({ channel: "chrome", headless: true });
+  const browser = await chromium.launch({ headless: true });
   const checks = [];
   try {
     checks.push(await dashboardCheck(browser));
