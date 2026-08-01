@@ -918,7 +918,7 @@ function VisualExecutiveOverview({
             </ExpandablePanel>
             <ExpandablePanel
               id="ai-insights"
-              title="Capital Curiosity"
+              title="AI Insights"
               href="/intelligence"
               expanded={expandedPanel === "ai-insights"}
               onToggle={onTogglePanel}
