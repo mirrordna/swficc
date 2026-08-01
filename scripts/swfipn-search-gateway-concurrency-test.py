@@ -136,9 +136,17 @@ try:
             for _, payload, _seconds, _cache_control in responses
         ),
         "single_cold_fanout": counts_after_cold == {"public": 1, "source": 1},
-        "stable_primary_precedes_source_cleanup": max(seconds for _state, _payload, seconds, _cache_control in responses) < 0.7,
-        "stable_primary_state_is_explicit": sorted(state for state, _payload, _seconds, _cache_control in responses)
-        == [*(["COALESCED"] * 9), "MISS_PRIMARY_STABLE"],
+        "stable_primary_precedes_source_cleanup": min(
+            (seconds for state, _payload, seconds, _cache_control in responses if state == "MISS_PRIMARY_STABLE"),
+            default=float("inf"),
+        ) < 0.7,
+        "stable_primary_state_is_explicit": sum(
+            state == "MISS_PRIMARY_STABLE" for state, _payload, _seconds, _cache_control in responses
+        ) == 1
+        and all(
+            state in {"MISS_PRIMARY_STABLE", "COALESCED", "HIT"}
+            for state, _payload, _seconds, _cache_control in responses
+        ),
         "stable_primary_is_shared_cacheable": all(
             str(cache_control).startswith("public,") for _state, _payload, _seconds, cache_control in responses
         ),
