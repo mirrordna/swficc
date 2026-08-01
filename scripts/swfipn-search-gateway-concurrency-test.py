@@ -119,12 +119,12 @@ try:
     counts_after_exact = dict(upstream_counts)
     fuzzy_state, fuzzy_payload, fuzzy_seconds, _fuzzy_cache_control = request(origin, "Hong Kong Investment")
     gateway.PUBLIC_SEARCH_PRIMARY_CACHE_TTL_SECONDS = 0.2
-    request(origin, "Abu Dhabi Investment Authority")
+    request(origin, "Abu Dhabi Investment")
     time.sleep(0.85)
-    partial_state, partial_payload, _partial_seconds, partial_cache_control = request(origin, "Abu Dhabi Investment Authority")
+    partial_state, partial_payload, _partial_seconds, partial_cache_control = request(origin, "Abu Dhabi Investment")
     counts_after_partial = dict(upstream_counts)
     time.sleep(0.5)
-    retried_state, _retried_payload, _retried_seconds, retried_cache_control = request(origin, "Abu Dhabi Investment Authority")
+    retried_state, _retried_payload, _retried_seconds, retried_cache_control = request(origin, "Abu Dhabi Investment")
     time.sleep(0.1)
     checks = {
         "all_requests_source_backed": all(payload.get("fact") is True for _, payload, _seconds, _cache_control in responses),
@@ -133,24 +133,24 @@ try:
             for _, payload, _seconds, _cache_control in responses
         ),
         "single_cold_fanout": counts_after_cold == {"public": 1, "source": 1},
-        "primary_response_precedes_enrichment": max(seconds for _state, _payload, seconds, _cache_control in responses) < 0.7,
-        "pending_state_is_explicit": sorted(state for state, _payload, _seconds, _cache_control in responses)
-        == ["MISS_PRIMARY", *(["PRIMARY_PENDING"] * 9)],
-        "pending_responses_are_not_shared_cached": all(
-            cache_control == "no-store" for _state, _payload, _seconds, cache_control in responses
+        "stable_primary_precedes_source_cleanup": max(seconds for _state, _payload, seconds, _cache_control in responses) < 0.7,
+        "stable_primary_state_is_explicit": sorted(state for state, _payload, _seconds, _cache_control in responses)
+        == [*(["COALESCED"] * 9), "MISS_PRIMARY_STABLE"],
+        "stable_primary_is_shared_cacheable": all(
+            str(cache_control).startswith("public,") for _state, _payload, _seconds, cache_control in responses
         ),
-        "pending_payload_is_not_complete": all(
-            payload.get("data", {}).get("enrichment") == "pending"
+        "stable_primary_payload_is_immutable_public_snapshot": all(
+            payload.get("data", {}).get("enrichment") == "stable_primary"
             and payload.get("data", {}).get("evidence_lanes") == {"public": True, "source_entity": False}
             for _state, payload, _seconds, _cache_control in responses
         ),
         "warm_request_is_hit": warm_state == "HIT",
-        "complete_response_is_shared_cacheable": str(warm_cache_control).startswith("public,"),
+        "warm_response_is_shared_cacheable": str(warm_cache_control).startswith("public,"),
         "warm_request_avoids_upstream": counts_after_exact == counts_after_cold,
         "warm_payload_source_backed": warm_payload.get("fact") is True,
-        "warm_payload_is_fully_enriched": warm_payload.get("data", {}).get("enrichment") == "complete"
-        and warm_payload.get("data", {}).get("evidence_lanes") == {"public": True, "source_entity": True},
-        "deferred_enrichment_preserves_ranked_top_n": all(
+        "warm_payload_matches_stable_primary_contract": warm_payload.get("data", {}).get("enrichment") == "stable_primary"
+        and warm_payload.get("data", {}).get("evidence_lanes") == {"public": True, "source_entity": False},
+        "source_cleanup_never_mutates_ranked_top_n": all(
             [row.get("source_url") for row in payload.get("data", {}).get("results", [])]
             == [row.get("source_url") for row in warm_payload.get("data", {}).get("results", [])]
             for _state, payload, _seconds, _cache_control in responses

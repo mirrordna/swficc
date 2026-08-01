@@ -1545,27 +1545,19 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
             for _kind, packet in public_packets:
                 public_rows.extend(self.rows_from_public_search_packet(packet))
             source_futures = [(kind, future) for kind, future in futures if kind == "source"]
-            ranked_public_rows = rank_search_rows(dedupe_search_rows(public_rows), query)
-            if (
-                has_exact_canonical_search_result(query, public_rows)
-                and len(ranked_public_rows) >= safe_limit
-                and any(not future.done() for _kind, future in source_futures)
-            ):
-                body, _upstream_fact, _complete = self.render_enhanced_public_search(public_packets, query, safe_limit, "pending")
-                job_token = object()
+            if has_exact_canonical_search_result(query, public_rows) and any(not future.done() for _kind, future in source_futures):
+                body, _upstream_fact, _complete = self.render_enhanced_public_search(public_packets, query, safe_limit, "stable_primary")
                 self.server.public_search_cache[cache_key] = {
                     "stored_at": time.time(),
-                    "ttl_seconds": PUBLIC_SEARCH_PRIMARY_CACHE_TTL_SECONDS,
                     "body": body,
-                    "cacheable": False,
-                    "cache_state": "PRIMARY_PENDING",
-                    "job_token": job_token,
+                    "cacheable": True,
+                    "cache_state": "HIT",
                 }
                 enrichment_thread = Thread(
-                    target=self.finish_enhanced_public_search,
-                    args=(executor, futures, query, safe_limit, cache_key, job_token),
+                    target=self.finish_stable_primary_cleanup,
+                    args=(executor, futures),
                     daemon=True,
-                    name="swfipn-search-enrichment",
+                    name="swfipn-search-primary-cleanup",
                 )
                 cleanup_deferred = True
                 try:
@@ -1573,7 +1565,7 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
                 except Exception:
                     cleanup_deferred = False
                     raise
-                return body, False, "MISS_PRIMARY"
+                return body, True, "MISS_PRIMARY_STABLE"
 
             packets = [self.search_future_packet(kind, future) for kind, future in futures]
             body, upstream_fact, complete = self.render_enhanced_public_search(packets, query, safe_limit, "complete")
@@ -1592,19 +1584,13 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
             key = "results" if kind == "public" else "rows"
             return kind, {"status": "blocked", "fact": False, "data": {key: []}}
 
-    def finish_enhanced_public_search(self, executor, futures, query, safe_limit, cache_key, job_token):
+    def finish_stable_primary_cleanup(self, executor, futures):
         try:
-            packets = [self.search_future_packet(kind, future) for kind, future in futures]
-            body, upstream_fact, complete = self.render_enhanced_public_search(packets, query, safe_limit, "complete")
-            if upstream_fact and self.enrichment_job_is_current(cache_key, job_token):
-                self.cache_enhanced_public_search(cache_key, body, complete)
+            for kind, future in futures:
+                self.search_future_packet(kind, future)
         finally:
             executor.shutdown(wait=False)
             self.server.public_search_upstream_slots.release()
-
-    def enrichment_job_is_current(self, cache_key, job_token):
-        current = self.server.public_search_cache.get(cache_key)
-        return current is None or current.get("job_token") is job_token
 
     def render_enhanced_public_search(self, packets, query, safe_limit, enrichment):
         public_rows = []
@@ -1620,7 +1606,7 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
                 evidence_lanes["source_entity"] = evidence_lanes["source_entity"] or packet.get("fact") is True
                 source_rows.extend(self.rows_from_source_data_packet(packet))
         complete = all(evidence_lanes.values())
-        effective_enrichment = enrichment if enrichment == "pending" else ("complete" if complete else "partial")
+        effective_enrichment = enrichment if enrichment in {"pending", "stable_primary"} else ("complete" if complete else "partial")
         primary = rank_search_rows(dedupe_search_rows(public_rows), query)
         primary_keys = {search_record_key(row) for row in primary}
         appended = [
