@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 
 const repoRoot = process.cwd();
@@ -18,6 +20,7 @@ const publicOrigin = normalizeOrigin(process.env.SWFIPN_ORIGIN || "https://swfip
 const localOrigin = normalizeOrigin(`http://127.0.0.1:${port}/swficc/`);
 const backendOrigin = (process.env.SWFIPN_BACKEND_ORIGIN || "https://swfipn.activemirror.ai").replace(/\/$/, "");
 let activeOrigin = target === "local" ? localOrigin : publicOrigin;
+let atomicWriteSequence = 0;
 const commandTimeoutMs = Number(process.env.SWFIPN_ACCEPTANCE_COMMAND_TIMEOUT_MS || 1_200_000);
 const remoteHost = process.env.SWFIPN_RUNTIME_REMOTE_HOST || process.env.SWFIPN_HOST || "swfipn-do";
 const remoteRoot = process.env.SWFIPN_REMOTE_ROOT || "/opt/swfipn-acceptance";
@@ -40,6 +43,37 @@ function normalizeOrigin(value) {
 function tail(value, max = 5000) {
   const text = String(value || "");
   return text.length > max ? text.slice(text.length - max) : text;
+}
+
+function atomicWriteText(destination, payload) {
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  atomicWriteSequence += 1;
+  const temporary = path.join(path.dirname(destination), `.${path.basename(destination)}.${process.pid}.${atomicWriteSequence}.tmp`);
+  let handle;
+  try {
+    handle = fs.openSync(temporary, "wx");
+    fs.writeFileSync(handle, payload, "utf8");
+    fs.fsyncSync(handle);
+    fs.closeSync(handle);
+    handle = undefined;
+    fs.renameSync(temporary, destination);
+    const directoryHandle = fs.openSync(path.dirname(destination), "r");
+    try {
+      fs.fsyncSync(directoryHandle);
+    } finally {
+      fs.closeSync(directoryHandle);
+    }
+  } finally {
+    if (handle !== undefined) fs.closeSync(handle);
+    fs.rmSync(temporary, { force: true });
+  }
+  return createHash("sha256").update(payload).digest("hex");
+}
+
+function writeHashedArtifact(destination, payload) {
+  const sha256 = atomicWriteText(destination, payload);
+  atomicWriteText(`${destination}.sha256`, `${sha256}  ${path.basename(destination)}\n`);
+  return sha256;
 }
 
 function runCommand(id, command, args, options = {}) {
@@ -160,11 +194,16 @@ function receiptSummary(file, allowedStatuses = ["pass", "complete", "pass_with_
   const absolute = path.join(outputDir, file);
   try {
     const stat = fs.statSync(absolute);
-    const body = JSON.parse(fs.readFileSync(absolute, "utf8"));
+    const raw = fs.readFileSync(absolute);
+    const body = JSON.parse(raw.toString("utf8"));
+    const sha256 = createHash("sha256").update(raw).digest("hex");
     const inferredStatus = body.status || body.final_verdict || (body.collapse_detected === false ? "pass" : "");
     const { timestampField, receiptTimestamp, timestampValid, fresh } = receiptTimestampState(body, minFreshAtMs);
     return {
       file,
+      sha256,
+      byte_count: raw.length,
+      schema_version: body.schema_version || null,
       ok: fresh && allowedStatuses.includes(inferredStatus),
       status: timestampValid ? (fresh ? inferredStatus : "stale") : "invalid_timestamp",
       stale: timestampValid && !fresh,
@@ -206,6 +245,42 @@ function receiptTimestampSelfTest() {
   assert.equal(receiptTimestampState(invalid, 0, now + 60_000).timestampValid, false);
   assert.equal(receiptTimestampState(stale, now, now + 60_000).fresh, false);
   assert.equal(receiptTimestampState({ generated_at: new Date(now + 60_001).toISOString() }, 0, now + 60_000).timestampValid, false);
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "swfipn-harness-self-test-"));
+  try {
+    const destination = path.join(tempDir, "receipt.json");
+    const sha256 = writeHashedArtifact(destination, "{\"status\":\"pass\"}\n");
+    assert.equal(fs.readFileSync(destination, "utf8"), "{\"status\":\"pass\"}\n");
+    assert.equal(fs.readFileSync(`${destination}.sha256`, "utf8"), `${sha256}  receipt.json\n`);
+    writeHashedArtifact(destination, "{\"status\":\"fail\"}\n");
+    assert.equal(fs.readFileSync(destination, "utf8"), "{\"status\":\"fail\"}\n");
+    const manifest = receiptManifestForSteps([
+      { receipt: { file: "fixture.json", sha256: "a".repeat(64), byte_count: 24, schema_version: "swfipn.fixture.v1", generated_at: validGenerated.generated_at, ok: true } },
+    ]);
+    assert.equal(manifest.requiredReceipts[0].path, "output/fixture.json");
+    assert.equal(manifest.inputReceiptManifestSha256.length, 64);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+function receiptManifestForSteps(steps) {
+  const requiredReceipts = steps
+    .filter((step) => step.receipt?.file && step.receipt?.sha256)
+    .map((step) => ({
+      path: path.posix.join("output", step.receipt.file),
+      sha256: step.receipt.sha256,
+      byte_count: step.receipt.byte_count,
+      schema_version: step.receipt.schema_version,
+      generated_at: step.receipt.generated_at,
+      passed: Boolean(step.receipt.ok),
+    }));
+  const manifestPayload = requiredReceipts
+    .map((item) => `${item.path}\0${item.sha256 || "missing"}`)
+    .join("\n");
+  return {
+    requiredReceipts,
+    inputReceiptManifestSha256: createHash("sha256").update(manifestPayload).digest("hex"),
+  };
 }
 
 function readOutputJson(file) {
@@ -386,9 +461,14 @@ function npmGate(id, script, receipt, env = {}, allowedStatuses) {
 
 function writeReceipt(steps) {
   const failures = steps.filter((step) => !step.ok);
+  const { requiredReceipts, inputReceiptManifestSha256 } = receiptManifestForSteps(steps);
   const receipt = {
-    schema_version: "swfipn.acceptance_lock.v2",
+    schema_version: "swfipn.acceptance_lock.v3",
     generated_at: new Date().toISOString(),
+    receipt_contract_version: "swfipn.receipt_envelope.v1",
+    run_started_at: new Date(runStartedAtMs).toISOString(),
+    input_receipt_manifest_sha256: inputReceiptManifestSha256,
+    required_receipts: requiredReceipts,
     target,
     origin: activeOrigin,
     status: failures.length ? "fail" : "pass",
@@ -418,8 +498,8 @@ function writeReceipt(steps) {
     steps,
     failures,
   };
-  fs.writeFileSync(jsonPath, `${JSON.stringify(receipt, null, 2)}\n`);
-  fs.writeFileSync(markdownPath, renderMarkdown(receipt));
+  writeHashedArtifact(jsonPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  atomicWriteText(markdownPath, renderMarkdown(receipt));
   return receipt;
 }
 
@@ -622,15 +702,19 @@ const entrypoint = hasArg("--self-test")
 entrypoint.catch((error) => {
   fs.mkdirSync(outputDir, { recursive: true });
   const receipt = {
-    schema_version: "swfipn.acceptance_lock.v2",
+    schema_version: "swfipn.acceptance_lock.v3",
     generated_at: new Date().toISOString(),
+    receipt_contract_version: "swfipn.receipt_envelope.v1",
+    run_started_at: new Date(runStartedAtMs).toISOString(),
+    input_receipt_manifest_sha256: createHash("sha256").update("").digest("hex"),
+    required_receipts: [],
     target,
     origin: activeOrigin,
     status: "fail",
     error: error.stack || error.message,
   };
-  fs.writeFileSync(jsonPath, `${JSON.stringify(receipt, null, 2)}\n`);
-  fs.writeFileSync(markdownPath, `# SWFIPN Acceptance Lock\n\nStatus: fail\n\n${error.stack || error.message}\n`);
+  writeHashedArtifact(jsonPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  atomicWriteText(markdownPath, `# SWFIPN Acceptance Lock\n\nStatus: fail\n\n${error.stack || error.message}\n`);
   console.error(error);
   process.exit(1);
 });
