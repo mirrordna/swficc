@@ -133,6 +133,36 @@ async function orderedResultSet(page) {
   };
 }
 
+async function waitForSearchLanes(page, networkTrace, timeout = 30_000) {
+  const requiredPaths = [
+    "/api/v1/public/search",
+    "/api/source-data/search/v1",
+    "/api/source-intelligence/news/v1",
+    "/api/people/search/v1",
+    "/api/entity-transactions/v1",
+  ];
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const responsePaths = networkTrace
+      .filter((event) => event.event === "response" && event.status >= 200 && event.status < 300)
+      .map((event) => event.path);
+    const missing = requiredPaths.filter((required) => !responsePaths.some((observed) => observed.startsWith(required)));
+    const searching = await page.getByText("Searching this category…", { exact: true }).count();
+    if (!missing.length && searching === 0) {
+      return { settled: true, required_paths: requiredPaths, missing_paths: [] };
+    }
+    await page.waitForTimeout(100);
+  }
+  const responsePaths = networkTrace
+    .filter((event) => event.event === "response" && event.status >= 200 && event.status < 300)
+    .map((event) => event.path);
+  return {
+    settled: false,
+    required_paths: requiredPaths,
+    missing_paths: requiredPaths.filter((required) => !responsePaths.some((observed) => observed.startsWith(required))),
+  };
+}
+
 async function runQuery(browser, origin, testCase) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const startedAt = Date.now();
@@ -197,6 +227,7 @@ async function runQuery(browser, origin, testCase) {
       : "";
     const sourceLinkMatchesLiveResult = Boolean(canonicalSourceHref)
       && normalizeComparableUrl(canonicalSourceHref) === normalizeComparableUrl(liveEntityHref);
+    const laneSettlement = await waitForSearchLanes(page, networkTrace);
     const resultSet = await orderedResultSet(page);
     const resultSetComplete = requiredPopulatedCategories.every((category) => resultSet.counts[category] > 0);
     const resultSourcesComplete = Object.values(resultSet.categories)
@@ -220,6 +251,7 @@ async function runQuery(browser, origin, testCase) {
         && liveEntityMs <= liveEntityBudgetMs
         && newsMs <= newsBudgetMs
         && sourceLinkMatchesLiveResult
+        && laneSettlement.settled
         && resultSetComplete
         && resultSourcesComplete,
       entity_ms: entityMs,
@@ -235,6 +267,8 @@ async function runQuery(browser, origin, testCase) {
       people_result_present: peopleResult.present,
       people_section_text: peopleSectionText,
       source_link_matches_live_result: sourceLinkMatchesLiveResult,
+      search_lanes_settled: laneSettlement.settled,
+      search_lane_settlement: laneSettlement,
       deterministic_result_set: resultSet.categories,
       deterministic_result_counts: resultSet.counts,
       deterministic_result_fingerprint_sha256: resultSet.fingerprint_sha256,
