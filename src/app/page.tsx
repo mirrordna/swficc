@@ -4,7 +4,6 @@ import type { AnchorHTMLAttributes, CSSProperties, KeyboardEvent as ReactKeyboar
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import type { Packet } from "@/lib/sourcePackets";
 import {
   count,
@@ -160,7 +159,6 @@ function storeRenderedSearchPrefetch(query: string, groups: BrdSearchGroup[]): v
 
 export default function DashboardPage() {
   const rootRef = useGsapReveal<HTMLDivElement>();
-  const router = useRouter();
   const [packets, setPackets] = useState<Packets>(() => freshHomeSnapshot());
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -203,10 +201,6 @@ export default function DashboardPage() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
-
-  useEffect(() => {
-    router.prefetch("/search/");
-  }, [router]);
 
   useEffect(() => {
     let active = true;
@@ -3888,7 +3882,7 @@ function DataLink({ href, sourceHref, className, style, children }: { href: stri
   const target = href;
   const provenance = sourceHref || sourceProvenanceHref(href);
   const recordLink = isCanonicalSwfiRecordHref(href);
-  return <DashboardLink href={target} title={provenance ? "View details" : undefined} data-record-link={recordLink ? "true" : undefined} data-source-state={provenance ? "on-file" : undefined} data-source-href={provenance || undefined} className={className} style={style}>{children}</DashboardLink>;
+  return <DashboardLink href={target} title={provenance ? "View details" : undefined} data-record-link={recordLink ? "true" : undefined} data-source-state={provenance ? "on-file" : undefined} className={className} style={style}>{children}</DashboardLink>;
 }
 
 function isCanonicalSwfiRecordHref(href: string | undefined): boolean {

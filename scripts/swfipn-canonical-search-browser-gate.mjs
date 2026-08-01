@@ -132,7 +132,7 @@ async function runQuery(browser, origin, testCase) {
       timedVisibility(page.getByTestId("smart-search-canonical-identity"), startedAt, 5_000),
       timedVisibility(liveEntityLink, startedAt, 25_000),
       timedVisibility(page.getByText(new RegExp(testCase.news), { exact: false }).first(), startedAt, 15_000),
-      timedVisibility(peopleSection.locator('[data-source-href*="/v1/people/"]').first(), startedAt, 30_000),
+      timedVisibility(peopleSection.locator('a[href*="%2Fv1%2Fpeople%2F"], a[href*="/v1/people/"]').first(), startedAt, 30_000),
     ]);
     const entityMs = canonicalIdentity.ms;
     const liveEntityMs = liveEntity.ms;
@@ -140,14 +140,14 @@ async function runQuery(browser, origin, testCase) {
     const canonicalSourceLink = page.getByTestId("smart-search-canonical-source-link");
     const canonicalSourceHref = canonicalIdentity.present && await canonicalSourceLink.count()
       ? await canonicalSourceLink.evaluate((node) => (
-          node.getAttribute("data-source-href")
-          || node.querySelector("a")?.getAttribute("data-source-href")
+          node.getAttribute("href")
+          || node.querySelector("a")?.getAttribute("href")
           || ""
         ))
       : "";
     const liveEntityPresent = liveEntity.present;
     const liveEntityHref = liveEntityPresent
-      ? await liveEntityLink.evaluate((node) => node.closest("a")?.getAttribute("data-source-href") || "")
+      ? await liveEntityLink.evaluate((node) => node.closest("a")?.getAttribute("href") || "")
       : "";
     const sourceLinkMatchesLiveResult = Boolean(canonicalSourceHref)
       && normalizeComparableUrl(canonicalSourceHref) === normalizeComparableUrl(liveEntityHref);
@@ -197,6 +197,10 @@ async function runQuery(browser, origin, testCase) {
 function normalizeComparableUrl(value) {
   try {
     const parsed = new URL(value);
+    if (["/v1/signin", "/v1/signin/"].includes(parsed.pathname)) {
+      const redirect = parsed.searchParams.get("redirect") || "";
+      if (redirect.startsWith("/")) return new URL(redirect, parsed.origin).href.replace(/\/$/, "");
+    }
     parsed.hash = "";
     parsed.search = "";
     return parsed.href.replace(/\/$/, "");
