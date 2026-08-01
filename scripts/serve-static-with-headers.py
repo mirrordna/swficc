@@ -1545,7 +1545,12 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
             for _kind, packet in public_packets:
                 public_rows.extend(self.rows_from_public_search_packet(packet))
             source_futures = [(kind, future) for kind, future in futures if kind == "source"]
-            if has_exact_canonical_search_result(query, public_rows) and any(not future.done() for _kind, future in source_futures):
+            ranked_public_rows = rank_search_rows(dedupe_search_rows(public_rows), query)
+            if (
+                has_exact_canonical_search_result(query, public_rows)
+                and len(ranked_public_rows) >= safe_limit
+                and any(not future.done() for _kind, future in source_futures)
+            ):
                 body, _upstream_fact, _complete = self.render_enhanced_public_search(public_packets, query, safe_limit, "pending")
                 job_token = object()
                 self.server.public_search_cache[cache_key] = {
@@ -1602,20 +1607,28 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
         return current is None or current.get("job_token") is job_token
 
     def render_enhanced_public_search(self, packets, query, safe_limit, enrichment):
-        search_rows = []
+        public_rows = []
+        source_rows = []
         upstream_fact = False
         evidence_lanes = {"public": False, "source_entity": False}
         for kind, packet in packets:
             upstream_fact = upstream_fact or packet.get("fact") is True
             if kind == "public":
                 evidence_lanes["public"] = evidence_lanes["public"] or packet.get("fact") is True
-                search_rows.extend(self.rows_from_public_search_packet(packet))
+                public_rows.extend(self.rows_from_public_search_packet(packet))
             else:
                 evidence_lanes["source_entity"] = evidence_lanes["source_entity"] or packet.get("fact") is True
-                search_rows.extend(self.rows_from_source_data_packet(packet))
+                source_rows.extend(self.rows_from_source_data_packet(packet))
         complete = all(evidence_lanes.values())
         effective_enrichment = enrichment if enrichment == "pending" else ("complete" if complete else "partial")
-        ranked = rank_search_rows(dedupe_search_rows(search_rows), query)[:safe_limit]
+        primary = rank_search_rows(dedupe_search_rows(public_rows), query)
+        primary_keys = {search_record_key(row) for row in primary}
+        appended = [
+            row
+            for row in rank_search_rows(dedupe_search_rows(source_rows), query)
+            if search_record_key(row) not in primary_keys
+        ]
+        ranked = [*primary, *appended][:safe_limit]
         body = json.dumps({
             "status": "ok" if upstream_fact else "unavailable",
             "fact": upstream_fact,

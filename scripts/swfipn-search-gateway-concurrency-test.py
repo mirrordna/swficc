@@ -47,9 +47,24 @@ class MockBackendHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
-        data = {"results": [record], "query": query}
+        records = [record]
+        if not is_adia and lane == "public":
+            records.extend({
+                "name": f"Hong Kong Investment Corporation Portfolio {index:02d}",
+                "type": "Company",
+                "country": "Hong Kong",
+                "source_url": f"https://www.swfi.com/v1/entities/mock-public-{index:02d}",
+            } for index in range(1, 25))
+        if not is_adia and lane == "source":
+            records.append({
+                "name": "Hong Kong Investment Corporation Source Alpha",
+                "type": "Sovereign Wealth Fund",
+                "country": "Hong Kong",
+                "source_url": "https://www.swfi.com/v1/entities/mock-source-alpha",
+            })
+        data = {"results": records, "query": query}
         if lane == "source":
-            data["rows"] = [record]
+            data["rows"] = records
         body = json.dumps({"status": "ok", "fact": True, "data": data}).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -135,17 +150,22 @@ try:
         "warm_payload_source_backed": warm_payload.get("fact") is True,
         "warm_payload_is_fully_enriched": warm_payload.get("data", {}).get("enrichment") == "complete"
         and warm_payload.get("data", {}).get("evidence_lanes") == {"public": True, "source_entity": True},
+        "deferred_enrichment_preserves_ranked_top_n": all(
+            [row.get("source_url") for row in payload.get("data", {}).get("results", [])]
+            == [row.get("source_url") for row in warm_payload.get("data", {}).get("results", [])]
+            for _state, payload, _seconds, _cache_control in responses
+        ),
         "fuzzy_query_waits_for_full_enrichment": fuzzy_state == "MISS"
         and fuzzy_seconds >= 0.7
         and fuzzy_payload.get("data", {}).get("enrichment") == "complete",
-        "fuzzy_query_uses_one_fanout": counts_after_partial == {"public": 3, "source": 3},
-        "failed_enrichment_is_explicitly_partial": partial_state == "PARTIAL"
+        "failed_source_retries_without_duplicate_public": counts_after_partial == {"public": 3, "source": 4},
+        "failed_enrichment_is_explicitly_partial": partial_state == "MISS_PARTIAL"
         and partial_cache_control == "no-store"
         and partial_payload.get("data", {}).get("enrichment") == "partial"
         and partial_payload.get("data", {}).get("evidence_lanes") == {"public": True, "source_entity": False},
-        "partial_result_retries_after_short_ttl": retried_state == "MISS_PRIMARY"
+        "partial_result_retries_after_short_ttl": retried_state == "MISS_PARTIAL"
         and retried_cache_control == "no-store"
-        and upstream_counts == {"public": 3, "source": 4},
+        and upstream_counts == {"public": 3, "source": 5},
     }
     receipt = {
         "status": "pass" if all(checks.values()) else "fail",
