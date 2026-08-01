@@ -193,6 +193,7 @@ async function runQuery(browser, origin, testCase) {
   });
   try {
     await page.goto(origin, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.locator('[data-dashboard-ready="true"]').waitFor({ state: "attached", timeout: 30_000 });
     await page.getByRole("button", { name: "Open Global Search" }).click();
     await page.getByRole("textbox", { name: "Search query" }).fill(testCase.query);
     const entitySection = page.locator("section").filter({
@@ -305,6 +306,7 @@ async function runRapidReplacement(browser, origin) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   try {
     await page.goto(origin, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.locator('[data-dashboard-ready="true"]').waitFor({ state: "attached", timeout: 30_000 });
     await page.getByRole("button", { name: "Open Global Search" }).click();
     const input = page.getByRole("textbox", { name: "Search query" });
     await input.fill("ADIA");
