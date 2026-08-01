@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
+import assert from "node:assert/strict";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -21,6 +22,7 @@ const commandTimeoutMs = Number(process.env.SWFIPN_ACCEPTANCE_COMMAND_TIMEOUT_MS
 const remoteHost = process.env.SWFIPN_RUNTIME_REMOTE_HOST || process.env.SWFIPN_HOST || "swfipn-do";
 const remoteRoot = process.env.SWFIPN_REMOTE_ROOT || "/opt/swfipn-acceptance";
 const composeProject = process.env.SWFIPN_COMPOSE_PROJECT || "swfipn_acceptance";
+const runStartedAtMs = Date.now();
 
 function argValue(name) {
   const index = process.argv.indexOf(name);
@@ -141,31 +143,69 @@ function gitDiffStats() {
   };
 }
 
+function receiptTimestampState(body, minFreshAtMs = 0, maxFutureAtMs = Date.now() + 60_000) {
+  const timestampField = body.generated_at ? "generated_at" : (body.timestamp ? "timestamp" : "");
+  const receiptTimestamp = timestampField ? body[timestampField] : "";
+  const receiptTimeMs = receiptTimestamp ? Date.parse(receiptTimestamp) : Number.NaN;
+  const timestampValid = Number.isFinite(receiptTimeMs) && receiptTimeMs <= maxFutureAtMs;
+  return {
+    timestampField,
+    receiptTimestamp,
+    timestampValid,
+    fresh: timestampValid && (!minFreshAtMs || receiptTimeMs >= minFreshAtMs - 1000),
+  };
+}
+
 function receiptSummary(file, allowedStatuses = ["pass", "complete", "pass_with_quarantine", "go", "go_with_caveat"], minFreshAtMs = 0) {
   const absolute = path.join(outputDir, file);
   try {
     const stat = fs.statSync(absolute);
     const body = JSON.parse(fs.readFileSync(absolute, "utf8"));
     const inferredStatus = body.status || body.final_verdict || (body.collapse_detected === false ? "pass" : "");
-    const generatedAtMs = body.generated_at ? Date.parse(body.generated_at) : Number.NaN;
-    const receiptTimeMs = Number.isFinite(generatedAtMs) ? generatedAtMs : stat.mtimeMs;
-    const fresh = !minFreshAtMs || receiptTimeMs >= minFreshAtMs - 1000;
+    const { timestampField, receiptTimestamp, timestampValid, fresh } = receiptTimestampState(body, minFreshAtMs);
     return {
       file,
       ok: fresh && allowedStatuses.includes(inferredStatus),
-      status: fresh ? inferredStatus : "stale",
-      stale: !fresh,
-      generated_at: body.generated_at || "",
+      status: timestampValid ? (fresh ? inferredStatus : "stale") : "invalid_timestamp",
+      stale: timestampValid && !fresh,
+      timestamp_valid: timestampValid,
+      timestamp_field: timestampField,
+      generated_at: receiptTimestamp,
       mtime: stat.mtime.toISOString(),
       summary: body.summary || null,
       failures: [
-        ...(fresh ? [] : [`receipt_stale_before_current_run:${body.generated_at || stat.mtime.toISOString()}`]),
+        ...(timestampValid ? [] : ["receipt_missing_valid_top_level_timestamp"]),
+        ...(timestampValid && !fresh ? [`receipt_stale_before_current_run:${receiptTimestamp}`] : []),
         ...(Array.isArray(body.failures) ? body.failures.slice(0, 8) : []),
       ],
     };
   } catch (error) {
     return { file, ok: false, status: "missing", error: error.message };
   }
+}
+
+function receiptTimestampSelfTest() {
+  const now = Date.now();
+  const validGenerated = { generated_at: new Date(now).toISOString() };
+  const validTimestamp = { timestamp: new Date(now).toISOString() };
+  const invalid = { generated_at: "not-a-date" };
+  const stale = { generated_at: new Date(now - 60_000).toISOString() };
+  assert.deepEqual(receiptTimestampState(validGenerated, 0, now + 60_000), {
+    timestampField: "generated_at",
+    receiptTimestamp: validGenerated.generated_at,
+    timestampValid: true,
+    fresh: true,
+  });
+  assert.deepEqual(receiptTimestampState(validTimestamp, 0, now + 60_000), {
+    timestampField: "timestamp",
+    receiptTimestamp: validTimestamp.timestamp,
+    timestampValid: true,
+    fresh: true,
+  });
+  assert.equal(receiptTimestampState({}, 0, now + 60_000).timestampValid, false);
+  assert.equal(receiptTimestampState(invalid, 0, now + 60_000).timestampValid, false);
+  assert.equal(receiptTimestampState(stale, now, now + 60_000).fresh, false);
+  assert.equal(receiptTimestampState({ generated_at: new Date(now + 60_001).toISOString() }, 0, now + 60_000).timestampValid, false);
 }
 
 function readOutputJson(file) {
@@ -530,6 +570,7 @@ async function main() {
       "tools/loop-budget/swficc_acceptance_lock.py",
       "--repo", ".",
       "--out", "output/swfipn-acceptance-lock-tool-latest.json",
+      "--not-before", new Date(runStartedAtMs).toISOString(),
         "--receipt", "output/swfipn-acceptance-criteria-gate-latest.json",
         "--receipt", "output/swfipn-kp-acceptance-gate-latest.json",
         "--receipt", "output/swfipn-link-mapping-leakage-gate-latest.json",
@@ -571,7 +612,14 @@ async function main() {
   }
 }
 
-main().catch((error) => {
+const entrypoint = hasArg("--self-test")
+  ? Promise.resolve().then(() => {
+      receiptTimestampSelfTest();
+      console.log(JSON.stringify({ status: "pass", self_test: true }));
+    })
+  : main();
+
+entrypoint.catch((error) => {
   fs.mkdirSync(outputDir, { recursive: true });
   const receipt = {
     schema_version: "swfipn.acceptance_lock.v2",

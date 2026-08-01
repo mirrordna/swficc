@@ -32,6 +32,9 @@ CRITERIA=['Dashboard look and feel is consistent with SWFI website.','Public /sw
 LEAK_PATTERNS=[r'\bobject[_\s-]?id\b',r'\bdatabase[_\s-]?id\b',r'\bdebug\b',r'\bstack trace\b',r'\btraceback\b',r'\bActive Mirror\b',r'\broute ledger\b',r'\bsource gap\b',r'\binternal diagnostic',r'\bNaN\b']
 SKIP_DIRS={'.git','node_modules','.next','dist','build','coverage','__pycache__','.venv','venv','output','logs','out','tmp','tools','scripts','schemas','configs'}
 SCAN_SUFFIXES={'.html','.tsx','.jsx','.ts','.js','.vue','.svelte'}
+PASS_STATUSES={'pass','pass_with_quarantine','passed','ok','green','success','complete','go','go_with_caveat'}
+FAIL_STATUSES={'fail','failed','blocked','no_go','error'}
+TOP_LEVEL_STATUS_KEYS=('status','result','verdict','gate_status','final_verdict')
 def now_iso(): return dt.datetime.now(dt.timezone.utc).isoformat()
 def run_cmd(repo:Path,cmd:list[str]):
     try:
@@ -67,19 +70,58 @@ def find_key_values(obj,wanted):
         for x in obj: vals+=find_key_values(x,wanted)
     return vals
 def receipt_passed(obj):
-    if obj is None or (isinstance(obj,dict) and '_parse_error' in obj): return False
-    if isinstance(obj,dict):
-        top_status=str(obj.get('status') or obj.get('result') or obj.get('verdict') or obj.get('gate_status') or obj.get('final_verdict') or '').lower()
-        if top_status in {'fail','failed','blocked','no_go','error'}: return False
-        if top_status in {'pass','pass_with_quarantine','passed','ok','green','success','go','go_with_caveat'}:
-            if obj.get('sendable') is False: return False
-            return True
-    for v in find_key_values(obj,{'status','result','verdict','gate_status'}):
-        if isinstance(v,str) and v.lower() in {'pass','pass_with_quarantine','passed','ok','green','success'}: return True
-    if any(v is True for v in find_key_values(obj,{'pass','passed','success','sendable'})): return True
-    flat=json.dumps(obj).lower()
-    if '"fail"' in flat or '"failed"' in flat or '"no_go"' in flat: return False
-    return False
+    if not isinstance(obj,dict) or '_parse_error' in obj: return False
+    statuses=[str(obj[key]).strip().lower() for key in TOP_LEVEL_STATUS_KEYS if obj.get(key) is not None]
+    if not statuses or any(status in FAIL_STATUSES for status in statuses): return False
+    if any(status not in PASS_STATUSES for status in statuses): return False
+    if obj.get('sendable') is False: return False
+    if isinstance(obj.get('failures'),list) and obj['failures']: return False
+    if isinstance(obj.get('blockers'),list) and obj['blockers']: return False
+    return True
+
+def parse_receipt_time(obj):
+    if not isinstance(obj,dict): return None
+    raw=obj.get('generated_at') or obj.get('timestamp')
+    if not isinstance(raw,str) or not raw.strip(): return None
+    try:
+        value=dt.datetime.fromisoformat(raw.strip().replace('Z','+00:00'))
+        if value.tzinfo is None: value=value.replace(tzinfo=dt.timezone.utc)
+        return value.astimezone(dt.timezone.utc)
+    except ValueError:
+        return None
+
+def receipt_fresh(obj,not_before,now,future_skew):
+    generated_at=parse_receipt_time(obj)
+    return generated_at is not None and generated_at >= not_before-dt.timedelta(seconds=1) and generated_at <= now+future_skew
+
+def receipt_passed_self_test():
+    passing=[
+        {'status':'pass'},
+        {'final_verdict':'go_with_caveat'},
+        {'status':'pass','sendable':True,'failures':[],'blockers':[]},
+    ]
+    failing=[
+        None,
+        [],
+        {'checks':[{'status':'pass'}]},
+        {'status':'unknown','checks':[{'status':'pass'}]},
+        {'status':'pass','final_verdict':'no_go'},
+        {'status':'pass','sendable':False},
+        {'status':'pass','failures':['nested gate failed']},
+        {'status':'pass','blockers':['missing source proof']},
+        {'_parse_error':'bad json'},
+    ]
+    assert all(receipt_passed(value) for value in passing)
+    assert not any(receipt_passed(value) for value in failing)
+    now=dt.datetime(2026,8,1,12,0,tzinfo=dt.timezone.utc)
+    not_before=now-dt.timedelta(minutes=5)
+    skew=dt.timedelta(seconds=60)
+    assert receipt_fresh({'generated_at':'2026-08-01T11:59:00Z'},not_before,now,skew)
+    assert receipt_fresh({'timestamp':'2026-08-01T12:00:30+00:00'},not_before,now,skew)
+    assert not receipt_fresh({'generated_at':'2026-08-01T11:00:00Z'},not_before,now,skew)
+    assert not receipt_fresh({'generated_at':'2026-08-01T12:01:01Z'},not_before,now,skew)
+    assert not receipt_fresh({'generated_at':'not-a-date'},not_before,now,skew)
+    assert not receipt_fresh({},not_before,now,skew)
 def receipt_blocker_summary(rel:str,obj:Any)->str:
     label=rel.replace('output/','').replace('-latest.json','')
     if obj is None:
@@ -301,17 +343,34 @@ def write_status_doc(repo,verdict,blockers,phase2,data_quality_caveats=None):
     lines += ['', '## Required wording','', f'Use: “{required_sentence}”','', 'Use: “corresponding SWFI core platform record/profile page through SWFI sign-in handoff.”','', 'Do not use: “Full BRD Phase 2 is complete.”','', 'Do not use: “All SWFI.com pages are fully migrated.”','', '## Final acceptance sentence','', final_sentence]
     (docs/'swfipn-acceptance-status.md').write_text('\n'.join(lines)+'\n',encoding='utf-8')
 def main():
-    ap=argparse.ArgumentParser(); ap.add_argument('--repo',default='.'); ap.add_argument('--out',default='output/swfipn-acceptance-lock-latest.json'); ap.add_argument('--receipt',action='append',default=[]); args=ap.parse_args()
+    ap=argparse.ArgumentParser(); ap.add_argument('--repo',default='.'); ap.add_argument('--out',default='output/swfipn-acceptance-lock-latest.json'); ap.add_argument('--receipt',action='append',default=[]); ap.add_argument('--not-before',default=''); ap.add_argument('--max-receipt-age-seconds',type=int,default=21600); ap.add_argument('--max-future-skew-seconds',type=int,default=60); ap.add_argument('--self-test',action='store_true'); args=ap.parse_args()
+    if args.self_test:
+        receipt_passed_self_test()
+        print(json.dumps({'status':'pass','self_test':True}))
+        return 0
+    if args.max_receipt_age_seconds < 0 or args.max_future_skew_seconds < 0:
+        raise ValueError('receipt age and future skew must be non-negative')
     repo=Path(args.repo).resolve(); receipt_paths=args.receipt or DEFAULT_RECEIPTS
+    now=dt.datetime.now(dt.timezone.utc)
+    if args.not_before:
+        not_before=dt.datetime.fromisoformat(args.not_before.replace('Z','+00:00'))
+        if not_before.tzinfo is None: not_before=not_before.replace(tzinfo=dt.timezone.utc)
+        not_before=not_before.astimezone(dt.timezone.utc)
+    else:
+        not_before=now-dt.timedelta(seconds=args.max_receipt_age_seconds)
+    future_skew=dt.timedelta(seconds=args.max_future_skew_seconds)
     req=[]; all_pass=True; route_count=None; hidden_count=None; hidden_details=[]; data_quality_caveats=[]; failed_receipts=[]
     for rel in receipt_paths:
-        obj=load_json(repo/rel); passed=receipt_passed(obj); all_pass=all_pass and passed
+        obj=load_json(repo/rel); authoritative=receipt_passed(obj); fresh=receipt_fresh(obj,not_before,now,future_skew); passed=authoritative and fresh; all_pass=all_pass and passed
         if 'route-ledger' in rel: route_count,hidden_count,hidden_details=get_route_counts(obj)
         if caveat:=manifest_caveat(obj): data_quality_caveats.append(caveat)
         if 'record-field-parity-full' in rel: data_quality_caveats.extend(field_parity_caveats(obj))
         if not passed:
-            failed_receipts.append(receipt_blocker_summary(rel,obj))
-        req.append({'path':rel,'exists':(repo/rel).exists(),'passed':passed,'parse_error':obj.get('_parse_error') if isinstance(obj,dict) and '_parse_error' in obj else None})
+            reasons=[]
+            if not authoritative: reasons.append('authoritative_top_level_verdict=false')
+            if not fresh: reasons.append(f'fresh_for_run=false:not_before={not_before.isoformat()}')
+            failed_receipts.append(receipt_blocker_summary(rel,obj) + ('; ' + '; '.join(reasons) if reasons else ''))
+        req.append({'path':rel,'exists':(repo/rel).exists(),'passed':passed,'authoritative_top_level_verdict':authoritative,'fresh_for_run':fresh,'generated_at':(obj.get('generated_at') or obj.get('timestamp')) if isinstance(obj,dict) else None,'parse_error':obj.get('_parse_error') if isinstance(obj,dict) and '_parse_error' in obj else None})
     leakage=scan_internal_leakage(repo)
     blockers=[]
     if not all_pass: blockers.extend(failed_receipts)
