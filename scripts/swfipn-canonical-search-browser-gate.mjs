@@ -128,11 +128,11 @@ async function runQuery(browser, origin, testCase) {
     const liveEntityLink = entitySection.getByText(testCase.entity, { exact: true }).first();
     // Observe independent lanes concurrently. Serial awaits incorrectly attribute
     // a slow people/news lane to an entity that may already be visible.
-    const [canonicalIdentity, liveEntity, newsResult, peopleEmptyState] = await Promise.all([
+    const [canonicalIdentity, liveEntity, newsResult, peopleResult] = await Promise.all([
       timedVisibility(page.getByTestId("smart-search-canonical-identity"), startedAt, 5_000),
       timedVisibility(liveEntityLink, startedAt, 25_000),
       timedVisibility(page.getByText(new RegExp(testCase.news), { exact: false }).first(), startedAt, 15_000),
-      timedVisibility(peopleSection.getByText("No source-backed people relationship found.", { exact: true }), startedAt, 30_000),
+      timedVisibility(peopleSection.locator('[data-source-href*="/v1/people/"]').first(), startedAt, 30_000),
     ]);
     const entityMs = canonicalIdentity.ms;
     const liveEntityMs = liveEntity.ms;
@@ -160,7 +160,7 @@ async function runQuery(browser, origin, testCase) {
       pass: canonicalIdentity.present
         && liveEntityPresent
         && newsResult.present
-        && peopleEmptyState.present
+        && peopleResult.present
         && body.includes(testCase.entity)
         && body.includes(testCase.news)
         && testCase.forbidden.every((value) => !body.includes(value))
@@ -179,7 +179,7 @@ async function runQuery(browser, origin, testCase) {
       canonical_identity_present: canonicalIdentity.present,
       live_entity_result_present: liveEntityPresent,
       news_result_present: newsResult.present,
-      people_empty_state_present: peopleEmptyState.present,
+      people_result_present: peopleResult.present,
       people_section_text: peopleSectionText,
       source_link_matches_live_result: sourceLinkMatchesLiveResult,
       network_trace: networkTrace.sort((left, right) => left.at_ms - right.at_ms),

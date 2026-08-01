@@ -1732,13 +1732,12 @@ function newsSearchGroups(packets: Packet[], query: string): BrdSearchGroup[] {
 function peopleSearchGroups(packets: Packet[], query: string): BrdSearchGroup[] {
   if (!isTextQueryReady(query)) return [];
   const variants = businessSearchQueryVariants(query);
-  const canonicalQueries = variants.slice(1);
   const peopleResults = dedupeSearchRecords(packets.flatMap((packet) => (
     isFact(packet) ? (rows(packet, "results").length ? rows(packet, "results") : rows(packet)) : []
   )));
-  const relatedPeople = canonicalQueries.length
-    ? peopleResults.filter((row) => canonicalQueries.some((canonical) => businessSearchRelevanceScore(row, canonical, "person") > 0))
-    : rankSearchRecords(peopleResults, query, "person");
+  const relatedPeople = dedupeSearchRecords(variants.flatMap((variant) => (
+    rankSearchRecords(peopleResults, variant, "person")
+  )));
   const items = relatedPeople.slice(0, 8).map((row) => ({
     label: brdText(row.name),
     detail: [brdText(row.title, ""), brdText(row.institution, "")].filter(Boolean).join(" · "),
