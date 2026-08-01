@@ -171,7 +171,7 @@ function isApprovedSwfiPlatformLink(href) {
 
 async function renderedPublicCheck() {
   const { chromium } = loadPlaywright();
-  const browser = await chromium.launch({ channel: "chrome",
+  const browser = await chromium.launch({
     headless: true,
     args: stableBrowserArgs(originHost),
   });

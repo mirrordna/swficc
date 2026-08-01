@@ -983,7 +983,7 @@ async function run() {
   };
   async function runWithBrowser(id, callback) {
     logProgress(`${id}: start`);
-    const browser = await chromium.launch({ channel: "chrome", ...launchOptions });
+    const browser = await chromium.launch(launchOptions);
     try {
       const result = await withCheckTimeout(id, () => callback(browser));
       logProgress(`${id}: ${result.ok ? "pass" : "fail"}`);

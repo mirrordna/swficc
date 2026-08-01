@@ -16,9 +16,9 @@ const deploy = hasArg("--deploy") || process.env.SWFIPN_ACCEPTANCE_DEPLOY === "1
 const includeShare = hasArg("--share") || process.env.SWFIPN_ACCEPTANCE_SHARE === "1";
 const skipBuild = hasArg("--skip-build") || process.env.SWFIPN_ACCEPTANCE_SKIP_BUILD === "1";
 const port = Number(argValue("--port") || process.env.SWFIPN_ACCEPTANCE_PORT || 8399);
-const publicOrigin = normalizeOrigin(process.env.SWFIPN_ORIGIN || "https://swfipn.activemirror.ai/swficc/");
+const publicOrigin = normalizeOrigin(process.env.SWFIPN_ORIGIN || "https://dashboard.swfi.com/swficc/");
 const localOrigin = normalizeOrigin(`http://127.0.0.1:${port}/swficc/`);
-const backendOrigin = (process.env.SWFIPN_BACKEND_ORIGIN || "https://swfipn.activemirror.ai").replace(/\/$/, "");
+const backendOrigin = (process.env.SWFIPN_BACKEND_ORIGIN || "https://dashboard.swfi.com").replace(/\/$/, "");
 let activeOrigin = target === "local" ? localOrigin : publicOrigin;
 let atomicWriteSequence = 0;
 const commandTimeoutMs = Number(process.env.SWFIPN_ACCEPTANCE_COMMAND_TIMEOUT_MS || 1_200_000);
@@ -137,6 +137,28 @@ function packageJsonCheck() {
   } catch (error) {
     return { id: "package_json", kind: "preflight", ok: false, error: error.message };
   }
+}
+
+function browserProviderCheck() {
+  const files = [
+    "scripts/swfipn-runtime-staleness-gate.mjs",
+    "scripts/swfipn-closeout-gate.mjs",
+    "scripts/swfipn-link-mapping-leakage-gate.mjs",
+    "scripts/swfipn-visible-link-escape-gate.mjs",
+    "scripts/swfipn-kp-acceptance-gate.mjs",
+    "scripts/swfipn-acceptance-criteria-gate.mjs",
+    "scripts/swfipn-gc1-link-proof.mjs",
+    "scripts/swfipn-share-gate.mjs",
+  ];
+  const hardCodedChromeChannel = /channel\s*:\s*["']chrome["']/;
+  const failures = files.filter((file) => hardCodedChromeChannel.test(fs.readFileSync(path.join(repoRoot, file), "utf8")));
+  return {
+    id: "browser_provider_contract",
+    kind: "preflight",
+    ok: failures.length === 0,
+    contract: "acceptance gates use the Chromium bundled in the pinned Playwright image",
+    failures,
+  };
 }
 
 function gitCheck() {
@@ -697,6 +719,7 @@ async function main() {
   let localServer = null;
   try {
     steps.push(packageJsonCheck());
+    steps.push(browserProviderCheck());
     steps.push(gitCheck());
 
     if (target === "local" && !skipBuild) {
@@ -755,12 +778,12 @@ async function main() {
     });
     const runtimeReceipt = receiptSummary("swfipn-runtime-staleness-gate-latest.json", undefined, runtimeStaleness.started_at_ms);
     steps.push({ ...runtimeStaleness, receipt: runtimeReceipt, ok: runtimeStaleness.ok && runtimeReceipt.ok });
-    steps.push(npmGate("closeout", target === "public" ? "closeout:gate:public" : "closeout:gate", "swfipn-closeout-gate-latest.json", gateEnv));
-    steps.push(npmGate("map_leakage", target === "public" ? "map-leakage:gate:public" : "map-leakage:gate", "swfipn-link-mapping-leakage-gate-latest.json", gateEnv));
-    steps.push(npmGate("search_categories", target === "public" ? "search:category:gate:public" : "search:category:gate", "swfipn-search-category-gate-latest.json", gateEnv));
-    steps.push(npmGate("link_escape", target === "public" ? "link:escape:gate:public" : "link:escape:gate", "swfipn-visible-link-escape-gate-latest.json", gateEnv));
-    steps.push(npmGate("kp_acceptance", target === "public" ? "kp:gate:public" : "kp:gate", "swfipn-kp-acceptance-gate-latest.json", gateEnv));
-    steps.push(npmGate("acceptance_criteria", target === "public" ? "acceptance:gate:public" : "acceptance:gate", "swfipn-acceptance-criteria-gate-latest.json", gateEnv));
+    steps.push(npmGate("closeout", "closeout:gate", "swfipn-closeout-gate-latest.json", gateEnv));
+    steps.push(npmGate("map_leakage", "map-leakage:gate", "swfipn-link-mapping-leakage-gate-latest.json", gateEnv));
+    steps.push(npmGate("search_categories", "search:category:gate", "swfipn-search-category-gate-latest.json", gateEnv));
+    steps.push(npmGate("link_escape", "link:escape:gate", "swfipn-visible-link-escape-gate-latest.json", gateEnv));
+    steps.push(npmGate("kp_acceptance", "kp:gate", "swfipn-kp-acceptance-gate-latest.json", gateEnv));
+    steps.push(npmGate("acceptance_criteria", "acceptance:gate", "swfipn-acceptance-criteria-gate-latest.json", gateEnv));
     if (target === "public") {
       steps.push(npmGate(
         "api_dns_key_lifecycle",
@@ -782,7 +805,7 @@ async function main() {
         ["scripts/swfipn-gc1-link-proof.mjs"],
         { env: { SWFIPN_ORIGIN: publicOrigin }, timeout: 120_000 }
       ));
-      steps.push(npmGate("share_gate", "share:gate:public", "swfipn-share-gate-latest.json", { SWFIPN_ORIGIN: publicOrigin }));
+      steps.push(npmGate("share_gate", "share:gate", "swfipn-share-gate-latest.json", { SWFIPN_ORIGIN: publicOrigin }));
     }
     fs.rmSync(path.join(outputDir, "swfipn-acceptance-lock-tool-latest.json"), { force: true });
     const acceptanceLockTool = runCommand("acceptance_lock_tool", "python3", [
@@ -834,6 +857,7 @@ async function main() {
 const entrypoint = hasArg("--self-test")
   ? Promise.resolve().then(() => {
       receiptTimestampSelfTest();
+      assert.equal(browserProviderCheck().ok, true);
       console.log(JSON.stringify({ status: "pass", self_test: true }));
     })
   : main();
