@@ -257,6 +257,18 @@ function receiptTimestampSelfTest() {
   );
   assert.equal(hostRuntimePath("/etc/passwd", "/host/opt/swfipn-acceptance", "/opt/swfipn-acceptance"), "");
   assert.equal(canonicalRuntimePath("/host/etc/passwd", "/host/opt/swfipn-acceptance", "/opt/swfipn-acceptance"), "");
+  assert.equal(usableDeployReceipt({ status: "pass", release: "/opt/swfipn-acceptance/releases/example" }), true);
+  assert.equal(usableDeployReceipt({
+    schema_version: "swfipn.deployment_receipt.v1",
+    status: "DEPLOYED_HEALTHY_PENDING_PUBLIC_ACCEPTANCE",
+    release: "/opt/swfipn-acceptance/releases/example",
+  }), true);
+  assert.equal(usableDeployReceipt({
+    schema_version: "swfipn.unknown.v1",
+    status: "DEPLOYED_HEALTHY_PENDING_PUBLIC_ACCEPTANCE",
+    release: "/opt/swfipn-acceptance/releases/example",
+  }), false);
+  assert.equal(usableDeployReceipt({ status: "pass" }), false);
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "swfipn-harness-self-test-"));
   try {
     const destination = path.join(tempDir, "receipt.json");
@@ -303,13 +315,20 @@ function readOutputJson(file) {
   }
 }
 
+function usableDeployReceipt(receipt) {
+  if (!receipt?.release) return false;
+  if (receipt.status === "pass") return true;
+  return receipt.schema_version === "swfipn.deployment_receipt.v1"
+    && receipt.status === "DEPLOYED_HEALTHY_PENDING_PUBLIC_ACCEPTANCE";
+}
+
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, "'\\''")}'`;
 }
 
 function deployReceipt() {
   const receipt = readOutputJson("swfipn-strict-acceptance-deploy-latest.json");
-  if (receipt.status !== "pass" || !receipt.release) {
+  if (!usableDeployReceipt(receipt)) {
     return { ok: false, receipt, failures: [`deploy_receipt_${receipt.status || "missing"}`] };
   }
   return { ok: true, receipt, failures: [] };
