@@ -50,6 +50,7 @@ assert.ok(frontendOnlyDeploy.includes("npm run test:search-gateway"), "frontend-
 assert.ok(frontendOnlyDeploy.includes("PREFLIGHT_IMAGE"), "frontend-only deploy must pin a DO preflight image");
 assert.ok(frontendOnlyDeploy.includes("docker run --rm --network host"), "frontend-only deploy must run preflight inside DO");
 assert.ok(frontendOnlyDeploy.includes("swfi-dashboard:/app:ro"), "DO preflight must not mutate transferred source");
+assert.ok(frontendOnlyDeploy.includes("swfi-dashboard/node_modules' '$REMOTE_RELEASE/swfi-dashboard/output"), "DO preflight must create only disposable volume mountpoints in staging");
 assert.ok(!frontendOnlyDeploy.includes('(cd "$FRONTEND_REPO" && npm'), "frontend-only deploy must not require Node or npm on a control Mac");
 assert.ok(
   freshnessAudit.includes("--env HOME=/tmp/swfipn-freshness"),
