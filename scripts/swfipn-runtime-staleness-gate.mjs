@@ -16,6 +16,7 @@ const assetReceiptPath = path.join(outputDir, "swfipn-asset-version-latest.json"
 const remoteHost = process.env.SWFIPN_RUNTIME_REMOTE_HOST || "swfipn-do";
 const remoteCheck = process.env.SWFIPN_RUNTIME_REMOTE_CHECK !== "0";
 const remoteWebContainer = process.env.SWFIPN_RUNTIME_WEB_CONTAINER || "swfipn_acceptance-swfipn-web-1";
+const runtimeLocal = process.env.SWFIPN_RUNTIME_LOCAL === "1";
 const maxReleaseAgeHours = Number(process.env.SWFIPN_MAX_RELEASE_AGE_HOURS || 72);
 const routeSpecs = [
   { key: "home", route: "/", releaseFile: "out/index.html", required: ["KPI CARDS", "Top Active Allocators", "Newest Transactions"] },
@@ -143,17 +144,22 @@ async function readPublicReleaseMarker(deploy, assetReceipt) {
   }
 }
 
-function readAssetReceipt() {
-  if (!fs.existsSync(assetReceiptPath)) return { ok: false, failures: ["missing_asset_receipt"] };
+function readAssetReceipt(deploy) {
+  const candidates = [assetReceiptPath];
+  if (runtimeLocal && deploy.ok && deploy.receipt?.release) {
+    candidates.push(path.join(deploy.receipt.release, "candidate-receipts", "swfipn-asset-version-latest.json"));
+  }
+  const selectedPath = candidates.find((candidate) => fs.existsSync(candidate));
+  if (!selectedPath) return { ok: false, source_path: "", failures: ["missing_asset_receipt"] };
   try {
-    const receipt = JSON.parse(fs.readFileSync(assetReceiptPath, "utf8"));
+    const receipt = JSON.parse(fs.readFileSync(selectedPath, "utf8"));
     const version = String(receipt.version || "").trim();
     const failures = [];
     if (receipt.status !== "pass") failures.push(`asset_status_${receipt.status || "missing"}`);
     if (!version) failures.push("missing_asset_version");
-    return { ok: failures.length === 0, version, receipt, failures };
+    return { ok: failures.length === 0, version, receipt, source_path: selectedPath, failures };
   } catch (error) {
-    return { ok: false, failures: [`unreadable_asset_receipt:${error.message}`] };
+    return { ok: false, source_path: selectedPath, failures: [`unreadable_asset_receipt:${error.message}`] };
   }
 }
 
@@ -300,7 +306,7 @@ async function inspectRoute(browser, spec, deploy, publicMarker) {
 async function run() {
   fs.mkdirSync(outputDir, { recursive: true });
   const deploy = readDeployReceipt();
-  const assetReceipt = readAssetReceipt();
+  const assetReceipt = readAssetReceipt(deploy);
   const publicMarker = await readPublicReleaseMarker(deploy, assetReceipt);
   const { chromium } = loadPlaywright();
   const browser = await chromium.launch({
@@ -356,6 +362,7 @@ async function run() {
     asset_receipt: {
       ok: assetReceipt.ok,
       asset_version: assetReceipt.version || "",
+      source_path: assetReceipt.source_path || "",
       failures: assetReceipt.failures || [],
     },
     deploy_receipt: {
