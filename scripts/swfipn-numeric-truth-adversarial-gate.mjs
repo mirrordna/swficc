@@ -139,8 +139,14 @@ async function main() {
       p.data.rows[0].aum_date = "";
     }, "aum_as_of_date_missing"),
     mutation("history_conflict_without_master_lineage", packet, (p) => {
-      const row = p.data.rows.find((candidate) => clean(candidate.aum_history_conflict));
-      if (row) row.aum_date_source = "";
+      const row = p.data.rows.find((candidate) => clean(candidate.aum_history_conflict)) || p.data.rows[0];
+      if (row) {
+        row.aum_history_conflict = clean(row.aum_history_conflict) || "adversarial_probe_conflict";
+        row.aum_source = "entities.assets";
+        row.aum_usd_basis = "master_usd_snapshot";
+        row.aum_usd_source = "swfi.entities.assets";
+        row.aum_date_source = "";
+      }
     }, "aum_history_conflict_unbounded"),
     mutation("usd_lineage_removed", packet, (p) => { p.data.rows[0].aum_usd_source = ""; }, "usd_source_missing"),
   ];
