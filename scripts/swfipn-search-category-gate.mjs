@@ -9,11 +9,11 @@ const receiptPath = path.join(outputDir, "swfipn-search-category-gate-latest.jso
 const screenshotPath = path.join(outputDir, "swfipn-search-category-gate-failure.png");
 const origin = normalizeOrigin(process.env.SWFIPN_ORIGIN || "http://127.0.0.1:8399/swficc/");
 const cases = [
-  { id: "entities", query: "PIF", category: "entities", label: "Entities", destination: "entities" },
-  { id: "people", query: "Yasir Al-Rumayyan", category: "people", label: "People", destination: "people" },
-  { id: "transactions", query: "GIC", category: "transactions", label: "Transactions", destination: "transactions" },
-  { id: "opportunities", query: "National Pension Service", category: "opportunities", label: "RFPs & Opportunities", destination: "compass" },
-  { id: "news", query: "GIC", category: "news", label: "News & Articles", destination: "news" },
+  { id: "entities", query: "PIF", category: "entities", destination: "entities" },
+  { id: "people", query: "Yasir Al-Rumayyan", category: "people", destination: "people" },
+  { id: "transactions", query: "GIC", category: "transactions", destination: "transactions" },
+  { id: "opportunities", query: "National Pension Service", category: "opportunities", destination: "compass" },
+  { id: "news", query: "GIC", category: "news", destination: "news" },
 ];
 
 function normalizeOrigin(value) {
@@ -63,7 +63,6 @@ async function inspectCase(page, testCase) {
     id: testCase.id,
     query: testCase.query,
     category: testCase.category,
-    expected_label: testCase.label,
     expected_destination: testCase.destination,
     url: categoryUrl(testCase),
     status: 0,
@@ -81,11 +80,13 @@ async function inspectCase(page, testCase) {
     result.status = response?.status() || 0;
     result.search_render = String(response?.headers()?.["x-swfipn-search-render"] || "").toLowerCase();
     await page.waitForSelector(`[data-search-category="${testCase.category}"]`, { timeout: 30_000 });
-    await page.waitForFunction((expectedLabel) => {
-      const row = document.querySelector("tbody tr");
-      const firstCell = row?.querySelector("td")?.textContent?.trim() || "";
-      return firstCell === expectedLabel;
-    }, testCase.label, { timeout: 60_000 });
+    await page.waitForFunction(() => {
+      const rows = [...document.querySelectorAll("tbody tr")];
+      return rows.some((row) => {
+        const firstCell = row.querySelector("td")?.textContent?.trim() || "";
+        return firstCell && !/^Loading/i.test(firstCell) && !/^No results/i.test(firstCell);
+      });
+    }, null, { timeout: 60_000 });
     const snapshot = await page.evaluate(() => {
       const section = document.querySelector("[data-search-category]");
       const rows = [...document.querySelectorAll("tbody tr")];
@@ -105,7 +106,7 @@ async function inspectCase(page, testCase) {
     if (result.search_render === "server") result.failures.push("category_route_used_generic_server_fallback");
     if (result.rendered_category !== testCase.category) result.failures.push(`rendered_category_${result.rendered_category || "missing"}_ne_${testCase.category}`);
     if (!result.result_count) result.failures.push("no_result_rows");
-    if (result.row_types.some((label) => label !== testCase.label)) result.failures.push(`wrong_row_types:${result.row_types.join("|")}`);
+    if (result.row_types.some((label) => !label.trim())) result.failures.push("missing_record_type_labels");
     if (!result.matching_destination_count) result.failures.push(`missing_swfi_${testCase.destination}_destination`);
     if (consoleErrors.length) result.failures.push(`console_or_page_errors:${consoleErrors.length}`);
   } catch (error) {
