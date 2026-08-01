@@ -315,6 +315,27 @@ function receiptTimestampSelfTest() {
     release: "/opt/swfipn-acceptance/releases/example",
   }), false);
   assert.equal(usableDeployReceipt({ status: "pass" }), false);
+  const blockedExternalStep = {
+    id: "api_dns_key_lifecycle",
+    ok: true,
+    non_blocking: true,
+    checked_scope: "external_api_product",
+    receipt: {
+      file: "api.json",
+      ok: false,
+      status: "blocked",
+      summary: { blockers: ["dns_not_cut_over"] },
+    },
+  };
+  assert.deepEqual(blockingFailures([blockedExternalStep]), []);
+  assert.deepEqual(externalWatches([blockedExternalStep]), [{
+    id: "api_dns_key_lifecycle",
+    scope: "external_api_product",
+    status: "BLOCKED",
+    receipt: "api.json",
+    blockers: ["dns_not_cut_over"],
+  }]);
+  assert.equal(matrixRow("External API", "external_api", [blockedExternalStep], ["api_dns_key_lifecycle"]).status, "WATCH");
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "swfipn-harness-self-test-"));
   try {
     const destination = path.join(tempDir, "receipt.json");
@@ -620,8 +641,39 @@ function npmGate(id, script, receipt, env = {}, allowedStatuses) {
   };
 }
 
+function npmNonBlockingEvidenceGate(id, script, receipt, env = {}) {
+  const step = npmGate(id, script, receipt, env, ["pass"]);
+  const externallyBlocked = step.receipt?.status === "blocked";
+  return {
+    ...step,
+    ok: step.ok || externallyBlocked,
+    non_blocking: externallyBlocked,
+    checked_scope: "external_api_product",
+    dashboard_acceptance_impact: "none",
+  };
+}
+
+function blockingFailures(steps) {
+  return steps.filter((step) => !step.ok && !step.non_blocking);
+}
+
+function externalWatches(steps) {
+  return steps
+    .filter((step) => step.non_blocking && step.receipt?.ok !== true)
+    .map((step) => ({
+      id: step.id,
+      scope: step.checked_scope || "external",
+      status: String(step.receipt?.status || "unknown").toUpperCase(),
+      receipt: step.receipt?.file || null,
+      blockers: Array.isArray(step.receipt?.summary?.blockers)
+        ? step.receipt.summary.blockers
+        : [],
+    }));
+}
+
 function writeReceipt(steps) {
-  const failures = steps.filter((step) => !step.ok);
+  const failures = blockingFailures(steps);
+  const watches = externalWatches(steps);
   const { requiredReceipts, inputReceiptManifestSha256 } = receiptManifestForSteps(steps);
   const receipt = {
     schema_version: "swfipn.acceptance_lock.v3",
@@ -633,8 +685,9 @@ function writeReceipt(steps) {
     target,
     origin: activeOrigin,
     status: failures.length ? "fail" : "pass",
-    final_verdict: failures.length ? "no_go" : "go",
+    final_verdict: failures.length ? "no_go" : watches.length ? "go_with_external_watch" : "go",
     blockers: failures.map((step) => step.id),
+    external_watches: watches,
     sendable: failures.length === 0 && target === "public",
     deploy_requested: deploy,
     share_gate_requested: includeShare,
@@ -670,12 +723,20 @@ function matrixRow(requirement, id, steps, stepIds) {
   }
   const relevant = steps.filter((step) => stepIds.includes(step.id));
   const failures = relevant.filter((step) => !step.ok);
+  const watches = relevant.filter((step) => step.non_blocking && step.receipt?.ok !== true);
   return {
     id,
     requirement,
-    status: relevant.length === stepIds.length && failures.length === 0 ? "PASS" : "FAIL",
+    status: relevant.length !== stepIds.length
+      ? "FAIL"
+      : failures.length
+        ? "FAIL"
+        : watches.length
+          ? "WATCH"
+          : "PASS",
     evidence: relevant.map((step) => step.receipt?.file || step.screenshot || step.url || step.command || step.id),
     failures: failures.map((step) => step.id),
+    watches: watches.map((step) => step.id),
   };
 }
 
@@ -708,6 +769,14 @@ function renderMarkdown(receipt) {
     lines.push("None.");
   } else {
     for (const failure of receipt.failures) lines.push(`- ${failure.id}: ${failure.error || failure.stderr_tail || JSON.stringify(failure.failures || failure.receipt?.failures || [])}`);
+  }
+  lines.push("", "## External Watches", "");
+  if (!receipt.external_watches.length) {
+    lines.push("None.");
+  } else {
+    for (const watch of receipt.external_watches) {
+      lines.push(`- ${watch.id} (${watch.scope}): ${watch.status}; ${watch.blockers.join(", ") || "see receipt"}`);
+    }
   }
   lines.push("");
   return `${lines.join("\n")}\n`;
@@ -785,15 +854,14 @@ async function main() {
     steps.push(npmGate("kp_acceptance", "kp:gate", "swfipn-kp-acceptance-gate-latest.json", gateEnv));
     steps.push(npmGate("acceptance_criteria", "acceptance:gate", "swfipn-acceptance-criteria-gate-latest.json", gateEnv));
     if (target === "public") {
-      steps.push(npmGate(
+      steps.push(npmNonBlockingEvidenceGate(
         "api_dns_key_lifecycle",
         "brd:api-dns:gate:public",
         "swfipn-api-dns-key-lifecycle-latest.json",
         {
           SWFIPN_API_PRODUCTION_ORIGIN: "https://api.swfi.com",
           SWFIPN_API_ACCEPTANCE_ORIGIN: backendOrigin,
-        },
-        ["pass", "blocked"]
+        }
       ));
     }
     if (includeShare) {
