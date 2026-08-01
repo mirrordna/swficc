@@ -66,6 +66,16 @@ function runSample(index) {
       ? receipt.checks.filter((check) => check.id === "adia" || check.id === "hkic").map((check) => ({
           id: check.id,
           events: check.network_trace || [],
+      }))
+      : [],
+    deterministic_results: Array.isArray(receipt?.checks)
+      ? receipt.checks.filter((check) => check.id === "adia" || check.id === "hkic").map((check) => ({
+          id: check.id,
+          fingerprint_sha256: check.deterministic_result_fingerprint_sha256 || null,
+          counts: check.deterministic_result_counts || null,
+          categories: check.deterministic_result_set || null,
+          complete: check.deterministic_result_set_complete === true,
+          sources_complete: check.deterministic_result_sources_complete === true,
         }))
       : [],
   };
@@ -83,9 +93,21 @@ function main() {
     && sample.tested_release_git_sha === first.tested_release_git_sha
     && sample.tested_release_asset_version === first.tested_release_asset_version
   ));
+  const deterministicResultsComplete = samples.every((sample) => (
+    sample.deterministic_results.length === 2
+    && sample.deterministic_results.every((result) => (
+      /^[a-f0-9]{64}$/i.test(result.fingerprint_sha256 || "")
+      && result.complete
+      && result.sources_complete
+    ))
+  ));
+  const deterministicResultsConsistent = deterministicResultsComplete
+    && samples.every((sample) => sameJson(sample.deterministic_results, first.deterministic_results));
   const failures = [
     ...samples.filter((sample) => sample.status !== "pass").map((sample) => `${sample.id}:failed`),
     ...(!identityConsistent ? ["sample_identity_drift"] : []),
+    ...(!deterministicResultsComplete ? ["deterministic_result_set_incomplete"] : []),
+    ...(!deterministicResultsConsistent ? ["deterministic_result_drift"] : []),
   ];
   const receipt = {
     schema_version: "swfipn.canonical_search_stability_gate.v1",
@@ -104,9 +126,21 @@ function main() {
     required_cold_start_samples: runs,
     passed_cold_start_samples: samples.filter((sample) => sample.status === "pass").length,
     identity_consistent: identityConsistent,
+    deterministic_results_complete: deterministicResultsComplete,
+    deterministic_results_consistent: deterministicResultsConsistent,
+    baseline_result_fingerprints: Object.fromEntries(
+      (first.deterministic_results || []).map((result) => [result.id, result.fingerprint_sha256]),
+    ),
     samples,
     bad_news: failures,
-    checked_scope: ["repeated_cold_start_ADIA_search", "repeated_cold_start_HKIC_search", "sample_identity_consistency"],
+    checked_scope: [
+      "repeated_cold_start_ADIA_search",
+      "repeated_cold_start_HKIC_search",
+      "sample_identity_consistency",
+      "ordered_category_result_identity_consistency",
+      "core_category_completeness",
+      "canonical_source_identity_presence",
+    ],
     unchecked_scope: first.target_mode === "live"
       ? ["stakeholder_acceptance", "Mongo_record_parity", "global_release_acceptance"]
       : ["deployed_production", "stakeholder_acceptance", "Mongo_record_parity"],

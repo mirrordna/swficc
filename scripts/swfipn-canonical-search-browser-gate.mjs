@@ -12,6 +12,8 @@ const receiptPath = path.join(outputDir, "swfipn-canonical-search-browser-gate-l
 const entityBudgetMs = 5_000;
 const liveEntityBudgetMs = 8_000;
 const newsBudgetMs = 8_000;
+const resultCategories = ["Entities", "RFPs & Opportunities", "Transactions", "News & Articles", "People"];
+const requiredPopulatedCategories = ["Entities", "Transactions", "News & Articles", "People"];
 
 function candidateIdentity() {
   let gitSha = String(process.env.SWFIPN_CANDIDATE_GIT_SHA || "").trim();
@@ -87,6 +89,50 @@ async function timedVisibility(locator, startedAt, timeout) {
   }
 }
 
+function normalizedResultIdentity(value) {
+  try {
+    const parsed = new URL(value);
+    const target = ["/v1/signin", "/v1/signin/"].includes(parsed.pathname)
+      ? new URL(parsed.searchParams.get("redirect") || "/", parsed.origin)
+      : parsed;
+    target.hash = "";
+    const sorted = new URLSearchParams([...target.searchParams.entries()].sort(([left], [right]) => left.localeCompare(right)));
+    const query = sorted.toString();
+    return `${target.hostname.toLowerCase()}${target.pathname.replace(/\/$/, "") || "/"}${query ? `?${query}` : ""}`;
+  } catch {
+    return "";
+  }
+}
+
+async function orderedResultSet(page) {
+  const categories = {};
+  for (const category of resultCategories) {
+    const section = page.locator("section").filter({
+      has: page.getByRole("heading", { name: category, exact: true }),
+    }).first();
+    const rawRows = await section.locator("a").evaluateAll((anchors) => anchors.map((anchor) => {
+      const spans = [...anchor.querySelectorAll("span")];
+      const clean = (value) => String(value || "").replace(/\s+/g, " ").trim();
+      return {
+        label: clean(spans[0]?.textContent),
+        detail: clean(spans[1]?.textContent),
+        href: anchor.getAttribute("href") || "",
+      };
+    })).catch(() => []);
+    categories[category] = rawRows.map((row) => ({
+      label: row.label,
+      detail: row.detail,
+      source_identity: normalizedResultIdentity(row.href),
+    }));
+  }
+  const canonical = JSON.stringify(categories);
+  return {
+    categories,
+    counts: Object.fromEntries(resultCategories.map((category) => [category, categories[category].length])),
+    fingerprint_sha256: createHash("sha256").update(canonical).digest("hex"),
+  };
+}
+
 async function runQuery(browser, origin, testCase) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const startedAt = Date.now();
@@ -151,6 +197,11 @@ async function runQuery(browser, origin, testCase) {
       : "";
     const sourceLinkMatchesLiveResult = Boolean(canonicalSourceHref)
       && normalizeComparableUrl(canonicalSourceHref) === normalizeComparableUrl(liveEntityHref);
+    const resultSet = await orderedResultSet(page);
+    const resultSetComplete = requiredPopulatedCategories.every((category) => resultSet.counts[category] > 0);
+    const resultSourcesComplete = Object.values(resultSet.categories)
+      .flat()
+      .every((row) => Boolean(row.source_identity));
     const body = await page.locator("body").innerText();
     const peopleSectionText = await peopleSection.innerText().catch(() => "");
     const screenshotPath = path.join(outputDir, `swfipn-canonical-search-${testCase.id}-latest.png`);
@@ -168,7 +219,9 @@ async function runQuery(browser, origin, testCase) {
         && entityMs <= entityBudgetMs
         && liveEntityMs <= liveEntityBudgetMs
         && newsMs <= newsBudgetMs
-        && sourceLinkMatchesLiveResult,
+        && sourceLinkMatchesLiveResult
+        && resultSetComplete
+        && resultSourcesComplete,
       entity_ms: entityMs,
       live_entity_ms: liveEntityMs,
       news_ms: newsMs,
@@ -182,6 +235,11 @@ async function runQuery(browser, origin, testCase) {
       people_result_present: peopleResult.present,
       people_section_text: peopleSectionText,
       source_link_matches_live_result: sourceLinkMatchesLiveResult,
+      deterministic_result_set: resultSet.categories,
+      deterministic_result_counts: resultSet.counts,
+      deterministic_result_fingerprint_sha256: resultSet.fingerprint_sha256,
+      deterministic_result_set_complete: resultSetComplete,
+      deterministic_result_sources_complete: resultSourcesComplete,
       network_trace: networkTrace.sort((left, right) => left.at_ms - right.at_ms),
       entity: testCase.entity,
       news: testCase.news,
