@@ -29,6 +29,7 @@
     "test:mongo-policy": "node scripts/swfipn-mongo-policy-test.mjs",
     "mongo:policy:gate": "node scripts/swfipn-mongo-policy-gate.mjs",
     "test:entity-lifecycle": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/swfipn-entity-lifecycle-intent-test.mjs",
+    "test:transaction-default-contract": "node scripts/swfipn-transaction-default-contract-test.mjs",
     "deploy:clean-gate": "node scripts/swfipn-clean-tree-gate.mjs",
     "test:deploy-contract": "node scripts/swfipn-deploy-contract-test.mjs",
     "doctrine:gate": "node scripts/swfipn-doctrine-gate.mjs",

@@ -87,10 +87,11 @@ const CONFIG: Record<Kind, { title: string; endpoint: string; columns: string[];
     columns: ["Name", "Country", "City", "Region", "LinkedIn", "Citation"],
   },
   transactions: {
-    // Sector + Type added 2026-07-06 (unleveraged-fields probe: both
-    // 25/25-filled in every packet row, never displayed).
+    // The unfiltered directory is a recent-window view. Generic text search
+    // retains the complete transactions source below because this UI does not
+    // ask the user to select one exact drill-down field.
     title: "Transactions",
-    endpoint: "/api/transactions/v1?limit=100",
+    endpoint: "/api/recent-transactions/v1?days=365&limit=10&page=1",
     columns: ["Name", "Buyer Entity", "Buyer Region", "Sector", "Type", "Amount (USD)", "Closed At"],
     columnsNote: "Seller details are not disclosed in SWFI transaction records — columns return when the source carries them.",
   },
@@ -411,9 +412,9 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
     kind === "profiles" || kind === "comparisons" ? null : ""
   ));
   const [sectionView, setSectionView] = useState<"data" | "visualization">(() => supportsSectionVisualization(kind) ? "visualization" : "data");
-  // Client fix (7-Jul): Active Allocators is restricted to the 10 most recent.
-  // Other list kinds keep the 25-row default preview.
-  const [rowLimit, setRowLimit] = useState(() => (kind === "allocators" ? 10 : 25));
+  // Meeting decision: transaction searches and Active Allocators open with 10
+  // rows. Other list kinds retain the 25-row preview.
+  const [rowLimit, setRowLimit] = useState(() => (kind === "allocators" || kind === "transactions" ? 10 : 25));
   // Paul-reported live bug 2026-07-06 (/mandates/?filter=...: "this site
   // links dont lead anywhere"): arriving with ?filter= means the visitor
   // clicked a chart segment and came for RECORDS — but the default
@@ -489,21 +490,25 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
         const peopleQuery = serverFilterTerm ? `&q=${encodeURIComponent(serverFilterTerm)}` : "";
         return { main: `/api/source-data/search/v1?collection=people${peopleQuery}&limit=${serverRowLimit}&page=${serverPageIndex + 1}` };
       }
-      if (kind === "transactions" || kind === "deals") {
+      if (kind === "transactions") {
+        const transactionFilter = serverFilterTerm;
+        if (!transactionFilter) {
+          return { main: `/api/recent-transactions/v1?days=365&limit=${serverRowLimit}&page=${serverPageIndex + 1}` };
+        }
+        return { main: `/api/transactions/v1?limit=${serverRowLimit}&page=${serverPageIndex + 1}&q=${encodeURIComponent(transactionFilter)}` };
+      }
+      if (kind === "deals") {
         const taxonomySource = { dealTaxonomy: "/api/transactions/v1?limit=100&page=1" };
-        if (kind === "deals" && dealFieldFilters.length) {
+        if (dealFieldFilters.length) {
           const fieldSources = Object.fromEntries(dealFieldFilters.map((filter, index) => [
             `dealField:${index}:${filter.field}`,
             `/api/transaction-drilldown/v1?field=${filter.field}&value=${encodeURIComponent(filter.value)}&days=365&limit=${serverRowLimit}&page=${serverPageIndex + 1}`,
           ]));
           return { ...fieldSources, ...taxonomySource };
         }
-        const transactionFilter = serverFilterTerm;
-        const transactionQuery = transactionFilter ? `&q=${encodeURIComponent(transactionFilter)}` : "";
+        const transactionQuery = serverFilterTerm ? `&q=${encodeURIComponent(serverFilterTerm)}` : "";
         const main = `/api/transactions/v1?limit=${serverRowLimit}&page=${serverPageIndex + 1}${transactionQuery}`;
-        return kind === "deals"
-          ? { main, ...taxonomySource }
-          : { main };
+        return { main, ...taxonomySource };
       }
       if (kind === "allocators") {
         const allocatorQuery = serverFilterTerm ? `&q=${encodeURIComponent(serverFilterTerm)}` : "";
@@ -688,8 +693,8 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
     : Math.max(1, Math.ceil((serverPaged ? totalRows : filteredRows.length) / rowLimit));
   // Dashboard 2.0 P02/P03: the Data view is a limited preview — the pager stops
   // at the cap and hands off to SWFI sign-in for the full universe.
-  // Allocators are capped at the 10 most recent (single page, no deeper paging);
-  // other kinds keep the multi-page preview handoff.
+  // Allocators and Transactions open at 10 rows; other kinds open at 25.
+  // Every server-backed list still uses the bounded preview handoff.
   const pageCount = previewPageCount(fullPageCount);
   const previewCapped = fullPageCount > pageCount;
   const safePageIndex = Math.min(pageIndex, pageCount - 1);
