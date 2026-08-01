@@ -601,33 +601,35 @@ export default function DashboardPage() {
         <BrdCommandCenterSidebar topRows={topAumRows} pending={packets.top20 === undefined} />
         <div className="min-w-0">
           <BrdTopNavigation onSearchOpen={() => setSearchOpen(true)} dataAsOfLabel={dataAsOfLabel} displayName={sessionDisplayName} />
-          <VisualExecutiveOverview
-            packets={packets}
-            topAumRows={topAumRows}
-            entityRows={entityRows}
-            institutionTypeRows={institutionTypeRows}
-            allocatorRows={allocatorRows}
-            transactionRows={transactionRows}
-            disclosedDealRows={disclosedDealRows}
-            rfpRows={rfpRows}
-            newsRows={newsRows}
-            sectorRows={sectorRows}
-            unifiedRows={unifiedRows}
-            expandedPanel={expandedPanel}
-            onTogglePanel={togglePanel}
-            controls={visualControls}
-          />
-          <main className="mx-auto grid max-w-[1440px] gap-x-6 gap-y-6 px-4 py-6 sm:px-5 xl:grid-cols-[minmax(0,1fr)_320px]">
-            <BrdNewsFeed rows={newsRows} revision={brdText(packets.news?.generated_at, "initial")} tab={newsTab} onTabChange={setNewsTab} />
-            <BrdRightRail sectorRows={sectorRows} />
-            <BrdRecentActivity
-              tab={recentTab}
-              onTabChange={setRecentTab}
+          <main>
+            <VisualExecutiveOverview
+              packets={packets}
+              topAumRows={topAumRows}
+              entityRows={entityRows}
+              institutionTypeRows={institutionTypeRows}
+              allocatorRows={allocatorRows}
               transactionRows={transactionRows}
+              disclosedDealRows={disclosedDealRows}
               rfpRows={rfpRows}
-              peopleRows={peopleRows}
+              newsRows={newsRows}
+              sectorRows={sectorRows}
+              unifiedRows={unifiedRows}
+              expandedPanel={expandedPanel}
+              onTogglePanel={togglePanel}
+              controls={visualControls}
             />
-            <BrdTopTen tab={topTab} onTabChange={setTopTab} rfpRows={rfpRows} sectorRows={sectorRows} />
+            <div className="mx-auto grid max-w-[1440px] gap-x-6 gap-y-6 px-4 py-6 sm:px-5 xl:grid-cols-[minmax(0,1fr)_320px]">
+              <BrdNewsFeed rows={newsRows} revision={brdText(packets.news?.generated_at, "initial")} tab={newsTab} onTabChange={setNewsTab} />
+              <BrdRightRail sectorRows={sectorRows} />
+              <BrdRecentActivity
+                tab={recentTab}
+                onTabChange={setRecentTab}
+                transactionRows={transactionRows}
+                rfpRows={rfpRows}
+                peopleRows={peopleRows}
+              />
+              <BrdTopTen tab={topTab} onTabChange={setTopTab} rfpRows={rfpRows} sectorRows={sectorRows} />
+            </div>
           </main>
         </div>
       </div>
@@ -687,7 +689,7 @@ function BrdCommandCenterSidebar({ topRows, pending = false }: { topRows: Record
   ] as const;
   const watched = topRows.slice(0, 4);
   return (
-    <aside className="border-b border-[#E5E8EF] bg-white xl:sticky xl:top-0 xl:h-screen xl:border-b-0 xl:border-r xl:border-[#E5E8EF]">
+    <aside aria-label="Dashboard navigation and top AUM" className="border-b border-[#E5E8EF] bg-white xl:sticky xl:top-0 xl:h-screen xl:border-b-0 xl:border-r xl:border-[#E5E8EF]">
       <div className="flex h-[78px] items-center border-b border-[#E5E8EF] bg-[#B90D12] px-5 text-white">
         <Image src={assetHref("/swfi-assets/logo.svg")} alt="SWFI Sovereign Wealth Fund Institute" width={161} height={59} className="h-11 w-[132px] object-contain" />
       </div>
@@ -1090,7 +1092,7 @@ function BrdNewsFeed({ rows: sourceRows, revision, tab, onTabChange }: {
 function BrdRightRail({ sectorRows }: { sectorRows: Record<string, unknown>[] }) {
   const tags = brdMarketFocusTags(sectorRows);
   return (
-    <aside data-gsap-reveal className="grid content-start gap-8">
+    <aside aria-label="Events and market focus" data-gsap-reveal className="grid content-start gap-8">
       <section>
         <h2 className="mb-5 text-[13px] font-extrabold uppercase tracking-[0.04em] text-[#202A42]">Upcoming Events</h2>
         <DashboardLink href="/search/?q=Events" className="grid gap-1 bg-[#F0EFEC] px-4 py-4 text-inherit no-underline hover:bg-[#E8E6E1]">
@@ -2014,7 +2016,7 @@ function NewsPreviewImage({ row, featured = false }: { row: Record<string, unkno
           setSourceState("story-fallback");
         }
       }}
-      alt={brdText(row.title || row.name, "SWFI news story")}
+      alt=""
       loading={featured ? "eager" : "lazy"}
       fetchPriority={featured ? "high" : "auto"}
       decoding="async"
