@@ -14,8 +14,17 @@ const liveEntityBudgetMs = 8_000;
 const newsBudgetMs = 8_000;
 
 function candidateIdentity() {
-  const gitSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf8" }).trim();
-  const gitDirty = Boolean(execFileSync("git", ["status", "--porcelain"], { cwd: repoRoot, encoding: "utf8" }).trim());
+  let gitSha = String(process.env.SWFIPN_CANDIDATE_GIT_SHA || "").trim();
+  let gitDirty = /^(1|true|yes)$/i.test(String(process.env.SWFIPN_CANDIDATE_GIT_DIRTY || ""));
+  if (!gitSha) {
+    try {
+      gitSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf8" }).trim();
+      gitDirty = Boolean(execFileSync("git", ["status", "--porcelain"], { cwd: repoRoot, encoding: "utf8" }).trim());
+    } catch {
+      gitSha = "unknown";
+      gitDirty = true;
+    }
+  }
   let assetVersion = "";
   try {
     assetVersion = String(JSON.parse(fs.readFileSync(path.join(outputDir, "swfipn-asset-version-latest.json"), "utf8")).version || "").trim();
@@ -113,6 +122,9 @@ async function runQuery(browser, origin, testCase) {
     const entitySection = page.locator("section").filter({
       has: page.getByRole("heading", { name: "Entities", exact: true }),
     }).first();
+    const peopleSection = page.locator("section").filter({
+      has: page.getByRole("heading", { name: "People", exact: true }),
+    }).first();
     const liveEntityLink = entitySection.getByText(testCase.entity, { exact: true }).first();
     // Observe independent lanes concurrently. Serial awaits incorrectly attribute
     // a slow people/news lane to an entity that may already be visible.
@@ -120,13 +132,18 @@ async function runQuery(browser, origin, testCase) {
       timedVisibility(page.getByTestId("smart-search-canonical-identity"), startedAt, 5_000),
       timedVisibility(liveEntityLink, startedAt, 25_000),
       timedVisibility(page.getByText(new RegExp(testCase.news), { exact: false }).first(), startedAt, 15_000),
-      timedVisibility(page.getByText("No source-backed people relationship found.", { exact: true }), startedAt, 30_000),
+      timedVisibility(peopleSection.getByText("No source-backed people relationship found.", { exact: true }), startedAt, 30_000),
     ]);
     const entityMs = canonicalIdentity.ms;
     const liveEntityMs = liveEntity.ms;
     const newsMs = newsResult.ms;
-    const canonicalSourceHref = canonicalIdentity.present
-      ? await page.getByTestId("smart-search-canonical-source-link").locator("a").getAttribute("data-source-href")
+    const canonicalSourceLink = page.getByTestId("smart-search-canonical-source-link");
+    const canonicalSourceHref = canonicalIdentity.present && await canonicalSourceLink.count()
+      ? await canonicalSourceLink.evaluate((node) => (
+          node.getAttribute("data-source-href")
+          || node.querySelector("a")?.getAttribute("data-source-href")
+          || ""
+        ))
       : "";
     const liveEntityPresent = liveEntity.present;
     const liveEntityHref = liveEntityPresent
@@ -135,6 +152,7 @@ async function runQuery(browser, origin, testCase) {
     const sourceLinkMatchesLiveResult = Boolean(canonicalSourceHref)
       && normalizeComparableUrl(canonicalSourceHref) === normalizeComparableUrl(liveEntityHref);
     const body = await page.locator("body").innerText();
+    const peopleSectionText = await peopleSection.innerText().catch(() => "");
     const screenshotPath = path.join(outputDir, `swfipn-canonical-search-${testCase.id}-latest.png`);
     await page.screenshot({ path: screenshotPath, fullPage: true });
     return {
@@ -162,6 +180,7 @@ async function runQuery(browser, origin, testCase) {
       live_entity_result_present: liveEntityPresent,
       news_result_present: newsResult.present,
       people_empty_state_present: peopleEmptyState.present,
+      people_section_text: peopleSectionText,
       source_link_matches_live_result: sourceLinkMatchesLiveResult,
       network_trace: networkTrace.sort((left, right) => left.at_ms - right.at_ms),
       entity: testCase.entity,
@@ -213,13 +232,14 @@ async function runRapidReplacement(browser, origin) {
 async function main() {
   fs.mkdirSync(outputDir, { recursive: true });
   const configuredOrigin = String(process.env.SWFIPN_ORIGIN || "").trim();
-  const liveTarget = Boolean(configuredOrigin);
+  const requestedTargetMode = String(process.env.SWFIPN_TARGET_MODE || "").trim().toLowerCase();
+  const liveTarget = Boolean(configuredOrigin) && requestedTargetMode !== "candidate";
   const sourceBackendOrigin = new URL(
     String(process.env.SWFIPN_BACKEND_ORIGIN || (liveTarget ? configuredOrigin : "https://dashboard.swfi.com")),
   ).origin;
   let child = null;
   let origin;
-  if (liveTarget) {
+  if (configuredOrigin) {
     origin = `${configuredOrigin.replace(/\/+$/, "")}/`;
   } else {
     if (!fs.existsSync(path.join(repoRoot, "out", "index.html"))) {
@@ -275,7 +295,7 @@ async function main() {
         ? "LIVE_TARGET_SURFACE_BEHAVIOR_NOT_GLOBAL_ACCEPTANCE"
         : "CANDIDATE_WITH_LIVE_SWFI_SOURCES_NOT_PRODUCTION_ACCEPTANCE",
       target_origin: origin,
-      target_mode: liveTarget ? "live" : "local_candidate",
+      target_mode: liveTarget ? "live" : (configuredOrigin ? "remote_candidate" : "local_candidate"),
       source_backend_origin: sourceBackendOrigin,
       tested_release_git_sha: testedReleaseGitSha || null,
       tested_release_asset_version: testedReleaseAssetVersion || null,

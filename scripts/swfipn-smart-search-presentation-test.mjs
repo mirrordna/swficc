@@ -6,6 +6,7 @@ import {
   balanceSearchResultRows,
   searchResultCategoryCounts,
   searchResultRecordType,
+  visibleSearchResultRows,
 } from "../src/lib/searchResultPresentation.ts";
 
 const rows = [
@@ -42,6 +43,23 @@ assert.equal(searchResultRecordType({ __searchCategory: "entities" }), "Not disc
 assert.equal(searchResultRecordType({ __searchCategory: "opportunities" }), "Not disclosed");
 assert.equal(searchResultRecordType({ __searchCategory: "transactions", acquisition_type: "Acquisition" }), "Acquisition");
 assert.equal(searchResultRecordType({ __searchCategory: "people" }), "Person");
+
+const intentRows = Array.from({ length: 15 }, (_, index) => ({
+  __searchCategory: "entities",
+  name: `Pension ${index + 1}`,
+}));
+assert.equal(visibleSearchResultRows(intentRows, {
+  allCategories: true,
+  singleCategoryIntent: true,
+  rowLimit: 10,
+  perCategory: 5,
+}).length, 10, "single-category semantic intents show the normal ten-row page");
+assert.equal(visibleSearchResultRows(intentRows, {
+  allCategories: true,
+  singleCategoryIntent: false,
+  rowLimit: 10,
+  perCategory: 5,
+}).length, 5, "generic All results retain the five-per-category balance cap");
 
 const searchPageSource = readFileSync("src/components/SearchResultsPage.tsx", "utf8");
 assert.match(searchPageSource, /useState\(10\)/, "category detail pages default to 10 rows");

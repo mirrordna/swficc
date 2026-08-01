@@ -8,6 +8,7 @@ const output = path.join(root, "output");
 const receiptPath = path.join(output, "swfipn-numeric-truth-adversarial-latest.json");
 const origin = String(process.env.SWFIPN_BACKEND_ORIGIN || "https://dashboard.swfi.com").replace(/\/+$/, "");
 const parityPath = path.resolve(process.env.SWFIPN_NUMERIC_PARITY_RECEIPT || path.join(output, "swfipn-record-level-parity-gate-latest.json"));
+const internalRequest = String(process.env.SWFIPN_INTERNAL_REQUEST || "") === "1";
 
 const clean = (value) => String(value ?? "").trim();
 const finite = (value) => Number.isFinite(Number(value)) ? Number(value) : null;
@@ -27,6 +28,7 @@ function audit(packet) {
     source_url: disclosed.filter((row) => !clean(row.source_url)).map((row) => clean(row.name)),
     currency: disclosed.filter((row) => !clean(row.aum_currency)).map((row) => clean(row.name)),
     as_of_date: disclosed.filter((row) => !clean(row.aum_date || row.as_of_date)).map((row) => clean(row.name)),
+    as_of_date_source: disclosed.filter((row) => clean(row.aum_date || row.as_of_date) && !clean(row.aum_date_source)).map((row) => clean(row.name)),
     usd_basis: disclosed.filter((row) => !clean(row.aum_usd_basis)).map((row) => clean(row.name)),
     usd_source: disclosed.filter((row) => !clean(row.aum_usd_source)).map((row) => clean(row.name)),
   };
@@ -39,7 +41,20 @@ function audit(packet) {
   });
   const conflicts = disclosed
     .filter((row) => clean(row.aum_history_conflict))
-    .map((row) => ({ name: clean(row.name), marker: clean(row.aum_history_conflict) }));
+    .map((row) => ({
+      name: clean(row.name),
+      marker: clean(row.aum_history_conflict),
+      served_source: clean(row.aum_source),
+      usd_basis: clean(row.aum_usd_basis),
+      usd_source: clean(row.aum_usd_source),
+      date_source: clean(row.aum_date_source),
+      bounded: clean(row.aum_source) === "entities.assets"
+        && clean(row.aum_usd_basis) === "master_usd_snapshot"
+        && clean(row.aum_usd_source) === "swfi.entities.assets"
+        && clean(row.aum_date_source) === "entities.assetsPeriod"
+        && Boolean(clean(row.aum_date)),
+    }));
+  const unboundedConflicts = conflicts.filter((conflict) => !conflict.bounded);
   const totalMatches = declaredTotal !== null && Math.abs(declaredTotal - calculatedTotal) < 0.01;
   const contractFailures = [
     !allRows.length ? "rows_missing" : "",
@@ -48,12 +63,13 @@ function audit(packet) {
     inversions.length ? "rank_order_inversion" : "",
     missing.source_url.length ? "source_url_missing" : "",
     missing.currency.length ? "currency_missing" : "",
+    missing.as_of_date_source.length ? "aum_as_of_date_source_missing" : "",
     missing.usd_basis.length ? "usd_basis_missing" : "",
     missing.usd_source.length ? "usd_source_missing" : "",
   ].filter(Boolean);
   const evidenceWarnings = [
     missing.as_of_date.length ? "aum_as_of_date_missing" : "",
-    conflicts.length ? "aum_history_conflict_present" : "",
+    unboundedConflicts.length ? "aum_history_conflict_unbounded" : "",
   ].filter(Boolean);
   return {
     rows: allRows.length,
@@ -66,6 +82,7 @@ function audit(packet) {
     duplicate_source_urls: duplicates,
     rank_inversions: inversions,
     conflicts,
+    unbounded_conflicts: unboundedConflicts,
     contract_failures: contractFailures,
     evidence_warnings: evidenceWarnings,
   };
@@ -101,7 +118,11 @@ function mongoParity() {
 async function main() {
   fs.mkdirSync(output, { recursive: true });
   const response = await fetch(`${origin}/v1/swfi/top20?limit=200`, {
-    headers: { accept: "application/json", "user-agent": "swfipn-numeric-truth-adversarial-gate/1.0" },
+    headers: {
+      accept: "application/json",
+      "user-agent": "swfipn-numeric-truth-adversarial-gate/1.0",
+      ...(internalRequest ? { "x-swfipn-internal": "1" } : {}),
+    },
     signal: AbortSignal.timeout(30_000),
   });
   if (!response.ok) throw new Error(`top20_http_${response.status}`);
@@ -117,6 +138,10 @@ async function main() {
       p.generated_at = new Date().toISOString();
       p.data.rows[0].aum_date = "";
     }, "aum_as_of_date_missing"),
+    mutation("history_conflict_without_master_lineage", packet, (p) => {
+      const row = p.data.rows.find((candidate) => clean(candidate.aum_history_conflict));
+      if (row) row.aum_date_source = "";
+    }, "aum_history_conflict_unbounded"),
     mutation("usd_lineage_removed", packet, (p) => { p.data.rows[0].aum_usd_source = ""; }, "usd_source_missing"),
   ];
   const parity = mongoParity();

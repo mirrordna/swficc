@@ -95,11 +95,13 @@ def compare_string(field_id, live, source, skip_gap=True, allow_includes=False):
     return {"field": field_id, "status": "mismatch", "live": text(live), "source": text(source)}
 
 
-def compare_number(field_id, live, source):
+def compare_number(field_id, live, source, *, zero_is_undisclosed=False):
     live_num = scalar_number(live)
     source_num = scalar_number(source)
     if math.isnan(live_num) and math.isnan(source_num):
         return {"field": field_id, "status": "skipped", "reason": "both_missing"}
+    if zero_is_undisclosed and math.isnan(live_num) and source_num == 0:
+        return {"field": field_id, "status": "allowed_normalization", "reason": "source_zero_is_undisclosed_sentinel"}
     if math.isnan(live_num) != math.isnan(source_num):
         return {"field": field_id, "status": "mismatch", "reason": "one_side_missing", "live": text(live), "source": text(source)}
     if live_num == source_num:
@@ -130,7 +132,7 @@ SPECS = {
             compare_string("type", row.get("type"), doc.get("type")),
             compare_string("country", row.get("country"), doc.get("country")),
             compare_string("region", row.get("region"), doc.get("region")),
-            compare_number("assets", first_value(row, ["assets", "aum"]), source_number_value(doc, ["assets", "managedAssets"])),
+            compare_number("assets", first_value(row, ["assets", "aum"]), source_number_value(doc, ["assets", "managedAssets"]), zero_is_undisclosed=True),
         ],
     },
     "people": {
@@ -171,7 +173,7 @@ SPECS = {
             compare_string("region", row.get("region"), doc.get("region")),
             compare_string("industry", row.get("industry"), doc.get("industry")),
             compare_string("investment_type", row.get("investment_type"), doc.get("investmentType")),
-            compare_number("amount", first_value(row, ["amount", "capital", "value"]), doc.get("amount")),
+            compare_number("amount", first_value(row, ["amount", "capital", "value"]), doc.get("amount"), zero_is_undisclosed=True),
             compare_date("closed_at", row.get("closed_at") or row.get("activity_date") or row.get("relevant_date"), doc.get("closedAt") or doc.get("announcedAt")),
             compare_string("buyer_entity", row.get("buyer_entity") or row.get("institution"), first_array_item(doc.get("buyerEntities")).get("name")),
             compare_string("seller_entity", row.get("seller_entity"), first_array_item(doc.get("sellerEntities")).get("name")),
@@ -187,7 +189,7 @@ SPECS = {
             compare_string("country", row.get("country"), doc.get("country")),
             compare_string("region", row.get("region"), doc.get("region")),
             compare_string("investment_type", row.get("investment_type") or row.get("strategy") or row.get("asset_class_or_strategy"), doc.get("investmentType")),
-            compare_number("amount", first_value(row, ["amount", "value"]), doc.get("amount")),
+            compare_number("amount", first_value(row, ["amount", "value"]), doc.get("amount"), zero_is_undisclosed=True),
             compare_date("due_at", row.get("due_at") or row.get("deadline") or row.get("relevant_date"), doc.get("dueAt")),
             compare_date("posted_at", row.get("posted_at"), doc.get("postedAt")),
         ],
@@ -259,6 +261,10 @@ def main():
         "mongo": {"database": MONGO_DB, "uri_redacted": True},
         "page_limit": PAGE_LIMIT,
         "collections_requested": list(SPECS),
+        "rules": {
+            "generic_missing_zero_distinct": "Missing generic numeric values and explicit zero are distinct; one-sided absence is a mismatch.",
+            "money_zero_undisclosed_sentinel": "For contracted entity AUM, transaction amount, and Compass amount fields only, public missing may normalize source zero as the upstream undisclosed sentinel.",
+        },
         "totals": {"count": total_count, "checked": total_checked, "failed": failed},
         "collections": state,
         "failures": failures[:1000],
@@ -296,6 +302,8 @@ def self_test():
     checks = [
         ("zero_matches_zero", compare_number("value", 0, 0)["status"], "match"),
         ("missing_live_rejects_source_zero", compare_number("value", None, 0)["status"], "mismatch"),
+        ("money_missing_live_accepts_source_zero", compare_number("amount", None, 0, zero_is_undisclosed=True)["status"], "allowed_normalization"),
+        ("money_live_zero_rejects_missing_source", compare_number("amount", 0, None, zero_is_undisclosed=True)["status"], "mismatch"),
         ("live_zero_rejects_missing_source", compare_number("value", 0, None)["status"], "mismatch"),
         ("both_missing_skips", compare_number("value", None, None)["status"], "skipped"),
         ("live_alias_preserves_zero", first_value({"amount": 0, "capital": 12}, ["amount", "capital"]), 0),

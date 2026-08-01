@@ -1,9 +1,6 @@
 #!/usr/bin/env node
-import { createRequire } from "node:module";
 import { mkdirSync, writeFileSync } from "node:fs";
-
-const require = createRequire("/Users/mirror-pro/repos/swfireskin/package.json");
-const { chromium } = require("playwright");
+import { chromium } from "playwright";
 
 const ORIGIN = (process.env.SWFIPN_ORIGIN || "http://127.0.0.1:4317").replace(/\/swficc\/?$/, "").replace(/\/$/, "");
 const checks = [];
@@ -22,7 +19,7 @@ function dataRows(packet) {
   return packet?.data?.rows || packet?.data?.results || [];
 }
 
-const browser = await chromium.launch({ channel: "chrome" });
+const browser = await chromium.launch({ headless: true });
 
 try {
   const smartSearchCases = [

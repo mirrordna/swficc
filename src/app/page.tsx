@@ -83,7 +83,11 @@ const NEWS_REFRESH_INTERVAL_MS = 5 * 60_000;
 const NEWS_REFRESH_MIN_GAP_MS = 60_000;
 const NEWS_REFRESH_EVENT = "swfi:refresh-news";
 const SEARCH_PREFETCH_CACHE_PREFIX = "swfipn.search.prefetch.v1:";
-const HOME_SNAPSHOT_MAX_AGE_MS = 6 * 60 * 60_000;
+const HOME_SNAPSHOT_FRESH_AGE_MS = 6 * 60 * 60_000;
+// The snapshot is a visibly dated first-paint fallback only. Live fact packets
+// immediately revalidate it after hydration, so a source outage does not turn
+// the dashboard into an empty shell while still exposing the snapshot's age.
+const HOME_SNAPSHOT_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
 const DASHBOARD_LOAD_ORDER: PacketKey[] = ["top20", "allocators30", "sectorFlows", "transactions30", "rfps", "mandates", "metrics", "institutionTypes", "allocators90", "entities", "people", "news"];
 const SEARCH_CATEGORY_LABELS = ["All", "Entities", "RFPs & Opportunities", "Transactions", "News & Articles", "People"] as const;
 const insightNav = [
@@ -3605,7 +3609,11 @@ function dataAsOfLabelFor(packet?: Packet) {
   const value = text(packet?.generated_at || provenance.fetched_at, "");
   const parsed = Date.parse(value);
   if (!Number.isFinite(parsed)) return "Dashboard refresh time unavailable";
-  return `Dashboard refreshed ${new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit", year: "numeric" }).format(new Date(parsed))}`;
+  const formatted = new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit", year: "numeric" }).format(new Date(parsed));
+  const staleBootstrap = Date.now() - parsed > HOME_SNAPSHOT_FRESH_AGE_MS;
+  return staleBootstrap
+    ? `Dashboard refreshed ${formatted} · cached snapshot; refreshing live`
+    : `Dashboard refreshed ${formatted}`;
 }
 
 function packetCount(packet: Packet | undefined, key = "rows") {

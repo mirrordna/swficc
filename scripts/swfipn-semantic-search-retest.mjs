@@ -15,7 +15,7 @@ const cases = [
   ["Family offices deploying capital into real estate", "real estate transactions in the last 365 days with a sourced family-office buyer", 1, "transactions"],
 ];
 const checks = [];
-const browser = await chromium.launch({ channel: "chrome", headless: true });
+const browser = await chromium.launch({ headless: true });
 
 try {
   for (const [query, explanation, minimumRows, category] of cases) {
@@ -32,7 +32,7 @@ try {
       }, null, { timeout: TIMEOUT_MS });
       const rows = page.locator("main tbody tr").filter({ has: page.locator('a[href*="www.swfi.com"]') });
       const rowCount = await rows.count();
-      const typeLabels = (await rows.locator("td:first-child").allTextContents()).map((value) => value.trim());
+      const typeLabels = (await rows.getByTestId("search-result-record-type").allTextContents()).map((value) => value.trim());
       const matchedBuyerCount = await rows.locator("td:nth-child(4)").filter({ hasText: "Matched buyer:" }).count();
       const exactTypeProof = category === "opportunities"
         ? typeLabels.every((label) => /\b(?:RFP|Opportunity)\b/.test(label))
@@ -94,6 +94,7 @@ try {
     await page.getByTestId("search-result-category-refinements").getByRole("button", { name: /^Transactions \(/ }).click();
     await page.waitForFunction(() => /[?&]category=transactions/.test(window.location.search));
     const transactionRows = page.locator("main tbody tr").filter({ has: page.locator('a[href*="www.swfi.com"]') });
+    await transactionRows.first().waitFor({ state: "visible", timeout: TIMEOUT_MS });
     checks.push({
       id: "detailed_category_refinement",
       status: await transactionRows.count() === 10 ? "PASS" : "FAIL",

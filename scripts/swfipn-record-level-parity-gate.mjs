@@ -29,6 +29,7 @@ const specs = {
         kind: "number",
         live: (row) => liveValue(row, ["assets", "aum"]),
         source: (doc) => sourceNumberValue(doc, ["assets", "managedAssets"]),
+        zeroIsUndisclosed: true,
       },
     ],
   },
@@ -56,7 +57,7 @@ const specs = {
       stringField("region", ["region"]),
       stringField("industry", ["industry"]),
       stringField("investment_type", ["investment_type"], ["investmentType"]),
-      numberField("amount", ["amount", "capital", "value"], ["amount"]),
+      numberField("amount", ["amount", "capital", "value"], ["amount"], { zeroIsUndisclosed: true }),
       dateField("closed_at", ["closed_at", "activity_date", "relevant_date"], ["closedAt", "announcedAt"]),
       {
         id: "buyer_entity",
@@ -84,7 +85,7 @@ const specs = {
       stringField("country", ["country"]),
       stringField("region", ["region"]),
       stringField("investment_type", ["investment_type", "strategy", "asset_class_or_strategy"], ["investmentType"]),
-      numberField("amount", ["amount", "value"], ["amount"]),
+      numberField("amount", ["amount", "value"], ["amount"], { zeroIsUndisclosed: true }),
       dateField("due_at", ["due_at", "deadline", "relevant_date"], ["dueAt"]),
       dateField("posted_at", ["posted_at"], ["postedAt"]),
     ],
@@ -171,12 +172,13 @@ function stringField(id, liveFields, sourceFields = liveFields) {
   };
 }
 
-function numberField(id, liveFields, sourceFields = liveFields) {
+function numberField(id, liveFields, sourceFields = liveFields, { zeroIsUndisclosed = false } = {}) {
   return {
     id,
     kind: "number",
     live: (row) => liveValue(row, liveFields),
     source: (doc) => sourceValue(doc, sourceFields),
+    zeroIsUndisclosed,
   };
 }
 
@@ -291,22 +293,32 @@ function fetchMongoDocs(idsByCollection, mongoUri) {
     collection,
     Array.from(new Set(ids.filter((id) => /^[a-f0-9]{24}$/i.test(id)))),
   ]));
-  const js = `
-const uri = process.env.SWFIPN_PARITY_MONGO_URI;
-const dbName = process.env.SWFIPN_PARITY_MONGO_DB || "swfi";
-const idsByCollection = JSON.parse(process.env.SWFIPN_PARITY_IDS || "{}");
-const conn = new Mongo(uri);
-const db = conn.getDB(dbName);
-const out = {};
-for (const [collection, ids] of Object.entries(idsByCollection)) {
-  out[collection] = [];
-  const objectIds = ids.map((id) => ObjectId(id));
-  const docs = db.getCollection(collection).find({ _id: { $in: objectIds } }).toArray();
-  for (const doc of docs) out[collection].push(EJSON.serialize(doc));
-}
-print(JSON.stringify(out));
+  const python = `
+import json
+import os
+
+from bson import json_util
+from bson.codec_options import DatetimeConversion
+from bson.objectid import ObjectId
+from pymongo import MongoClient
+
+uri = os.environ["SWFIPN_PARITY_MONGO_URI"]
+database = os.environ.get("SWFIPN_PARITY_MONGO_DB", "swfi")
+ids_by_collection = json.loads(os.environ.get("SWFIPN_PARITY_IDS", "{}"))
+client = MongoClient(
+    uri,
+    serverSelectionTimeoutMS=15000,
+    connectTimeoutMS=15000,
+    datetime_conversion=DatetimeConversion.DATETIME_AUTO,
+)
+db = client[database]
+out = {}
+for collection, ids in ids_by_collection.items():
+    object_ids = [ObjectId(value) for value in ids]
+    out[collection] = list(db[collection].find({"_id": {"$in": object_ids}}))
+print(json_util.dumps(out))
 `;
-  const result = spawnSync("mongosh", ["--quiet", "--nodb", "--eval", js], {
+  const result = spawnSync("python3", ["-c", python], {
     env: {
       ...process.env,
       SWFIPN_PARITY_MONGO_URI: mongoUri,
@@ -319,7 +331,7 @@ print(JSON.stringify(out));
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
-    throw new Error(`mongosh_failed:${result.stderr.trim().slice(0, 500)}`);
+    throw new Error(`pymongo_lookup_failed:${result.stderr.trim().slice(0, 500)}`);
   }
   const trimmed = result.stdout.trim();
   const parsed = JSON.parse(trimmed || "{}");
@@ -357,6 +369,9 @@ function compareField(field, row, doc) {
     const liveNum = scalarNumber(live);
     const sourceNum = scalarNumber(source);
     if (Number.isNaN(liveNum) && Number.isNaN(sourceNum)) return { field: field.id, status: "skipped", reason: "both_missing" };
+    if (field.zeroIsUndisclosed && Number.isNaN(liveNum) && sourceNum === 0) {
+      return { field: field.id, status: "allowed_normalization", reason: "source_zero_is_undisclosed_sentinel", live: text(live), source: sourceNum };
+    }
     if (Number.isNaN(liveNum) !== Number.isNaN(sourceNum)) return { field: field.id, status: "mismatch", reason: "one_side_missing", live: text(live), source: text(source) };
     if (liveNum === sourceNum) return { field: field.id, status: "match", live: liveNum, source: sourceNum };
     return { field: field.id, status: "mismatch", live: text(live), source: text(source) };
@@ -480,7 +495,8 @@ async function run() {
     live_collections: liveCollections,
     collection_results: collectionResults,
     rules: {
-      missing_zero_distinct: "Missing numeric values and explicit zero are distinct; one-sided absence is a mismatch.",
+      generic_missing_zero_distinct: "Missing generic numeric values and explicit zero are distinct; one-sided absence is a mismatch.",
+      money_zero_undisclosed_sentinel: "For contracted entity AUM, transaction amount, and Compass amount fields only, public missing may normalize source zero as the upstream undisclosed sentinel.",
       disclosure_gap: "Only bilateral disclosure gaps are skipped; a gap on one side is a mismatch.",
       person_name_variant: "First/middle/last name variants are allowed when one contains the other.",
     },
@@ -511,9 +527,12 @@ async function run() {
 
 function selfTest() {
   const number = { id: "amount", kind: "number", live: (row) => row.live, source: (doc) => doc.source };
+  const money = { ...number, zeroIsUndisclosed: true };
   const string = { id: "country", kind: "string", live: (row) => row.live, source: (doc) => doc.source, skipIfDisclosureGap: true };
   const checks = [
     compareField(number, { live: undefined }, { source: 0 }).status === "mismatch",
+    compareField(money, { live: undefined }, { source: 0 }).status === "allowed_normalization",
+    compareField(money, { live: 0 }, { source: undefined }).status === "mismatch",
     compareField(number, { live: 0 }, { source: undefined }).status === "mismatch",
     compareField(number, { live: undefined }, { source: undefined }).status === "skipped",
     compareField(number, { live: 0 }, { source: 0 }).status === "match",

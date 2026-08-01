@@ -32,6 +32,23 @@ export function balanceSearchResultRows<T extends SearchResultRow>(rows: readonl
   return balanced;
 }
 
+export function visibleSearchResultRows<T extends SearchResultRow>(
+  rows: readonly T[],
+  options: {
+    allCategories: boolean;
+    singleCategoryIntent: boolean;
+    rowLimit: number;
+    perCategory: number;
+  },
+): T[] {
+  const rowLimit = Math.max(1, Math.floor(options.rowLimit));
+  if (!options.allCategories) return rows.slice(0, rowLimit);
+  // A recognized semantic intent is already constrained to one sourced record
+  // category. The generic five-per-category cap would hide valid results.
+  if (options.singleCategoryIntent) return rows.slice(0, rowLimit);
+  return balanceSearchResultRows(rows, options.perCategory);
+}
+
 export function searchResultRecordType(row: SearchResultRow): string {
   const category = isSearchResultCategory(row.__searchCategory) ? row.__searchCategory : "entities";
   if (category === "entities") {

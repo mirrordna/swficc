@@ -136,6 +136,7 @@ class FieldSpec:
     source: Callable[[dict[str, Any]], Any]
     skip_disclosure_gap: bool = False
     allow_includes: bool = False
+    zero_is_undisclosed: bool = False
 
 
 def string_field(field_id: str, live_names: list[str], source_names: list[str] | None = None) -> FieldSpec:
@@ -149,13 +150,20 @@ def string_field(field_id: str, live_names: list[str], source_names: list[str] |
     )
 
 
-def number_field(field_id: str, live_names: list[str], source_names: list[str] | None = None) -> FieldSpec:
+def number_field(
+    field_id: str,
+    live_names: list[str],
+    source_names: list[str] | None = None,
+    *,
+    zero_is_undisclosed: bool = False,
+) -> FieldSpec:
     source_names = source_names or live_names
     return FieldSpec(
         field_id,
         "number",
         lambda row: first_value(row, live_names),
         lambda doc: first_value(doc, source_names),
+        zero_is_undisclosed=zero_is_undisclosed,
     )
 
 
@@ -179,7 +187,7 @@ SPECS: dict[str, dict[str, Any]] = {
             string_field("type", ["type"]),
             string_field("country", ["country"]),
             string_field("region", ["region"]),
-            FieldSpec("assets", "number", lambda row: first_value(row, ["assets", "aum"]), lambda doc: source_number_value(doc, ["assets", "managedAssets"])),
+            FieldSpec("assets", "number", lambda row: first_value(row, ["assets", "aum"]), lambda doc: source_number_value(doc, ["assets", "managedAssets"]), zero_is_undisclosed=True),
         ],
     },
     "people": {
@@ -206,7 +214,7 @@ SPECS: dict[str, dict[str, Any]] = {
             string_field("region", ["region"]),
             string_field("industry", ["industry"]),
             string_field("investment_type", ["investment_type"], ["investmentType"]),
-            number_field("amount", ["amount", "capital", "value"], ["amount"]),
+            number_field("amount", ["amount", "capital", "value"], ["amount"], zero_is_undisclosed=True),
             date_field("closed_at", ["closed_at", "activity_date", "relevant_date"], ["closedAt", "announcedAt"]),
             FieldSpec("buyer_entity", "string", lambda row: first_value(row, ["buyer_entity", "institution"]), lambda doc: first_named(doc.get("buyerEntities")), skip_disclosure_gap=True),
             FieldSpec("seller_entity", "string", lambda row: first_value(row, ["seller_entity"]), lambda doc: first_named(doc.get("sellerEntities")), skip_disclosure_gap=True),
@@ -222,7 +230,7 @@ SPECS: dict[str, dict[str, Any]] = {
             string_field("country", ["country"]),
             string_field("region", ["region"]),
             string_field("investment_type", ["investment_type", "strategy", "asset_class_or_strategy"], ["investmentType"]),
-            number_field("amount", ["amount", "value"], ["amount"]),
+            number_field("amount", ["amount", "value"], ["amount"], zero_is_undisclosed=True),
             date_field("due_at", ["due_at", "deadline", "relevant_date"], ["dueAt"]),
             date_field("posted_at", ["posted_at"], ["postedAt"]),
         ],
@@ -245,6 +253,8 @@ def compare_field(spec: FieldSpec, row: dict[str, Any], doc: dict[str, Any]) -> 
         source_number = scalar_number(source)
         if math.isnan(live_number) and math.isnan(source_number):
             return {"field": spec.field_id, "status": "skipped", "reason": "both_missing"}
+        if spec.zero_is_undisclosed and math.isnan(live_number) and source_number == 0:
+            return {"field": spec.field_id, "status": "allowed_normalization", "reason": "source_zero_is_undisclosed_sentinel"}
         if math.isnan(live_number) != math.isnan(source_number):
             return {"field": spec.field_id, "status": "mismatch", "reason": "one_side_missing", "live": text(live), "source": text(source)}
         if live_number == source_number:
@@ -387,6 +397,10 @@ def make_receipt(mapping_path: Path, mapping: dict[str, Any], state: dict[str, A
         "mongo": {"database": os.environ.get("SWFI_MONGO_DB", "swfi"), "source": "runtime:SWFI_MONGO_URI", "uri_redacted": True, "read_only": True},
         "batch_size": batch_size,
         "collections_requested": selected,
+        "rules": {
+            "generic_missing_zero_distinct": "Missing generic numeric values and explicit zero are distinct; one-sided absence is a mismatch.",
+            "money_zero_undisclosed_sentinel": "For contracted entity AUM, transaction amount, and Compass amount fields only, public missing may normalize source zero as the upstream undisclosed sentinel.",
+        },
         "totals": {"count": total_count, "checked": total_checked, "failed": total_failed},
         "collections": collections,
         "count_drifts": count_drifts,
@@ -523,7 +537,7 @@ def self_test() -> int:
     assert compare_field(SPECS["transactions"]["fields"][6], transaction, mongo_transaction)["status"] == "match"
     assert compare_field(SPECS["transactions"]["fields"][7], transaction, mongo_transaction)["status"] == "skipped"
     assert compare_field(SPECS["entities"]["fields"][0], {"name": "A"}, {"name": "B"})["status"] == "mismatch"
-    assert compare_field(SPECS["entities"]["fields"][4], {}, {"assets": 0})["status"] == "mismatch"
+    assert compare_field(SPECS["entities"]["fields"][4], {}, {"assets": 0})["status"] == "allowed_normalization"
     assert compare_field(SPECS["entities"]["fields"][4], {"assets": 0}, {})["status"] == "mismatch"
     assert compare_field(SPECS["entities"]["fields"][4], {"assets": 0}, {"assets": 0})["status"] == "match"
     assert compare_field(SPECS["entities"]["fields"][4], {}, {})["status"] == "skipped"
@@ -532,8 +546,10 @@ def self_test() -> int:
     assert source_number_value({"assets": 0, "managedAssets": 12}, ["assets", "managedAssets"]) == 12
     assert compare_field(SPECS["entities"]["fields"][2], {}, {"country": "UAE"})["status"] == "mismatch"
     assert compare_field(SPECS["entities"]["fields"][2], {}, {})["status"] == "skipped"
+    generic_number = number_field("count", ["count"])
+    assert compare_field(generic_number, {}, {"count": 0})["status"] == "mismatch"
     assert civil_date_from_millis(569510352000000) == "20017-01-24"
-    print(json.dumps({"status": "pass", "checks": 16}))
+    print(json.dumps({"status": "pass", "checks": 17}))
     return 0
 
 

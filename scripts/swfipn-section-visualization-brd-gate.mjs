@@ -7,7 +7,8 @@ import { chromium } from "playwright";
 
 const cwd = process.cwd();
 const configuredOrigin = String(process.env.SWFIPN_ORIGIN || "").trim();
-const liveTarget = Boolean(configuredOrigin);
+const requestedTargetMode = String(process.env.SWFIPN_TARGET_MODE || "").trim().toLowerCase();
+const liveTarget = Boolean(configuredOrigin) && requestedTargetMode !== "candidate";
 const sourceBackendOrigin = new URL(
   String(process.env.SWFIPN_BACKEND_ORIGIN || (liveTarget ? configuredOrigin : "https://dashboard.swfi.com")),
 ).origin;
@@ -17,8 +18,17 @@ const receiptPath = path.join(outputDir, "swfipn-section-visualization-brd-gate-
 fs.mkdirSync(outputDir, { recursive: true });
 
 function candidateIdentity() {
-  const gitSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf8" }).trim();
-  const gitDirty = Boolean(execFileSync("git", ["status", "--porcelain"], { cwd, encoding: "utf8" }).trim());
+  let gitSha = String(process.env.SWFIPN_CANDIDATE_GIT_SHA || "").trim();
+  let gitDirty = /^(1|true|yes)$/i.test(String(process.env.SWFIPN_CANDIDATE_GIT_DIRTY || ""));
+  if (!gitSha) {
+    try {
+      gitSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf8" }).trim();
+      gitDirty = Boolean(execFileSync("git", ["status", "--porcelain"], { cwd, encoding: "utf8" }).trim());
+    } catch {
+      gitSha = "unknown";
+      gitDirty = true;
+    }
+  }
   let assetVersion = "";
   try {
     assetVersion = String(JSON.parse(fs.readFileSync(path.join(outputDir, "swfipn-asset-version-latest.json"), "utf8")).version || "").trim();
@@ -74,7 +84,7 @@ async function stopChild(child) {
 
 async function main() {
   let child = null;
-  if (!liveTarget) {
+  if (!configuredOrigin) {
     if (!fs.existsSync(path.join(cwd, "out", "index.html"))) {
       throw new Error("built_static_export_missing: run npm run build first");
     }
@@ -92,7 +102,7 @@ async function main() {
   let browser;
   try {
     await waitForOrigin(origin, child);
-    browser = await chromium.launch({ channel: "chrome", headless: true });
+    browser = await chromium.launch({ headless: true });
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     const consoleErrors = [];
   page.on("console", (msg) => {
@@ -105,8 +115,14 @@ async function main() {
     checks.push(await checkRoute(page, spec));
   }
 
+  const ignoredCandidateConsoleWarnings = consoleErrors.filter((message) =>
+    Boolean(configuredOrigin)
+      && !liveTarget
+      && message.startsWith("The Cross-Origin-Opener-Policy header has been ignored, because the URL's origin was untrustworthy."),
+  );
+  const actionableConsoleErrors = consoleErrors.filter((message) => !ignoredCandidateConsoleWarnings.includes(message));
   const failures = checks.flatMap((check) => check.failures.map((failure) => `${check.id}:${failure}`));
-  if (consoleErrors.length) failures.push("console_errors_present");
+  if (actionableConsoleErrors.length) failures.push("console_errors_present");
   const testedReleaseGitSha = liveTarget ? String(process.env.SWFIPN_RELEASE_GIT_SHA || "").trim() : "";
   const testedReleaseAssetVersion = liveTarget ? String(process.env.SWFIPN_RELEASE_ASSET_VERSION || "").trim() : "";
   const releaseIdentityPinned = !liveTarget
@@ -121,7 +137,7 @@ async function main() {
       ? "LIVE_TARGET_SURFACE_BEHAVIOR_NOT_GLOBAL_ACCEPTANCE"
       : "CANDIDATE_WITH_LIVE_SWFI_SOURCES_NOT_PRODUCTION_ACCEPTANCE",
     origin,
-    target_mode: liveTarget ? "live" : "local_candidate",
+    target_mode: liveTarget ? "live" : (configuredOrigin ? "remote_candidate" : "local_candidate"),
     source_backend_origin: sourceBackendOrigin,
     tested_release_git_sha: testedReleaseGitSha || null,
     tested_release_asset_version: testedReleaseAssetVersion || null,
@@ -140,7 +156,8 @@ async function main() {
       signin_export_links: checks.reduce((sum, check) => sum + check.signin_export_links, 0),
       export_csv_buttons: checks.reduce((sum, check) => sum + check.export_csv_buttons, 0),
       export_png_buttons: checks.reduce((sum, check) => sum + check.export_png_buttons, 0),
-      console_errors: consoleErrors.slice(0, 10),
+      console_errors: actionableConsoleErrors.slice(0, 10),
+      ignored_candidate_transport_warnings: ignoredCandidateConsoleWarnings.slice(0, 10),
       failures,
     },
     checks,

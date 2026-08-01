@@ -30,7 +30,7 @@ const specs = {
       stringField("country", ["country"], ["country"]),
       stringField("region", ["region"], ["region"]),
       {
-        ...numberField("assets", ["assets", "aum"], ["assets"]),
+        ...numberField("assets", ["assets", "aum"], ["assets"], { zeroIsUndisclosed: true }),
         source: (doc) => sourceNumberValue(doc, ["assets", "managedAssets"]),
       },
     ],
@@ -73,7 +73,7 @@ const specs = {
       stringField("region", ["region"], ["region"]),
       stringField("industry", ["industry"], ["industry"]),
       stringField("investment_type", ["investment_type"], ["investmentType"]),
-      numberField("amount", ["amount", "capital", "value"], ["amount"]),
+      numberField("amount", ["amount", "capital", "value"], ["amount"], { zeroIsUndisclosed: true }),
       dateField("closed_at", ["closed_at", "activity_date", "relevant_date"], ["closedAt", "announcedAt"]),
       {
         id: "buyer_entity",
@@ -101,7 +101,7 @@ const specs = {
       stringField("country", ["country"], ["country"]),
       stringField("region", ["region"], ["region"]),
       stringField("investment_type", ["investment_type", "strategy", "asset_class_or_strategy"], ["investmentType"]),
-      numberField("amount", ["amount", "value"], ["amount"]),
+      numberField("amount", ["amount", "value"], ["amount"], { zeroIsUndisclosed: true }),
       dateField("due_at", ["due_at", "deadline", "relevant_date"], ["dueAt"]),
       dateField("posted_at", ["posted_at"], ["postedAt"]),
     ],
@@ -161,12 +161,13 @@ function stringField(id, liveFields, sourceFields = liveFields) {
   };
 }
 
-function numberField(id, liveFields, sourceFields = liveFields) {
+function numberField(id, liveFields, sourceFields = liveFields, { zeroIsUndisclosed = false } = {}) {
   return {
     id,
     kind: "number",
     live: (row) => liveValue(row, liveFields),
     source: (doc) => sourceValue(doc, sourceFields),
+    zeroIsUndisclosed,
   };
 }
 
@@ -239,6 +240,9 @@ function compareField(field, row, doc) {
     const liveNum = scalarNumber(live);
     const sourceNum = scalarNumber(source);
     if (Number.isNaN(liveNum) && Number.isNaN(sourceNum)) return { field: field.id, status: "skipped", reason: "both_missing" };
+    if (field.zeroIsUndisclosed && Number.isNaN(liveNum) && sourceNum === 0) {
+      return { field: field.id, status: "allowed_normalization", reason: "source_zero_is_undisclosed_sentinel", live: text(live), source: sourceNum };
+    }
     if (Number.isNaN(liveNum) !== Number.isNaN(sourceNum)) {
       return { field: field.id, status: "mismatch", reason: "one_side_missing", live: text(live), source: text(source) };
     }
@@ -268,10 +272,12 @@ function compareField(field, row, doc) {
 function selfTest() {
   const assets = specs.entities.fields.find((field) => field.id === "assets");
   const amount = specs.transactions.fields.find((field) => field.id === "amount");
+  const generic = numberField("count", ["count"]);
   const checks = [
     ["zero_matches_zero", compareField(assets, { assets: 0 }, { assets: 0 }).status, "match"],
-    ["missing_live_rejects_source_zero", compareField(assets, {}, { assets: 0 }).status, "mismatch"],
+    ["money_missing_live_accepts_source_zero", compareField(assets, {}, { assets: 0 }).status, "allowed_normalization"],
     ["live_zero_rejects_missing_source", compareField(assets, { assets: 0 }, {}).status, "mismatch"],
+    ["generic_missing_live_rejects_source_zero", compareField(generic, {}, { count: 0 }).status, "mismatch"],
     ["both_missing_skips", compareField(assets, {}, {}).status, "skipped"],
     ["live_alias_preserves_zero", amount.live({ amount: 0, capital: 12 }), 0],
     ["source_zero_fallback_preserved", assets.source({ assets: 0 }), 0],
@@ -652,6 +658,10 @@ async function main() {
     },
     page_limit: pageLimit,
     collections_requested: collectionsToRun,
+    rules: {
+      generic_missing_zero_distinct: "Missing generic numeric values and explicit zero are distinct; one-sided absence is a mismatch.",
+      money_zero_undisclosed_sentinel: "For contracted entity AUM, transaction amount, and Compass amount fields only, public missing may normalize source zero as the upstream undisclosed sentinel.",
+    },
     totals: { count: totalCount, checked: totalChecked, failed },
     collections: Object.fromEntries(Object.entries(state.collections).map(([key, value]) => {
       const copy = { ...value };

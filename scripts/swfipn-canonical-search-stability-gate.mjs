@@ -40,6 +40,8 @@ function runSample(index) {
     process_exit_code: result.status,
     process_signal: result.signal || null,
     process_error: result.error?.message || null,
+    process_stdout: String(result.stdout || "").slice(-4_000),
+    process_stderr: String(result.stderr || "").slice(-4_000),
     generated_at: receipt?.generated_at || null,
     receipt_path: raw ? path.relative(root, archivedPath) : null,
     receipt_sha256: raw ? sha256(raw) : null,

@@ -10,7 +10,7 @@ import { businessSearchQueryVariants, dedupeSearchRecords, mergeSearchRecordsPre
 import { filterSmartSearchIntentRows, smartSearchIntentForQuery } from "@/lib/smartSearchIntent";
 import { entityLifecycleIntent } from "@/lib/entityLifecycle";
 import { isShortTextQuery, isTextQueryReady, MIN_TEXT_QUERY_CHARACTERS } from "@/lib/textQueryPolicy";
-import { balanceSearchResultRows, searchResultCategoryCounts, searchResultRecordType } from "@/lib/searchResultPresentation";
+import { searchResultCategoryCounts, searchResultRecordType, visibleSearchResultRows } from "@/lib/searchResultPresentation";
 
 const SEARCH_PREFETCH_CACHE_PREFIX = "swfipn.search.prefetch.v1:";
 const SEARCH_CATEGORIES = ["all", "entities", "opportunities", "transactions", "news", "people"] as const;
@@ -355,9 +355,12 @@ export default function SearchResultsPage() {
     return intent && (category === "all" || category === intent.category) ? intent : null;
   }, [category, query]);
   const sortedRows = useMemo(() => sortSearchRows(filteredResultRows, sortKey, sortDir), [filteredResultRows, sortDir, sortKey]);
-  const visibleRows = category === "all"
-    ? balanceSearchResultRows(sortedRows as CategorizedSearchRow[], allCategoryLimit)
-    : sortedRows.slice(0, rowLimit);
+  const visibleRows = visibleSearchResultRows(sortedRows as CategorizedSearchRow[], {
+    allCategories: category === "all",
+    singleCategoryIntent: Boolean(interpretedIntent),
+    rowLimit,
+    perCategory: allCategoryLimit,
+  });
   const categoryCounts = useMemo(() => searchResultCategoryCounts(allResultRows as CategorizedSearchRow[]), [allResultRows]);
   const count = filteredResultRows.length;
   const unfilteredCount = resultRows.length;
