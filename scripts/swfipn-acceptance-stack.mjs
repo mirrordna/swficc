@@ -257,7 +257,27 @@ function receiptTimestampSelfTest() {
   );
   assert.equal(hostRuntimePath("/etc/passwd", "/host/opt/swfipn-acceptance", "/opt/swfipn-acceptance"), "");
   assert.equal(canonicalRuntimePath("/host/etc/passwd", "/host/opt/swfipn-acceptance", "/opt/swfipn-acceptance"), "");
-  assert.equal(usableDeployReceipt({ status: "pass", release: "/opt/swfipn-acceptance/releases/example" }), true);
+  assert.equal(usableDeployReceipt({ status: "pass", release: "/opt/swfipn-acceptance/releases/example" }), false);
+  assert.equal(usableDeployReceipt({
+    schema_version: "swfipn.strict_acceptance_deploy.v9",
+    status: "pass",
+    release: "/opt/swfipn-acceptance/releases/example",
+  }), true);
+  assert.equal(usableDeployReceipt({
+    schema_version: "swfipn.frontend_only_deploy.v1",
+    status: "pass",
+    release: "/opt/swfipn-acceptance/releases/example",
+    frontend_git_sha: "a".repeat(40),
+    frontend_image_id: `sha256:${"b".repeat(64)}`,
+    backend_image_id: `sha256:${"c".repeat(64)}`,
+    backend_unchanged: true,
+  }), true);
+  assert.equal(usableDeployReceipt({
+    schema_version: "swfipn.frontend_only_deploy.v1",
+    status: "pass",
+    release: "/opt/swfipn-acceptance/releases/example",
+    backend_unchanged: false,
+  }), false);
   assert.equal(usableDeployReceipt({
     schema_version: "swfipn.deployment_receipt.v1",
     status: "DEPLOYED_HEALTHY_PENDING_PUBLIC_ACCEPTANCE",
@@ -317,9 +337,20 @@ function readOutputJson(file) {
 
 function usableDeployReceipt(receipt) {
   if (!receipt?.release) return false;
-  if (receipt.status === "pass") return true;
-  return receipt.schema_version === "swfipn.deployment_receipt.v1"
-    && receipt.status === "DEPLOYED_HEALTHY_PENDING_PUBLIC_ACCEPTANCE";
+  if (receipt.schema_version === "swfipn.deployment_receipt.v1") {
+    return receipt.status === "DEPLOYED_HEALTHY_PENDING_PUBLIC_ACCEPTANCE";
+  }
+  if (["swfipn.strict_acceptance_deploy.v5", "swfipn.strict_acceptance_deploy.v9"].includes(receipt.schema_version)) {
+    return receipt.status === "pass";
+  }
+  if (receipt.schema_version === "swfipn.frontend_only_deploy.v1") {
+    return receipt.status === "pass"
+      && receipt.backend_unchanged === true
+      && /^[a-f0-9]{40}$/i.test(receipt.frontend_git_sha || "")
+      && /^sha256:[a-f0-9]{64}$/i.test(receipt.frontend_image_id || "")
+      && /^sha256:[a-f0-9]{64}$/i.test(receipt.backend_image_id || "");
+  }
+  return false;
 }
 
 function shellQuote(value) {
