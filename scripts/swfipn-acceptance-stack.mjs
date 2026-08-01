@@ -24,6 +24,8 @@ let atomicWriteSequence = 0;
 const commandTimeoutMs = Number(process.env.SWFIPN_ACCEPTANCE_COMMAND_TIMEOUT_MS || 1_200_000);
 const remoteHost = process.env.SWFIPN_RUNTIME_REMOTE_HOST || process.env.SWFIPN_HOST || "swfipn-do";
 const remoteRoot = process.env.SWFIPN_REMOTE_ROOT || "/opt/swfipn-acceptance";
+const runtimeLocal = process.env.SWFIPN_RUNTIME_LOCAL === "1";
+const runtimeLocalRoot = process.env.SWFIPN_RUNTIME_LOCAL_ROOT || remoteRoot;
 const composeProject = process.env.SWFIPN_COMPOSE_PROJECT || "swfipn_acceptance";
 const runStartedAtMs = Date.now();
 
@@ -245,6 +247,16 @@ function receiptTimestampSelfTest() {
   assert.equal(receiptTimestampState(invalid, 0, now + 60_000).timestampValid, false);
   assert.equal(receiptTimestampState(stale, now, now + 60_000).fresh, false);
   assert.equal(receiptTimestampState({ generated_at: new Date(now + 60_001).toISOString() }, 0, now + 60_000).timestampValid, false);
+  assert.equal(
+    hostRuntimePath("/opt/swfipn-acceptance/releases/example", "/host/opt/swfipn-acceptance", "/opt/swfipn-acceptance"),
+    "/host/opt/swfipn-acceptance/releases/example",
+  );
+  assert.equal(
+    canonicalRuntimePath("/host/opt/swfipn-acceptance/releases/example", "/host/opt/swfipn-acceptance", "/opt/swfipn-acceptance"),
+    "/opt/swfipn-acceptance/releases/example",
+  );
+  assert.equal(hostRuntimePath("/etc/passwd", "/host/opt/swfipn-acceptance", "/opt/swfipn-acceptance"), "");
+  assert.equal(canonicalRuntimePath("/host/etc/passwd", "/host/opt/swfipn-acceptance", "/opt/swfipn-acceptance"), "");
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "swfipn-harness-self-test-"));
   try {
     const destination = path.join(tempDir, "receipt.json");
@@ -303,16 +315,35 @@ function deployReceipt() {
   return { ok: true, receipt, failures: [] };
 }
 
+function canonicalRuntimePath(hostPath, hostRoot = runtimeLocalRoot, canonicalRoot = remoteRoot) {
+  const relative = path.relative(hostRoot, hostPath);
+  if (!relative || relative === ".") return canonicalRoot;
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return "";
+  return path.join(canonicalRoot, relative);
+}
+
+function hostRuntimePath(canonicalPath, hostRoot = runtimeLocalRoot, canonicalRoot = remoteRoot) {
+  const relative = path.relative(canonicalRoot, canonicalPath);
+  if (!relative || relative === ".") return hostRoot;
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return "";
+  return path.join(hostRoot, relative);
+}
+
 function remoteCurrentProof() {
   if (target !== "public") return { id: "remote_current_release", kind: "remote", ok: true, skipped: true };
   const deploy = deployReceipt();
   if (!deploy.ok) return { id: "remote_current_release", kind: "remote", ok: false, failures: deploy.failures };
-  const result = runCommand("remote_current_release", "ssh", [remoteHost, `readlink -f ${shellQuote(`${remoteRoot}/current`)}`], { timeout: 60_000 });
-  const current = result.stdout_tail.trim();
+  const result = runtimeLocal
+    ? runCommand("remote_current_release", "readlink", ["-f", path.join(runtimeLocalRoot, "current")], { timeout: 60_000 })
+    : runCommand("remote_current_release", "ssh", [remoteHost, `readlink -f ${shellQuote(`${remoteRoot}/current`)}`], { timeout: 60_000 });
+  const observedCurrent = result.stdout_tail.trim();
+  const current = runtimeLocal ? canonicalRuntimePath(observedCurrent) : observedCurrent;
   return {
     ...result,
     kind: "remote",
-    remote_host: remoteHost,
+    runtime_mode: runtimeLocal ? "local_digitalocean_host" : "remote_ssh",
+    remote_host: runtimeLocal ? null : remoteHost,
+    observed_current_release: observedCurrent,
     expected_release: deploy.receipt.release,
     current_release: current,
     ok: result.ok && current === deploy.receipt.release,
@@ -348,11 +379,36 @@ function remoteContainerProof() {
   if (target !== "public") return { id: "remote_container_health", kind: "remote", ok: true, skipped: true };
   const deploy = deployReceipt();
   if (!deploy.ok) return { id: "remote_container_health", kind: "remote", ok: false, failures: deploy.failures };
-  const command = [
-    `cd ${shellQuote(deploy.receipt.release)}`,
-    `SWFIPN_DOMAIN=${shellQuote(new URL(publicOrigin).hostname)} docker compose -p ${shellQuote(composeProject)} -f compose.acceptance.yml ps --format json`,
-  ].join(" && ");
-  const result = runCommand("remote_container_health", "ssh", [remoteHost, command], { timeout: 90_000, maxBuffer: 20 * 1024 * 1024, tailMax: 25 * 1024 * 1024 });
+  const hostRelease = runtimeLocal ? hostRuntimePath(deploy.receipt.release) : "";
+  if (runtimeLocal && !hostRelease) {
+    return {
+      id: "remote_container_health",
+      kind: "remote",
+      runtime_mode: "local_digitalocean_host",
+      ok: false,
+      failures: [`release_outside_runtime_root:${deploy.receipt.release}`],
+    };
+  }
+  const result = runtimeLocal
+    ? runCommand("remote_container_health", "docker", [
+        "compose",
+        "-p",
+        composeProject,
+        "-f",
+        path.join(hostRelease, "compose.acceptance.yml"),
+        "ps",
+        "--format",
+        "json",
+      ], {
+        env: { SWFIPN_DOMAIN: new URL(publicOrigin).hostname },
+        timeout: 90_000,
+        maxBuffer: 20 * 1024 * 1024,
+        tailMax: 25 * 1024 * 1024,
+      })
+    : runCommand("remote_container_health", "ssh", [remoteHost, [
+        `cd ${shellQuote(deploy.receipt.release)}`,
+        `SWFIPN_DOMAIN=${shellQuote(new URL(publicOrigin).hostname)} docker compose -p ${shellQuote(composeProject)} -f compose.acceptance.yml ps --format json`,
+      ].join(" && ")], { timeout: 90_000, maxBuffer: 20 * 1024 * 1024, tailMax: 25 * 1024 * 1024 });
   const services = parseComposePs(result.stdout_tail);
   const failures = [];
   const expected = ["swfi2-backend", "swfipn-web", "caddy"];
@@ -367,7 +423,8 @@ function remoteContainerProof() {
   return {
     ...result,
     kind: "remote",
-    remote_host: remoteHost,
+    runtime_mode: runtimeLocal ? "local_digitalocean_host" : "remote_ssh",
+    remote_host: runtimeLocal ? null : remoteHost,
     release: deploy.receipt.release,
     services,
     failures,
@@ -609,7 +666,7 @@ async function main() {
       env: {
         SWFIPN_ORIGIN: target === "public" ? publicOrigin : activeOrigin,
         SWFIPN_BACKEND_ORIGIN: backendOrigin,
-        SWFIPN_RUNTIME_REMOTE_CHECK: target === "public" ? "1" : "0",
+        SWFIPN_RUNTIME_REMOTE_CHECK: target === "public" && !runtimeLocal ? "1" : "0",
         SWFIPN_RUNTIME_REMOTE_HOST: remoteHost,
       },
       timeout: 300_000,
