@@ -9,6 +9,7 @@ REMOTE_ROOT="${SWFIPN_REMOTE_ROOT:-/opt/swfipn-acceptance}"
 FRONTEND_REPO="${SWFIPN_FRONTEND_REPO:-$(pwd)}"
 SSH_OPTS="${SWFIPN_SSH_OPTS:--o StrictHostKeyChecking=accept-new}"
 COMPOSE_PROJECT="${SWFIPN_COMPOSE_PROJECT:-swfipn_acceptance}"
+PREFLIGHT_IMAGE="${SWFIPN_PREFLIGHT_IMAGE:-swfipn/browser-qa:20260801-e3d64cd}"
 
 if [[ -z "$HOST" || -z "$DOMAIN" ]]; then
   echo "usage: SWFIPN_HOST=user@ip SWFIPN_DOMAIN=host.example.com $0" >&2
@@ -18,8 +19,6 @@ if [[ -n "$(git -C "$FRONTEND_REPO" status --porcelain --untracked-files=normal)
   echo "refusing frontend-only deploy from dirty source" >&2
   exit 2
 fi
-
-(cd "$FRONTEND_REPO" && npm run security:runtime-audit && npm run test:search-gateway)
 
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)-frontend"
 ASSET_VERSION="${SWFIPN_ASSET_VERSION:-$STAMP}"
@@ -52,6 +51,11 @@ rsync -az --delete --timeout=120 --stats -e "ssh $SSH_OPTS" \
   --exclude 'output' \
   --exclude 'tmp' \
   "$FRONTEND_REPO/" "$HOST:$REMOTE_RELEASE/swfi-dashboard/"
+
+# Keep deployment verification on DO. The control Mac only transfers the clean,
+# immutable source; Node, npm, Python, and test dependencies come from the pinned
+# QA image and disposable volumes on the production host.
+ssh $SSH_OPTS "$HOST" "set -eu; node_volume='swfipn-preflight-node-$STAMP'; output_volume='swfipn-preflight-output-$STAMP'; trap 'docker volume rm -f \"\$node_volume\" \"\$output_volume\" >/dev/null 2>&1 || true' EXIT; docker image inspect '$PREFLIGHT_IMAGE' >/dev/null; docker run --rm --network host -e PYTHONDONTWRITEBYTECODE=1 -v '$REMOTE_RELEASE/swfi-dashboard:/app:ro' -v \"\$node_volume:/app/node_modules\" -v \"\$output_volume:/app/output\" -w /app '$PREFLIGHT_IMAGE' sh -lc 'npm ci --ignore-scripts && npm run security:runtime-audit && npm run test:search-gateway'"
 
 ssh $SSH_OPTS "$HOST" "set -eu; cp '$REMOTE_RELEASE/swfi-dashboard/infra/digitalocean/Caddyfile' '$REMOTE_RELEASE/Caddyfile'; cp '$REMOTE_RELEASE/swfi-dashboard/infra/digitalocean/compose.acceptance.yml' '$REMOTE_RELEASE/compose.acceptance.yml'; ln -sfn '$REMOTE_ROOT/shared/.env.swfi2-backend' '$REMOTE_RELEASE/.env.swfi2-backend'; ln -sfn '$REMOTE_ROOT/shared/.env.swfipn-web' '$REMOTE_RELEASE/.env.swfipn-web'; printf '%s\n' 'SWFIPN_IMAGE_TAG=$STAMP' 'SWFI2_BACKEND_IMAGE_TAG=$BACKEND_TAG' 'SWFIPN_FRONTEND_IMAGE_TAG=$STAMP' 'SWFIPN_ASSET_VERSION=$ASSET_VERSION' 'SWFIPN_GIT_SHA=$GIT_SHA' 'SWFIPN_GIT_DIRTY=0' > '$REMOTE_RELEASE/.release.env'"
 

@@ -47,6 +47,10 @@ assert.ok(frontendOnlyDeploy.includes("restoring exact previous web image"), "fr
 assert.ok(frontendOnlyDeploy.includes("frontend_only_deploy.v1"), "frontend-only deploy must write a scoped receipt");
 assert.ok(frontendOnlyDeploy.includes("npm run security:runtime-audit"), "frontend-only deploy must reject vulnerable runtime dependencies");
 assert.ok(frontendOnlyDeploy.includes("npm run test:search-gateway"), "frontend-only deploy must run search hardening regressions");
+assert.ok(frontendOnlyDeploy.includes("PREFLIGHT_IMAGE"), "frontend-only deploy must pin a DO preflight image");
+assert.ok(frontendOnlyDeploy.includes("docker run --rm --network host"), "frontend-only deploy must run preflight inside DO");
+assert.ok(frontendOnlyDeploy.includes("swfi-dashboard:/app:ro"), "DO preflight must not mutate transferred source");
+assert.ok(!frontendOnlyDeploy.includes('(cd "$FRONTEND_REPO" && npm'), "frontend-only deploy must not require Node or npm on a control Mac");
 assert.ok(
   freshnessAudit.includes("--env HOME=/tmp/swfipn-freshness"),
   "freshness verifier must use a writable isolated home",
