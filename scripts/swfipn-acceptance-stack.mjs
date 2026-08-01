@@ -257,6 +257,10 @@ function receiptTimestampSelfTest() {
   );
   assert.equal(hostRuntimePath("/etc/passwd", "/host/opt/swfipn-acceptance", "/opt/swfipn-acceptance"), "");
   assert.equal(canonicalRuntimePath("/host/etc/passwd", "/host/opt/swfipn-acceptance", "/opt/swfipn-acceptance"), "");
+  assert.deepEqual(parseContainerImages("/swfipn_acceptance-swfipn-web-1 sha256:aaa\n/swfipn_acceptance-swfi2-backend-1 sha256:bbb\n"), {
+    frontend: "sha256:aaa",
+    backend: "sha256:bbb",
+  });
   assert.equal(usableDeployReceipt({ status: "pass", release: "/opt/swfipn-acceptance/releases/example" }), false);
   assert.equal(usableDeployReceipt({
     schema_version: "swfipn.strict_acceptance_deploy.v9",
@@ -425,6 +429,16 @@ function serviceHealthy(service) {
   return !health || health === "healthy" || health === "running";
 }
 
+function parseContainerImages(stdout) {
+  const images = { frontend: "", backend: "" };
+  for (const line of String(stdout || "").trim().split("\n")) {
+    const [name = "", image = ""] = line.trim().split(/\s+/, 2);
+    if (name.includes("swfipn-web")) images.frontend = image;
+    if (name.includes("swfi2-backend")) images.backend = image;
+  }
+  return images;
+}
+
 function remoteContainerProof() {
   if (target !== "public") return { id: "remote_container_health", kind: "remote", ok: true, skipped: true };
   const deploy = deployReceipt();
@@ -470,6 +484,22 @@ function remoteContainerProof() {
     }
     if (!serviceHealthy(match)) failures.push(`unhealthy_service:${name}:${match.State || ""}:${match.Health || ""}`);
   }
+  const containerNames = [
+    `${composeProject}-swfipn-web-1`,
+    `${composeProject}-swfi2-backend-1`,
+  ];
+  const imageProof = runtimeLocal
+    ? runCommand("remote_container_images", "docker", ["inspect", "--format", "{{.Name}} {{.Image}}", ...containerNames], { timeout: 60_000 })
+    : runCommand("remote_container_images", "ssh", [remoteHost, `docker inspect --format '{{.Name}} {{.Image}}' ${containerNames.map(shellQuote).join(" ")}`], { timeout: 60_000 });
+  const observedImages = parseContainerImages(imageProof.stdout_tail);
+  for (const [kind, expected] of [
+    ["frontend", deploy.receipt.frontend_image_id],
+    ["backend", deploy.receipt.backend_image_id],
+  ]) {
+    if (!expected) continue;
+    if (!imageProof.ok) failures.push(`container_image_inspect_failed:${kind}`);
+    else if (observedImages[kind] !== expected) failures.push(`${kind}_image_${observedImages[kind] || "missing"}_ne_${expected}`);
+  }
   return {
     ...result,
     kind: "remote",
@@ -477,6 +507,8 @@ function remoteContainerProof() {
     remote_host: runtimeLocal ? null : remoteHost,
     release: deploy.receipt.release,
     services,
+    container_images: observedImages,
+    image_proof: imageProof,
     failures,
     ok: result.ok && failures.length === 0,
   };
