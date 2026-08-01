@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import importlib.util
+import inspect
 import json
 import time
 from pathlib import Path
@@ -42,17 +43,10 @@ finally:
     handler.server.public_search_upstream_slots.release()
 busy_payload = json.loads(busy_body)
 
-current_job_token = object()
-stale_job_token = object()
-handler.server.public_search_cache["generation"] = {
-    "stored_at": time.time(),
-    "body": b"pending",
-    "job_token": current_job_token,
-}
-
 checks = {
-    "acronym_expands_to_canonical": gateway.upstream_search_query_variants("HKIC")
-    == ["HKIC", "Hong Kong Investment Corporation"],
+    "acronym_resolves_to_one_canonical_upstream": gateway.upstream_search_query_variants("HKIC")
+    == ["Hong Kong Investment Corporation"]
+    and gateway.upstream_search_query_variants("ADIA") == ["Abu Dhabi Investment Authority"],
     "canonical_hkic_stays_exact": gateway.upstream_search_query_variants("Hong Kong Investment Corporation")
     == ["Hong Kong Investment Corporation"],
     "canonical_adia_stays_exact": gateway.upstream_search_query_variants("Abu Dhabi Investment Authority")
@@ -74,8 +68,9 @@ checks = {
     "noncanonical_source_is_not_fast_path_eligible": not gateway.has_exact_canonical_search_result(
         "HKIC", [{**canonical_hkic, "source_url": "https://example.com/entities/hkic"}]
     ),
-    "current_enrichment_job_can_publish": handler.enrichment_job_is_current("generation", current_job_token),
-    "stale_enrichment_job_cannot_publish": not handler.enrichment_job_is_current("generation", stale_job_token),
+    "background_cleanup_cannot_mutate_cached_results": not hasattr(handler, "finish_enhanced_public_search")
+    and not hasattr(handler, "enrichment_job_is_current")
+    and list(inspect.signature(handler.finish_stable_primary_cleanup).parameters) == ["executor", "futures"],
     "capacity_exhaustion_fails_closed": busy_state == "BUSY"
     and busy_cacheable is False
     and busy_payload.get("fact") is False
