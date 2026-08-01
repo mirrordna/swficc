@@ -56,7 +56,7 @@ const leakNeedles = [
 const apiPattern = /api\/(source-data|source-intelligence|recent-transactions|live-opportunities|sector-flows|allocator-activity|swfi)|\/v1\/swfi\//;
 
 async function main() {
-  const browser = await chromium.launch({ channel: "chrome", headless: true });
+  const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1469, height: 841 }, deviceScaleFactor: 1 });
   const consoleErrors = [];
   const apiResponses = [];

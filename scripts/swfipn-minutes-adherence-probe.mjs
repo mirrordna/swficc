@@ -47,7 +47,7 @@ record("D", "list charts computed over the WHOLE collection (facets api)", facet
 // --- rendered probes --------------------------------------------------
 // System Chrome (channel) — the ms-playwright browser cache was found
 // empty mid-session 2026-07-06; the system browser needs no download.
-const browser = await chromium.launch({ channel: "chrome" });
+const browser = await chromium.launch({ });
 const page = await browser.newPage({ viewport: { width: 1560, height: 1200 } });
 const textOf = async () => page.evaluate(() => document.body.innerText);
 

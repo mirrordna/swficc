@@ -485,7 +485,7 @@ async function enumerateClass(item, count) {
 async function run() {
   fs.mkdirSync(outputDir, { recursive: true });
   const { chromium } = loadPlaywright();
-  const browser = await chromium.launch({ channel: "chrome", headless: true });
+  const browser = await chromium.launch({ headless: true });
   let authContext = null;
   const receipt = {
     schema_version: "swfipn.record_mirror_gate.v1",

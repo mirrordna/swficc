@@ -95,7 +95,7 @@ async function pageBody(page, url, required = []) {
 async function main() {
   fs.mkdirSync(outputDir, { recursive: true });
   const { chromium } = loadPlaywright();
-  const browser = await chromium.launch({ channel: "chrome", headless: true });
+  const browser = await chromium.launch({ headless: true });
   const results = [];
   const screenshots = [];
   let finalStatus = "pass";

@@ -19,7 +19,7 @@ async function main() {
   const name = text(sample.name || sample.title);
   const target = appUrl(`people/detail/?id=${encodeURIComponent(id)}&name=${encodeURIComponent(name)}&source=${encodeURIComponent(sourceUrl)}`);
 
-  const browser = await chromium.launch({ channel: "chrome", headless: true });
+  const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const apiResponses = [];
   const consoleErrors = [];

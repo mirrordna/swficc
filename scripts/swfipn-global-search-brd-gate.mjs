@@ -18,7 +18,7 @@ const requiredGroups = ["Entities", "Transactions", "People", "News & Articles"]
 const expectedResult = expectedResultForQuery(query);
 
 async function main() {
-  const browser = await chromium.launch({ channel: "chrome", headless: true });
+  const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const consoleErrors = [];
   const network = createNetworkRecorder(page);

@@ -20,6 +20,7 @@
     "test:search-threshold-browser": "node scripts/swfipn-search-threshold-browser-gate.mjs",
     "test:canonical-search-browser": "node scripts/swfipn-canonical-search-browser-gate.mjs",
     "test:canonical-search-stability": "node scripts/swfipn-canonical-search-stability-gate.mjs",
+    "test:browser-qa-contract": "node scripts/swfipn-browser-qa-contract-test.mjs",
     "test:competition-analysis": "node scripts/swfipn-competition-analysis-gate.mjs",
     "test:strategy-engine": "node scripts/swfipn-strategy-engine-test.mjs",
     "test:kp-feedback-browser": "node scripts/swfipn-kp-feedback-browser-gate.mjs",

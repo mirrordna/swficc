@@ -672,7 +672,7 @@ async function run() {
     ],
   };
   async function runWithContext(id, callback) {
-    const browser = await chromium.launch({ channel: "chrome", ...launchOptions });
+    const browser = await chromium.launch({ ...launchOptions });
     let context = null;
     try {
       context = validateLocalAuth

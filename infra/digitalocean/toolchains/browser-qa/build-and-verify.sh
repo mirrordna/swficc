@@ -12,5 +12,7 @@ docker run --rm --network none "$tag" bash -c '
   npm --version
   npx playwright --version
   node -e "import(\"playwright\").then(() => console.log(\"playwright-import-pass\"))"
+  node scripts/swfipn-browser-qa-contract-test.mjs
+  node -e "import(\"playwright\").then(async ({ chromium }) => { const browser = await chromium.launch({ headless: true }); await browser.close(); console.log(\"bundled-chromium-launch-pass\"); })"
 '
 docker image inspect --format '{{.Id}}' "$tag"

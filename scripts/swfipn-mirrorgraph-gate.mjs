@@ -114,7 +114,7 @@ async function waitForBody(page, required, timeout = 45_000) {
 async function run() {
   fs.mkdirSync(outputDir, { recursive: true });
   const { chromium } = loadPlaywright();
-  const browser = await chromium.launch({ channel: "chrome", headless: true });
+  const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1366, height: 900 } });
   const receipt = {
     schema_version: "swfipn.mirrorgraph_gate.v1",

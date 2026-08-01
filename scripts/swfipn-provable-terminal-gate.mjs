@@ -596,7 +596,7 @@ async function run() {
   fs.mkdirSync(outputDir, { recursive: true });
   const { chromium } = loadPlaywright();
   const launchArgs = resolveIp ? [`--host-resolver-rules=MAP ${new URL(origin).hostname} ${resolveIp}`] : [];
-  const browser = await chromium.launch({ channel: "chrome", headless: true, args: launchArgs });
+  const browser = await chromium.launch({ headless: true, args: launchArgs });
   const receipt = {
     schema_version: "swfipn.provable_terminal_gate.v1",
     generated_at: new Date().toISOString(),

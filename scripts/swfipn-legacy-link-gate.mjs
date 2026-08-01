@@ -74,7 +74,7 @@ async function inspectRoute(browser, route) {
 async function run() {
   fs.mkdirSync(outputDir, { recursive: true });
   const { chromium } = loadPlaywright();
-  const browser = await chromium.launch({ channel: "chrome", headless: true });
+  const browser = await chromium.launch({ headless: true });
   const checks = [];
   for (const route of routes) checks.push(await inspectRoute(browser, route));
   await browser.close();

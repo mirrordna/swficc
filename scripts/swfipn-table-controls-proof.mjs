@@ -439,8 +439,7 @@ function retrySummary(result) {
 }
 
 async function launchBrowser(chromium, baseHost, resolveIp) {
-  return chromium.launch({ channel: "chrome",
-    headless: true,
+  return chromium.launch({     headless: true,
     args: stableBrowserArgs(baseHost, resolveIp),
   });
 }

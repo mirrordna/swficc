@@ -33,7 +33,7 @@ const sourcePacket = await json("/api/source-data/search/v1?collection=entities&
 const sourceRows = dataRows(sourcePacket).filter((row) => entityId(row) && row?.name && row?.type);
 if (sourceRows.length < 5) throw new Error(`Entity candidate source returned only ${sourceRows.length} usable rows`);
 
-const browser = await chromium.launch({ channel: "chrome" });
+const browser = await chromium.launch({ });
 const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
 page.setDefaultTimeout(90_000);
 

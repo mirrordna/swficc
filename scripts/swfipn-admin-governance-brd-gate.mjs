@@ -123,7 +123,7 @@ async function main() {
   checks.push({ label: "viewer_content_create_blocked", status: viewerContentBlocked.status });
   if (viewerContentBlocked.status !== 403) failures.push(`viewer_content_status_${viewerContentBlocked.status}`);
 
-  const browser = await chromium.launch({ channel: "chrome", headless: true });
+  const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
   page.on("console", (message) => {
     if (message.type() === "error") consoleErrors.push(message.text());

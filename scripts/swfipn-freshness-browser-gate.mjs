@@ -75,7 +75,7 @@ const reportPage2 = [
   },
 ];
 
-const browser = await chromium.launch({ channel: "chrome" });
+const browser = await chromium.launch({ });
 try {
   const context = await browser.newContext({ serviceWorkers: "block" });
   await context.route("**/api/source-intelligence/news/v1**", async (route) => {

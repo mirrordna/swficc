@@ -262,7 +262,7 @@ function summarizeFacts(facts) {
 
 async function main() {
   fs.mkdirSync(outDir, { recursive: true });
-  const browser = await chromium.launch({ channel: "chrome", headless: true });
+  const browser = await chromium.launch({ headless: true });
   const results = [];
   try {
     for (const spec of specs) {

@@ -169,7 +169,7 @@ async function loadDashboard(page) {
 }
 
 (async () => {
-  const browser = await chromium.launch({ channel: "chrome", headless: true, timeout: 30_000 });
+  const browser = await chromium.launch({ headless: true, timeout: 30_000 });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   if (!(await loadDashboard(page))) {
     console.error("harness error: dashboard did not load after 3 attempts —", BASE);

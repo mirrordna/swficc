@@ -436,8 +436,7 @@ async function run() {
   const checks = [];
   checks.push(await fetchHtmlCheck());
 
-  const browser = await chromium.launch({ channel: "chrome",
-    headless: true,
+  const browser = await chromium.launch({     headless: true,
     args: resolveIp ? [`--host-resolver-rules=MAP ${originHost} ${resolveIp}`] : [],
   });
   for (const viewport of VIEWPORTS) {

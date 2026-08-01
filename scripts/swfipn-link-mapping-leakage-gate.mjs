@@ -411,7 +411,7 @@ async function run() {
   const results = [];
   for (const route of routes) {
     console.error(`[map-leakage] inspecting ${route}`);
-    const browser = await chromium.launch({ channel: "chrome", headless: true, args: ["--disable-gpu"], timeout: 30_000 });
+    const browser = await chromium.launch({ headless: true, args: ["--disable-gpu"], timeout: 30_000 });
     try {
       results.push(await inspectRoute(browser, route));
     } catch (error) {

@@ -123,7 +123,7 @@ async function inspectCase(page, testCase) {
 async function main() {
   fs.mkdirSync(outputDir, { recursive: true });
   const { chromium } = loadPlaywright();
-  const browser = await chromium.launch({ channel: "chrome", headless: true, args: ["--disable-gpu"], timeout: 30_000 });
+  const browser = await chromium.launch({ headless: true, args: ["--disable-gpu"], timeout: 30_000 });
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const results = [];
   try {

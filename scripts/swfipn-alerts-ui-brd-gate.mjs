@@ -25,7 +25,7 @@ async function main() {
     return writeReceipt({ status: "blocked", blockers, failures, checks, console_errors: consoleErrors });
   }
 
-  const browser = await chromium.launch({ channel: "chrome", headless: true });
+  const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
   page.on("console", (message) => {
     if (message.type() === "error") consoleErrors.push(message.text());

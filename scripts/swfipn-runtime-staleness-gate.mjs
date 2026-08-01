@@ -303,8 +303,7 @@ async function run() {
   const assetReceipt = readAssetReceipt();
   const publicMarker = await readPublicReleaseMarker(deploy, assetReceipt);
   const { chromium } = loadPlaywright();
-  const browser = await chromium.launch({ channel: "chrome",
-    headless: true,
+  const browser = await chromium.launch({     headless: true,
     args: stableBrowserArgs(originHost),
   });
   const checks = [];

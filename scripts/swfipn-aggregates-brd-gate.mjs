@@ -102,7 +102,7 @@ async function checkApi() {
 async function checkPage() {
   const failures = [];
   const consoleErrors = [];
-  const browser = await chromium.launch({ channel: "chrome", headless: true });
+  const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   page.on("console", (msg) => {
     if (msg.type() === "error") consoleErrors.push(msg.text());
