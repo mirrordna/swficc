@@ -192,6 +192,13 @@ async function checkRoute(page, spec) {
   await page.waitForFunction((selector) => {
     const panel = document.querySelector(selector);
     if (!panel) return false;
+    const visibleCount = Number(panel.getAttribute("data-source-visible-count") || "0");
+    const totalCount = Number(panel.getAttribute("data-source-total-count") || "0");
+    return panel.getAttribute("data-source-ready") === "true" && visibleCount > 0 && totalCount > 0;
+  }, spec.selector, { timeout: 120_000 }).catch(() => failures.push("source_data_not_ready"));
+  await page.waitForFunction((selector) => {
+    const panel = document.querySelector(selector);
+    if (!panel) return false;
     return panel.querySelectorAll("a[href*='filter=']").length > 0 || panel.querySelectorAll("svg").length > 0;
   }, spec.selector, { timeout: 30_000 }).catch(() => null);
   await page.screenshot({ path: screenshot, fullPage: true });
@@ -203,21 +210,29 @@ async function checkRoute(page, spec) {
   // Dashboard 2.0 P05: exports are sign-in gated — the gate asserts the
   // sign-in export link instead of public download buttons.
   const signinExportLinks = await page.locator(`${spec.selector} a`, { hasText: "Sign in on SWFI to export" }).count();
-  const { chartFilterLinks, svgCount } = await page.evaluate((selector) => {
+  const { chartFilterLinks, svgCount, sourceReady, sourceVisibleCount, sourceTotalCount } = await page.evaluate((selector) => {
     const panel = document.querySelector(selector);
     return {
       chartFilterLinks: panel?.querySelectorAll("a[href*='filter=']").length || 0,
       svgCount: panel?.querySelectorAll("svg").length || 0,
+      sourceReady: panel?.getAttribute("data-source-ready") === "true",
+      sourceVisibleCount: Number(panel?.getAttribute("data-source-visible-count") || "0"),
+      sourceTotalCount: Number(panel?.getAttribute("data-source-total-count") || "0"),
     };
   }, spec.selector);
   const internalLeaks = ["Active Mirror", "source_gap", "backend_http", "undefined", "null", "Loaded Rows", "Top Loaded Records"].filter((needle) => panelText.includes(needle));
+  const emptyStates = ["No source rows available.", "No Compass rows available."].filter((needle) => panelText.includes(needle));
 
   if ((response?.status() || 0) >= 400) failures.push(`http_${response?.status() || 0}`);
   if (missing.length) failures.push(`missing_text:${missing.join("|")}`);
   if (signinExportLinks < 1) failures.push("missing_signin_gated_export");
+  if (!sourceReady) failures.push("source_not_ready");
+  if (sourceVisibleCount < 1) failures.push("zero_visible_source_rows");
+  if (sourceTotalCount < 1) failures.push("zero_total_source_rows");
   if (chartFilterLinks < 1) failures.push("missing_clickable_chart_filters");
   if (chartFilterLinks < 1 && svgCount < 1) failures.push("missing_chart_visual");
   if (internalLeaks.length) failures.push(`internal_leaks:${internalLeaks.join("|")}`);
+  if (emptyStates.length) failures.push(`empty_visualization_states:${emptyStates.join("|")}`);
 
   return {
     id: spec.id,
@@ -226,6 +241,9 @@ async function checkRoute(page, spec) {
     status: failures.length ? "fail" : "pass",
     missing,
     chart_filter_links: chartFilterLinks,
+    source_ready: sourceReady,
+    source_visible_count: sourceVisibleCount,
+    source_total_count: sourceTotalCount,
     signin_export_links: signinExportLinks,
     export_csv_buttons: 0,
     export_png_buttons: 0,

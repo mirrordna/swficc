@@ -79,6 +79,28 @@ function evaluate({ mode, receipts, identity, expectedRelease, sourceOrigin, sta
     partial_run: parityFull.partial_run,
     totals: parityFull.totals || null,
   } : "missing");
+  const visualizationCounts = new Map((visualization?.checks || []).map((check) => [check.id, Number(check.source_total_count)]));
+  const parityCollections = Object.entries(parityFull?.collections || {});
+  const countMismatches = parityCollections
+    .filter(([id]) => ["entities", "people", "transactions", "compass"].includes(id))
+    .map(([id, collection]) => ({
+      id,
+      parity: Number(collection?.count),
+      current: visualizationCounts.get(id),
+    }))
+    .filter((item) => !Number.isFinite(item.current) || item.current !== item.parity);
+  const visualizationGenerated = Date.parse(String(visualization?.generated_at || ""));
+  const parityGenerated = Date.parse(String(parityFull?.generated_at || ""));
+  add("full_parity_source_counts_current", parityCollections.length >= 4
+    && countMismatches.length === 0
+    && Number.isFinite(visualizationGenerated)
+    && Number.isFinite(parityGenerated)
+    && visualizationGenerated >= parityGenerated,
+  {
+    parity_generated_at: parityFull?.generated_at || "missing",
+    current_counts_generated_at: visualization?.generated_at || "missing",
+    mismatches: countMismatches,
+  });
   for (const [id, receipt, receiptOrigin] of [
     ["search", search, search?.source_backend_origin],
     ["visualization", visualization, visualization?.source_backend_origin],
@@ -135,16 +157,41 @@ function selfTest() {
   const sourceOrigin = "https://dashboard.swfi.com";
   const base = {
     search: { status: "pass", generated_at, target_mode: "local_candidate", source_backend_origin: sourceOrigin, candidate_identity: candidateIdentity, required_cold_start_samples: 2, passed_cold_start_samples: 2, identity_consistent: true },
-    visualization: { status: "pass", generated_at, target_mode: "local_candidate", source_backend_origin: sourceOrigin, candidate_identity: candidateIdentity },
+    visualization: {
+      status: "pass",
+      generated_at,
+      target_mode: "local_candidate",
+      source_backend_origin: sourceOrigin,
+      candidate_identity: candidateIdentity,
+      checks: [
+        { id: "entities", source_total_count: 40 },
+        { id: "people", source_total_count: 30 },
+        { id: "transactions", source_total_count: 20 },
+        { id: "compass", source_total_count: 10 },
+      ],
+    },
     numeric: { status: "pass", generated_at, origin: sourceOrigin, promotion_eligible: true, source_truth_verdict: "MATCH" },
     paritySample: { status: "pass", generated_at, backend_origin: sourceOrigin, scope: "record-level live API to Mongo parity by _id" },
-    parityFull: { status: "pass", generated_at, backend_origin: sourceOrigin, scope: "full required-field parity from SWFIPN source API to Mongo by source id", partial_run: false, totals: { count: 100, checked: 100, failed: 0 } },
+    parityFull: {
+      status: "pass",
+      generated_at,
+      backend_origin: sourceOrigin,
+      scope: "full required-field parity from SWFIPN source API to Mongo by source id",
+      partial_run: false,
+      totals: { count: 100, checked: 100, failed: 0 },
+      collections: {
+        entities: { count: 40 },
+        people: { count: 30 },
+        transactions: { count: 20 },
+        compass: { count: 10 },
+      },
+    },
     stakeholder: { status: "pass", generated_at, release_git_sha: identity.git_sha, asset_version: identity.asset_version, _receipt_sha256: "b".repeat(64) },
   };
   const production = {
     ...base,
     search: { status: "pass", generated_at, target_mode: "live", source_backend_origin: sourceOrigin, required_cold_start_samples: 2, passed_cold_start_samples: 2, identity_consistent: true, release_identity_pinned: true, tested_release_git_sha: identity.git_sha, tested_release_asset_version: identity.asset_version },
-    visualization: { status: "pass", generated_at, target_mode: "live", source_backend_origin: sourceOrigin, release_identity_pinned: true, tested_release_git_sha: identity.git_sha, tested_release_asset_version: identity.asset_version },
+    visualization: { ...base.visualization, target_mode: "live", release_identity_pinned: true, tested_release_git_sha: identity.git_sha, tested_release_asset_version: identity.asset_version },
   };
   const cases = [
     evaluate({ mode: "candidate", receipts: base, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).status === "pass",
@@ -160,6 +207,7 @@ function selfTest() {
     evaluate({ mode: "candidate", receipts: { ...base, parityFull: { ...base.parityFull, partial_run: true } }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).blockers.includes("fresh_full_mongo_parity"),
     evaluate({ mode: "candidate", receipts: { ...base, parityFull: { ...base.parityFull, totals: { count: 100, checked: 99, failed: 0 } } }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).blockers.includes("fresh_full_mongo_parity"),
     evaluate({ mode: "candidate", receipts: { ...base, parityFull: null }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).blockers.includes("fresh_full_mongo_parity"),
+    evaluate({ mode: "candidate", receipts: { ...base, visualization: { ...base.visualization, checks: base.visualization.checks.map((check) => check.id === "transactions" ? { ...check, source_total_count: 21 } : check) } }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).blockers.includes("full_parity_source_counts_current"),
   ];
   const result = { status: cases.every(Boolean) ? "pass" : "fail", checks: cases.length, passed: cases.filter(Boolean).length };
   console.log(JSON.stringify(result, null, 2));

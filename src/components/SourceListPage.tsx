@@ -851,8 +851,8 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
             </div>
             {sectionView === "visualization" ? (
               kind === "mandates"
-                ? <CompassVisualization rows={visualizationRows} totalRows={totalRows} incompleteCoverage={incompleteCoverage} />
-                : <SectionVisualization kind={kind} rows={visualizationRows} totalRows={totalRows} />
+                ? <CompassVisualization rows={visualizationRows} totalRows={totalRows} incompleteCoverage={incompleteCoverage} ready={!isLoading && isFact(packet)} />
+                : <SectionVisualization kind={kind} rows={visualizationRows} totalRows={totalRows} ready={!isLoading && isFact(packet)} />
             ) : null}
           </section>
         ) : null}
@@ -1770,7 +1770,7 @@ const FACET_COLLECTIONS: Partial<Record<Kind, string>> = {
   mandates: "compass",
 };
 
-function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kind; rows: Row[]; totalRows: number }) {
+function SectionVisualization({ kind, rows: sourceRows, totalRows, ready }: { kind: Kind; rows: Row[]; totalRows: number; ready: boolean }) {
   // Minutes item D: distributions computed source-side over the WHOLE
   // collection. Current-page charts remain only as the disclosed fallback
   // while facets are pending or unavailable.
@@ -1820,7 +1820,13 @@ function SectionVisualization({ kind, rows: sourceRows, totalRows }: { kind: Kin
   ] as const;
 
   return (
-    <div className="grid grid-cols-1 gap-4" data-brd-section-visualization={kind}>
+    <div
+      className="grid grid-cols-1 gap-4"
+      data-brd-section-visualization={kind}
+      data-source-ready={ready ? "true" : "false"}
+      data-source-visible-count={sourceRows.length}
+      data-source-total-count={totalRows}
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="grid grid-cols-1 gap-1 text-[12px] text-[#7A8A9B]">
           <span>SWFI platform data</span>
@@ -2457,7 +2463,7 @@ function SectionInsights({ kind, rows: sourceRows }: { kind: Kind; rows: Row[] }
   );
 }
 
-function CompassVisualization({ rows: sourceRows, totalRows, incompleteCoverage }: { rows: Row[]; totalRows: number; incompleteCoverage: IncompletePacketCoverage | null }) {
+function CompassVisualization({ rows: sourceRows, totalRows, incompleteCoverage, ready }: { rows: Row[]; totalRows: number; incompleteCoverage: IncompletePacketCoverage | null; ready: boolean }) {
   const investmentTypeRows = bucketRows(sourceRows, (row) => businessText(row.investment_type || row.strategy || row.asset_class_or_strategy || row.type));
   const regionRows = bucketRows(sourceRows, (row) => businessText(row.region || row.country));
   const monthRows = bucketRows(sourceRows, (row) => monthBucket(row.posted_at || row.created_at || row.published_at || row.deadline || row.due_at)).reverse();
@@ -2487,6 +2493,9 @@ function CompassVisualization({ rows: sourceRows, totalRows, incompleteCoverage 
     <div
       className="grid grid-cols-1 gap-4"
       data-brd-compass-visualization="true"
+      data-source-ready={ready ? "true" : "false"}
+      data-source-visible-count={sourceRows.length}
+      data-source-total-count={totalRows}
       data-display-id="compass-visualization"
       data-display-type="chart"
       data-title="Compass RFP visualization"
