@@ -1,9 +1,39 @@
 #!/usr/bin/env node
-import { mkdirSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { chromium } from "playwright";
 
-const ORIGIN = (process.env.SWFIPN_ORIGIN || "http://127.0.0.1:4317").replace(/\/swficc\/?$/, "").replace(/\/$/, "");
+const configuredOrigin = String(process.env.SWFIPN_ORIGIN || "").trim();
+const ORIGIN = (configuredOrigin || "http://127.0.0.1:4317").replace(/\/swficc\/?$/, "").replace(/\/$/, "");
+const requestedTargetMode = String(process.env.SWFIPN_TARGET_MODE || "").trim().toLowerCase();
+const originHost = new URL(ORIGIN).hostname;
+const liveTarget = !new Set(["127.0.0.1", "localhost", "::1"]).has(originHost)
+  && requestedTargetMode !== "candidate";
+const sourceBackendOrigin = new URL(
+  String(process.env.SWFIPN_BACKEND_ORIGIN || (liveTarget ? ORIGIN : "https://dashboard.swfi.com")),
+).origin;
 const checks = [];
+
+function candidateIdentity() {
+  let gitSha = String(process.env.SWFIPN_CANDIDATE_GIT_SHA || "").trim();
+  let gitDirty = /^(1|true|yes)$/i.test(String(process.env.SWFIPN_CANDIDATE_GIT_DIRTY || ""));
+  if (!gitSha) {
+    try {
+      gitSha = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+      gitDirty = Boolean(execFileSync("git", ["status", "--porcelain"], { encoding: "utf8" }).trim());
+    } catch {
+      gitSha = "unknown";
+      gitDirty = true;
+    }
+  }
+  let assetVersion = "";
+  try {
+    assetVersion = String(JSON.parse(readFileSync("output/swfipn-asset-version-latest.json", "utf8")).version || "").trim();
+  } catch {
+    // Missing identity is explicit and blocks release use of this receipt.
+  }
+  return { git_sha: gitSha, git_dirty: gitDirty, asset_version: assetVersion || null };
+}
 
 function check(id, pass, evidence) {
   checks.push({ id, status: pass ? "PASS" : "FAIL", evidence: String(evidence || "").slice(0, 800) });
@@ -240,12 +270,37 @@ try {
 }
 
 mkdirSync("output", { recursive: true });
+const behavioralPass = checks.every((item) => item.status === "PASS");
+const testedReleaseGitSha = liveTarget ? String(process.env.SWFIPN_RELEASE_GIT_SHA || "").trim() : "";
+const testedReleaseAssetVersion = liveTarget ? String(process.env.SWFIPN_RELEASE_ASSET_VERSION || "").trim() : "";
+const candidate = liveTarget ? null : candidateIdentity();
+const releaseIdentityPinned = liveTarget
+  ? /^[a-f0-9]{40}$/i.test(testedReleaseGitSha) && Boolean(testedReleaseAssetVersion)
+  : /^[a-f0-9]{40}$/i.test(String(candidate?.git_sha || ""))
+    && candidate?.git_dirty === false
+    && Boolean(candidate?.asset_version);
+const status = behavioralPass && releaseIdentityPinned ? "pass" : "fail";
 const receipt = {
+  schema_version: "swfipn.kp_feedback_browser_gate.v2",
   generated_at: new Date().toISOString(),
+  evidence_class: liveTarget
+    ? "LIVE_TARGET_SURFACE_BEHAVIOR_NOT_STAKEHOLDER_ACCEPTANCE"
+    : "CANDIDATE_WITH_LIVE_SWFI_SOURCES_NOT_STAKEHOLDER_ACCEPTANCE",
   origin: ORIGIN,
-  pass: checks.every((item) => item.status === "PASS"),
+  target_mode: liveTarget ? "live" : (configuredOrigin ? "remote_candidate" : "local_candidate"),
+  source_backend_origin: sourceBackendOrigin,
+  tested_release_git_sha: testedReleaseGitSha || null,
+  tested_release_asset_version: testedReleaseAssetVersion || null,
+  release_identity_pinned: releaseIdentityPinned,
+  candidate_identity: candidate,
+  status,
+  pass: status === "pass",
+  bad_news: releaseIdentityPinned ? [] : [liveTarget ? "live_target_release_identity_unpinned" : "candidate_identity_unpinned"],
+  unchecked_scope: liveTarget
+    ? ["stakeholder_acceptance", "Mongo_record_parity", "global_release_acceptance"]
+    : ["deployed_production", "stakeholder_acceptance", "Mongo_record_parity"],
   checks,
 };
 writeFileSync("output/swfipn-kp-feedback-browser-latest.json", `${JSON.stringify(receipt, null, 2)}\n`);
-console.log(JSON.stringify({ pass: receipt.pass, checks: checks.length, failing: checks.filter((item) => item.status === "FAIL").map((item) => item.id) }, null, 2));
+console.log(JSON.stringify({ status: receipt.status, pass: receipt.pass, checks: checks.length, failing: checks.filter((item) => item.status === "FAIL").map((item) => item.id) }, null, 2));
 if (!receipt.pass) process.exitCode = 1;
