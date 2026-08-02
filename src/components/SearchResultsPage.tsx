@@ -121,13 +121,15 @@ export default function SearchResultsPage() {
         controller.abort();
       };
     }
+    // A failed source becomes an explicit partial state within one bounded wait.
+    // The visible Retry control starts a new generation instead of hiding a second request.
     const shouldSearchPublic = !currentIntent
       && !lifecycleIntent.explicitDefunctRequest
       && (currentCategory === "all" || currentCategory === "entities" || currentCategory === "transactions");
     const publicSearch: Promise<Packet | null> = shouldSearchPublic
       ? fetchPacket(`/api/v1/public/search?q=${encodeURIComponent(currentQuery)}&limit=100`, 20_000, {
         signal: controller.signal,
-        attempts: 2,
+        attempts: 1,
       }).then((nextPacket) => {
         if (!active) return nextPacket;
         if (isFact(nextPacket)) {
@@ -148,7 +150,7 @@ export default function SearchResultsPage() {
       ? Promise.all(sourceVariants.map((variant) => (
         fetchPacket(`/api/source-data/search/v1?collection=entities${variant ? `&q=${encodeURIComponent(variant)}` : ""}${lifecycleQuery}&limit=100`, 25_000, {
           signal: controller.signal,
-          attempts: 2,
+          attempts: 1,
         })
       ))).then((nextPackets) => {
       const factPackets = nextPackets.filter(isFact);
@@ -169,7 +171,7 @@ export default function SearchResultsPage() {
       ? Promise.all(peopleVariants.map((variant) => (
           fetchPacket(`/api/people/search/v1?q=${encodeURIComponent(variant)}&limit=100`, 25_000, {
             signal: controller.signal,
-            attempts: 2,
+            attempts: 1,
           })
         ))).then((nextPackets) => {
           const factPackets = nextPackets.filter(isFact);
@@ -188,11 +190,11 @@ export default function SearchResultsPage() {
       ? Promise.all([
           fetchPacket("/api/live-opportunities/v1?limit=100&page=1", 25_000, {
             signal: controller.signal,
-            attempts: 2,
+            attempts: 1,
           }),
           fetchPacket("/api/live-mandates/v1?limit=100&page=1", 25_000, {
             signal: controller.signal,
-            attempts: 2,
+            attempts: 1,
           }),
         ]).then((nextPackets) => {
           const factPackets = nextPackets.filter(isFact);
@@ -211,7 +213,7 @@ export default function SearchResultsPage() {
       ? Promise.all(sourceVariants.map((variant) => (
           fetchPacket(`/api/source-intelligence/news/v1?q=${encodeURIComponent(variant)}&limit=100`, 25_000, {
             signal: controller.signal,
-            attempts: 2,
+            attempts: 1,
           })
         ))).then((nextPackets) => {
           const factPackets = nextPackets.filter(isFact);
@@ -233,7 +235,7 @@ export default function SearchResultsPage() {
           if (!entityName) return null;
           const nextPacket = await fetchPacket(`/api/entity-transactions/v1?name=${encodeURIComponent(entityName)}&limit=100`, 25_000, {
             signal: controller.signal,
-            attempts: 2,
+            attempts: 1,
           }).catch(() => null);
           if (active && nextPacket && isFact(nextPacket)) {
             setTransactionPacket(nextPacket);
@@ -451,6 +453,8 @@ export default function SearchResultsPage() {
         className="mx-auto grid w-full max-w-[1188px] gap-4 p-4 sm:p-[20px_22px_30px]"
         data-search-results-query={query.trim().toLowerCase()}
         data-search-results-ready={isTextQueryReady(query) && !loading && !searchIssue && sourceFreshnessCurrent ? "true" : "false"}
+        data-search-results-state={!isTextQueryReady(query) ? "idle" : loading ? "loading" : searchIssue ? "partial" : sourceFreshnessCurrent ? "ready" : "stale"}
+        data-search-results-issue={searchIssue || undefined}
       >
         <section className="rounded border border-[#DCE3EA] bg-white p-4" data-search-category={category}>
           <div className="flex flex-wrap items-start justify-between gap-3">

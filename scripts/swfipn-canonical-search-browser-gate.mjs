@@ -14,6 +14,15 @@ const liveEntityBudgetMs = 8_000;
 const newsBudgetMs = 8_000;
 const resultCategories = ["Entities", "RFPs & Opportunities", "Transactions", "News & Articles", "People"];
 const requiredPopulatedCategories = ["Entities", "Transactions", "News & Articles", "People"];
+const requiredSearchPaths = [
+  "/api/v1/public/search",
+  "/api/source-data/search/v1",
+  "/api/source-intelligence/news/v1",
+  "/api/people/search/v1",
+  "/api/entity-transactions/v1",
+  "/api/live-opportunities/v1",
+  "/api/live-mandates/v1",
+];
 
 function candidateIdentity() {
   let gitSha = String(process.env.SWFIPN_CANDIDATE_GIT_SHA || "").trim();
@@ -133,23 +142,26 @@ async function orderedResultSet(page) {
   };
 }
 
-async function waitForSearchLanes(page, networkTrace, timeout = 30_000) {
-  const requiredPaths = [
-    "/api/v1/public/search",
-    "/api/source-data/search/v1",
-    "/api/source-intelligence/news/v1",
-    "/api/people/search/v1",
-    "/api/entity-transactions/v1",
-  ];
+function matchesRequiredRequest(observed, required, requiredLimit) {
+  if (!observed.startsWith(required)) return false;
+  if (!requiredLimit) return true;
+  try {
+    return new URL(observed, "https://candidate.invalid").searchParams.get("limit") === String(requiredLimit);
+  } catch {
+    return false;
+  }
+}
+
+async function waitForSearchLanes(page, networkTrace, timeout = 30_000, requiredPaths = requiredSearchPaths, requiredLimit = null) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     const responsePaths = networkTrace
       .filter((event) => event.event === "response" && event.status >= 200 && event.status < 300)
       .map((event) => event.path);
-    const missing = requiredPaths.filter((required) => !responsePaths.some((observed) => observed.startsWith(required)));
+    const missing = requiredPaths.filter((required) => !responsePaths.some((observed) => matchesRequiredRequest(observed, required, requiredLimit)));
     const searching = await page.getByText("Searching this category…", { exact: true }).count();
     if (!missing.length && searching === 0) {
-      return { settled: true, required_paths: requiredPaths, missing_paths: [] };
+      return { settled: true, required_paths: requiredPaths, required_limit: requiredLimit, missing_paths: [] };
     }
     await page.waitForTimeout(100);
   }
@@ -159,7 +171,8 @@ async function waitForSearchLanes(page, networkTrace, timeout = 30_000) {
   return {
     settled: false,
     required_paths: requiredPaths,
-    missing_paths: requiredPaths.filter((required) => !responsePaths.some((observed) => observed.startsWith(required))),
+    required_limit: requiredLimit,
+    missing_paths: requiredPaths.filter((required) => !responsePaths.some((observed) => matchesRequiredRequest(observed, required, requiredLimit))),
   };
 }
 
@@ -167,7 +180,7 @@ async function runQuery(browser, origin, testCase) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const startedAt = Date.now();
   const networkTrace = [];
-  const relevantPath = (value) => /\/api\/(?:v1\/public\/search|source-data\/search\/v1|source-intelligence\/news\/v1|people\/search\/v1|entity-transactions\/v1)/.test(value);
+  const relevantPath = (value) => /\/api\/(?:v1\/public\/search|source-data\/search\/v1|source-intelligence\/news\/v1|people\/search\/v1|entity-transactions\/v1|live-opportunities\/v1|live-mandates\/v1)/.test(value);
   page.on("response", (response) => {
     const url = new URL(response.url());
     if (!relevantPath(url.pathname)) return;
@@ -249,8 +262,13 @@ async function runQuery(browser, origin, testCase) {
       page.waitForURL(/\/search\/?(?:\?|$)/, { timeout: 10_000 }),
       page.getByRole("link", { name: "View all results", exact: true }).click(),
     ]);
-    const fullPageSettlement = await waitForSearchLanes(page, networkTrace, 35_000);
-    await page.locator('[data-search-results-ready="true"]').waitFor({ state: "attached", timeout: 35_000 });
+    const searchResultsRoot = page.locator("main[data-search-results-state]");
+    const [fullPageSettlement] = await Promise.all([
+      waitForSearchLanes(page, networkTrace, 30_000, requiredSearchPaths, 100),
+      page.locator('main[data-search-results-state]:not([data-search-results-state="loading"])').waitFor({ state: "attached", timeout: 30_000 }),
+    ]);
+    const searchResultsState = await searchResultsRoot.getAttribute("data-search-results-state");
+    const searchIssue = await searchResultsRoot.getAttribute("data-search-results-issue");
     const freshnessReceipt = page.getByTestId("search-source-freshness");
     const freshnessVisible = await freshnessReceipt.isVisible().catch(() => false);
     const sourceGeneratedAt = freshnessVisible
@@ -284,7 +302,10 @@ async function runQuery(browser, origin, testCase) {
     const detailedPeoplePresent = detailedPeopleResult.present;
     const detailedAumPass = !testCase.aumDisplay || detailedEntityRow.includes(testCase.aumDisplay);
     const detailedForbiddenAbsent = testCase.forbidden.every((value) => !detailedBody.includes(value));
-    const detailedNewsRequests = networkTrace.filter((event) => event.path?.startsWith("/api/source-intelligence/news/v1"));
+    const detailedNewsRequests = networkTrace.filter((event) => {
+      if (!event.path?.startsWith("/api/source-intelligence/news/v1")) return false;
+      return new URL(event.path, "https://candidate.invalid").searchParams.get("limit") === "100";
+    });
     const detailedNewsQueryBound = detailedNewsRequests.length > 0
       && detailedNewsRequests.every((event) => /[?&]q=/.test(event.path));
     const detailedPublicSearchNotSharedCacheable = networkTrace
@@ -311,6 +332,7 @@ async function runQuery(browser, origin, testCase) {
         && resultSetComplete
         && resultSourcesComplete
         && fullPageSettlement.settled
+        && searchResultsState === "ready"
         && freshnessVisible
         && Boolean(sourceGeneratedAt)
         && Boolean(sourceOldestGeneratedAt)
@@ -348,6 +370,8 @@ async function runQuery(browser, origin, testCase) {
       network_trace: modalNetworkTrace.sort((left, right) => left.at_ms - right.at_ms),
       detailed_results: {
         elapsed_ms: Date.now() - fullPageStartedAt,
+        state: searchResultsState,
+        issue: searchIssue || null,
         search_lanes_settled: fullPageSettlement.settled,
         search_lane_settlement: fullPageSettlement,
         source_freshness_visible: freshnessVisible,
@@ -374,6 +398,20 @@ async function runQuery(browser, origin, testCase) {
       forbidden_absent: testCase.forbidden.filter((value) => !body.includes(value)),
       screenshot: screenshotPath,
       screenshot_sha256: fileSha256(screenshotPath),
+    };
+  } catch (error) {
+    const screenshotPath = path.join(outputDir, `swfipn-canonical-search-${testCase.id}-failure-latest.png`);
+    await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {});
+    const searchResultsRoot = page.locator("main[data-search-results-state]");
+    return {
+      id: testCase.id,
+      pass: false,
+      error: error instanceof Error ? error.message : String(error),
+      search_results_state: await searchResultsRoot.getAttribute("data-search-results-state").catch(() => null),
+      search_issue: await searchResultsRoot.getAttribute("data-search-results-issue").catch(() => null),
+      network_trace: networkTrace.sort((left, right) => left.at_ms - right.at_ms),
+      screenshot: fs.existsSync(screenshotPath) ? screenshotPath : null,
+      screenshot_sha256: fs.existsSync(screenshotPath) ? fileSha256(screenshotPath) : null,
     };
   } finally {
     await page.close();
