@@ -81,10 +81,12 @@ function evaluate({ mode, receipts, identity, expectedRelease, sourceOrigin, sta
   add("fresh_full_mongo_parity", parityFull?.status === "pass"
     && /full required-field parity/i.test(String(parityFull?.scope || ""))
     && parityFull?.partial_run === false
+    && parityFull?.continuity?.high_water_complete === true
     && fullParityComplete
     && fresh(parityFull, now), parityFull ? {
     status: parityFull.status,
     partial_run: parityFull.partial_run,
+    continuity: parityFull.continuity || null,
     totals: parityFull.totals || null,
   } : "missing");
   const visualizationCounts = new Map((visualization?.checks || []).map((check) => [check.id, Number(check.source_total_count)]));
@@ -188,6 +190,7 @@ function selfTest() {
       backend_origin: sourceOrigin,
       scope: "full required-field parity from SWFIPN source API to Mongo by source id",
       partial_run: false,
+      continuity: { mode: "full_scan", high_water_complete: true },
       totals: { count: 100, checked: 100, failed: 0 },
       collections: {
         entities: { count: 40 },

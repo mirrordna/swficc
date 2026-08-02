@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
@@ -18,6 +19,7 @@ const collectionsToRun = envList("SWFIPN_FIELD_PARITY_COLLECTIONS", ["entities",
 const requestTimeoutMs = clampInt(process.env.SWFIPN_FIELD_PARITY_TIMEOUT_MS || "90000", 5_000, 300_000);
 const allowPartialExit = /^(1|true|yes)$/i.test(String(process.env.SWFIPN_ALLOW_PARTIAL_EXIT || ""));
 const fromMappingSnapshot = /^(1|true|yes)$/i.test(String(process.env.SWFIPN_FIELD_PARITY_FROM_MAPPING || ""));
+const incrementalMode = /^(1|true|yes)$/i.test(String(process.env.SWFIPN_FIELD_PARITY_INCREMENTAL || ""));
 const mappingReceiptPath = path.join(outputDir, "swfipn-full-universe-mapping-latest.json");
 
 const specs = {
@@ -282,10 +284,30 @@ function selfTest() {
     ["live_alias_preserves_zero", amount.live({ amount: 0, capital: 12 }), 0],
     ["source_zero_fallback_preserved", assets.source({ assets: 0 }), 0],
     ["nonzero_source_alias_preferred", assets.source({ assets: 0, managedAssets: 12 }), 12],
+    ["append_only_tail_matches", appendOnlyDeltaPlan(10, 12, 2, false).status, "pass"],
+    ["append_only_tail_rejects_deletion", appendOnlyDeltaPlan(10, 9, 0, false).status, "blocked"],
+    ["append_only_tail_rejects_backfill", appendOnlyDeltaPlan(10, 11, 0, false).status, "blocked"],
+    ["append_only_tail_rejects_multiple_pages", appendOnlyDeltaPlan(10, 12, 2, true).status, "blocked"],
   ];
   const failures = checks.filter(([, actual, expected]) => !Object.is(actual, expected));
   console.log(JSON.stringify({ status: failures.length ? "fail" : "pass", checks: checks.length, failures }, null, 2));
   if (failures.length) process.exit(1);
+}
+
+function appendOnlyDeltaPlan(priorCount, currentCount, returnedRows, hasMore) {
+  if (!Number.isFinite(priorCount) || !Number.isFinite(currentCount) || currentCount < priorCount) {
+    return { status: "blocked", reason: "source_count_decreased_requires_full_scan" };
+  }
+  const delta = currentCount - priorCount;
+  if (hasMore) return { status: "blocked", reason: "incremental_tail_exceeds_single_page_requires_full_scan", delta };
+  if (returnedRows !== delta) {
+    return { status: "blocked", reason: "non_append_or_backfilled_delta_requires_full_scan", delta, returned_rows: returnedRows };
+  }
+  return { status: "pass", delta };
+}
+
+function sha256(raw) {
+  return createHash("sha256").update(raw).digest("hex");
 }
 
 function scanUrl(collection, limit, after) {
@@ -438,6 +460,41 @@ function saveState(state) {
   fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
 }
 
+function loadIncrementalAnchor(state) {
+  if (!fs.existsSync(statePath) || !fs.existsSync(receiptPath)) {
+    throw new Error("incremental_anchor_missing_requires_full_scan");
+  }
+  const stateRaw = fs.readFileSync(statePath, "utf8");
+  const receiptRaw = fs.readFileSync(receiptPath, "utf8");
+  const prior = JSON.parse(receiptRaw);
+  if (prior.status !== "pass" || prior.partial_run !== false || prior.continuity?.high_water_complete !== true) {
+    throw new Error("incremental_prior_receipt_not_complete_requires_full_scan");
+  }
+  for (const collection of Object.keys(specs)) {
+    const current = state.collections[collection];
+    const verified = prior.collections?.[collection];
+    if (!verified
+      || Number(current.count) !== Number(verified.count)
+      || Number(current.checked) !== Number(verified.checked)
+      || Number(current.matched) !== Number(verified.matched)
+      || Number(current.mismatched) !== Number(verified.mismatched)
+      || Number(current.missing_source_record) !== Number(verified.missing_source_record)
+      || Number(current.blocked) !== Number(verified.blocked)
+      || String(current.after || "") !== String(verified.high_water_id || "")) {
+      throw new Error(`incremental_anchor_state_mismatch:${collection}`);
+    }
+    if (Number(current.count) > 0 && !/^[a-f0-9]{24}$/i.test(String(current.after || ""))) {
+      throw new Error(`incremental_high_water_missing:${collection}`);
+    }
+  }
+  return {
+    prior,
+    prior_receipt_sha256: sha256(receiptRaw),
+    state_sha256_before: sha256(stateRaw),
+    checked_before: Object.values(state.collections).reduce((sum, item) => sum + Number(item.checked || 0), 0),
+  };
+}
+
 async function runCollection(collection, spec, mongoUri, state) {
   let after = state.collections[collection].after || "";
   let keepGoing = true;
@@ -500,7 +557,12 @@ async function runCollection(collection, spec, mongoUri, state) {
       }
     }
     const nextAfter = data.next_after;
+    const terminalAfter = idRows.at(-1)?.id || "";
     if ((maxPages && page >= maxPages) || !data.has_more || !nextAfter || String(nextAfter) === String(after)) {
+      if (terminalAfter) {
+        after = terminalAfter;
+        state.collections[collection].after = terminalAfter;
+      }
       keepGoing = false;
     } else {
       after = String(nextAfter);
@@ -508,6 +570,81 @@ async function runCollection(collection, spec, mongoUri, state) {
     }
     saveState(state);
   }
+}
+
+async function runIncrementalCollection(collection, spec, mongoUri, state, anchor) {
+  const current = state.collections[collection];
+  const prior = anchor.prior.collections[collection];
+  const after = String(current.after || "");
+  current.pages += 1;
+  console.error(`[field-parity:incremental] ${collection}: after=${after || "MISSING"}`);
+  let packet = await fetchJson(scanUrl(collection, pageLimit, after));
+  for (let attempt = 1; attempt <= 2 && (packet.status !== 200 || packet.body?.status !== "ok"); attempt += 1) {
+    console.error(`[field-parity:incremental] ${collection}: scan retry ${attempt} after http_${packet.status}_${packet.body?.status || "missing"}`);
+    await new Promise((resolve) => setTimeout(resolve, 20_000 * attempt));
+    packet = await fetchJson(scanUrl(collection, pageLimit, after));
+  }
+  if (packet.status !== 200 || packet.body?.status !== "ok") {
+    current.blocked += 1;
+    state.failures.push({ collection, id: "incremental_scan_failed", reason: `http_${packet.status}_${packet.body?.status || "missing"}` });
+    saveState(state);
+    return;
+  }
+  const data = packet.body?.data || {};
+  const rows = packetRows(packet.body);
+  const currentCount = Number(data.source_total || data.count || 0);
+  const plan = appendOnlyDeltaPlan(Number(prior.count), currentCount, rows.length, Boolean(data.has_more));
+  if (plan.status !== "pass") {
+    current.blocked += 1;
+    state.failures.push({ collection, id: "incremental_continuity_failed", reason: plan.reason, detail: plan });
+    saveState(state);
+    return;
+  }
+  const idRows = rows.map((row) => ({ id: rowId(row, spec), row })).filter((item) => /^[a-f0-9]{24}$/i.test(item.id));
+  if (idRows.length !== rows.length) {
+    current.blocked += 1;
+    state.failures.push({ collection, id: "incremental_invalid_source_id", reason: "invalid_source_id_requires_full_scan" });
+    saveState(state);
+    return;
+  }
+  if (idRows.length) {
+    let docs;
+    let lookupError = null;
+    for (let attempt = 0; attempt < 3 && !docs; attempt += 1) {
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 20_000 * attempt));
+      try {
+        docs = fetchMongoDocs(spec.mongoCollection, idRows.map((item) => item.id), mongoUri, spec.mongoProjection);
+        lookupError = null;
+      } catch (error) {
+        lookupError = error;
+      }
+    }
+    if (!docs) {
+      current.blocked += idRows.length;
+      state.failures.push({ collection, id: "mongo_lookup_failed", reason: lookupError?.message || "unknown" });
+      saveState(state);
+      return;
+    }
+    for (const item of idRows) {
+      current.checked += 1;
+      const doc = docs.get(item.id);
+      if (!doc) {
+        current.missing_source_record += 1;
+        state.failures.push({ collection, id: item.id, reason: "missing_source_record" });
+        continue;
+      }
+      const mismatches = spec.fields.map((field) => compareField(field, item.row, doc)).filter((comparison) => comparison.status === "mismatch");
+      if (mismatches.length) {
+        current.mismatched += 1;
+        if (state.failures.length < 1000) state.failures.push({ collection, id: item.id, reason: "field_mismatch", mismatches });
+      } else {
+        current.matched += 1;
+      }
+    }
+    current.after = idRows.at(-1).id;
+  }
+  current.count = currentCount;
+  saveState(state);
 }
 
 function loadMappingReceipt() {
@@ -599,6 +736,10 @@ async function main() {
   fs.mkdirSync(outputDir, { recursive: true });
   const mongo = loadMongoUri();
   const state = loadState();
+  if (incrementalMode && (fromMappingSnapshot || maxPages || process.env.SWFIPN_FIELD_PARITY_COLLECTIONS)) {
+    throw new Error("incremental_mode_requires_all_live_collections");
+  }
+  const incrementalAnchor = incrementalMode ? loadIncrementalAnchor(state) : null;
   if (!mongo.uri) {
     const receipt = {
       status: "blocked",
@@ -611,7 +752,13 @@ async function main() {
     console.log(JSON.stringify({ status: receipt.status, receipt: receiptPath }, null, 2));
     process.exit(1);
   }
-  if (fromMappingSnapshot) {
+  if (incrementalMode) {
+    for (const collection of collectionsToRun) {
+      const spec = specs[collection];
+      if (!spec) continue;
+      await runIncrementalCollection(collection, spec, mongo.uri, state, incrementalAnchor);
+    }
+  } else if (fromMappingSnapshot) {
     const mapping = loadMappingReceipt();
     const familyById = new Map((mapping.families || []).map((family) => [family.id, family]));
     for (const collection of collectionsToRun) {
@@ -643,10 +790,14 @@ async function main() {
   const receipt = {
     status: hasOnlyMongoLookupFailures ? "blocked" : failed ? "fail" : partialRun ? "partial_pass" : totalChecked === totalCount && totalCount > 0 ? "pass" : "fail",
     generated_at: new Date().toISOString(),
-    scope: fromMappingSnapshot
+    scope: incrementalMode
+      ? "full required-field parity from prior verified high-water plus append-only SWFIPN source API delta to Mongo by source id"
+      : fromMappingSnapshot
       ? "full required-field parity from frozen SWFIPN mapping snapshot to Mongo by source id"
       : "full required-field parity from SWFIPN source API to Mongo by source id",
-    verification_mode: fromMappingSnapshot ? "frozen_mapping_source_fields_to_projected_mongo" : "live_scan_to_projected_mongo",
+    verification_mode: incrementalMode
+      ? "anchored_append_only_delta_to_projected_mongo"
+      : fromMappingSnapshot ? "frozen_mapping_source_fields_to_projected_mongo" : "live_scan_to_projected_mongo",
     mapping_receipt: fromMappingSnapshot ? "output/swfipn-full-universe-mapping-latest.json" : "",
     partial_run: partialRun,
     partial_reason: maxPages ? `max_pages_${maxPages}` : process.env.SWFIPN_FIELD_PARITY_COLLECTIONS ? `collections_${process.env.SWFIPN_FIELD_PARITY_COLLECTIONS}` : "",
@@ -658,6 +809,17 @@ async function main() {
     },
     page_limit: pageLimit,
     collections_requested: collectionsToRun,
+    continuity: {
+      mode: incrementalMode ? "anchored_incremental" : "full_scan",
+      prior_receipt_sha256: incrementalAnchor?.prior_receipt_sha256 || null,
+      prior_receipt_generated_at: incrementalAnchor?.prior?.generated_at || null,
+      state_sha256_before: incrementalAnchor?.state_sha256_before || null,
+      state_sha256_after: fs.existsSync(statePath) ? sha256(fs.readFileSync(statePath, "utf8")) : null,
+      checked_before: incrementalAnchor?.checked_before || 0,
+      checked_after: totalChecked,
+      delta_checked: totalChecked - (incrementalAnchor?.checked_before || 0),
+      high_water_complete: Object.values(state.collections).every((item) => Number(item.count) === 0 || /^[a-f0-9]{24}$/i.test(String(item.after || ""))),
+    },
     rules: {
       generic_missing_zero_distinct: "Missing generic numeric values and explicit zero are distinct; one-sided absence is a mismatch.",
       money_zero_undisclosed_sentinel: "For contracted entity AUM, transaction amount, and Compass amount fields only, public missing may normalize source zero as the upstream undisclosed sentinel.",
@@ -665,6 +827,7 @@ async function main() {
     totals: { count: totalCount, checked: totalChecked, failed },
     collections: Object.fromEntries(Object.entries(state.collections).map(([key, value]) => {
       const copy = { ...value };
+      copy.high_water_id = copy.after || null;
       delete copy.after;
       return [key, copy];
     })),
