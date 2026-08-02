@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build && node scripts/swfipn-version-static-assets.mjs",
+    "build": "next build --webpack && node scripts/swfipn-version-static-assets.mjs",
     "start": "next start",
     "snapshot:home": "node scripts/swfipn-refresh-home-snapshot.mjs",
     "lint": "eslint",
