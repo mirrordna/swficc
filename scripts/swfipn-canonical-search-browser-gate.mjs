@@ -177,6 +177,7 @@ async function runQuery(browser, origin, testCase) {
       at_ms: Date.now() - startedAt,
       path: `${url.pathname}${url.search}`,
       status: response.status(),
+      cache_control: headers["cache-control"] || null,
       proxy_cache: headers["x-swfipn-proxy-cache"] || null,
       search_render: headers["x-swfipn-search-render"] || null,
     });
@@ -239,6 +240,9 @@ async function runQuery(browser, origin, testCase) {
     const screenshotPath = path.join(outputDir, `swfipn-canonical-search-${testCase.id}-latest.png`);
     await page.screenshot({ path: screenshotPath, fullPage: true });
     const modalNetworkTrace = [...networkTrace];
+    const modalPublicSearchNotSharedCacheable = modalNetworkTrace
+      .filter((event) => event.path?.startsWith("/api/v1/public/search"))
+      .every((event) => String(event.cache_control || "").startsWith("no-store"));
     networkTrace.length = 0;
     const fullPageStartedAt = Date.now();
     await Promise.all([
@@ -252,6 +256,18 @@ async function runQuery(browser, origin, testCase) {
     const sourceGeneratedAt = freshnessVisible
       ? await freshnessReceipt.getAttribute("data-source-generated-at")
       : null;
+    const sourceOldestGeneratedAt = freshnessVisible
+      ? await freshnessReceipt.getAttribute("data-source-oldest-generated-at")
+      : null;
+    const sourcePacketCount = freshnessVisible
+      ? Number(await freshnessReceipt.getAttribute("data-source-packet-count") || 0)
+      : 0;
+    const sourceFreshnessCurrent = freshnessVisible
+      ? await freshnessReceipt.getAttribute("data-source-freshness-current") === "true"
+      : false;
+    const sourceFreshnessSpanMs = freshnessVisible
+      ? Number(await freshnessReceipt.getAttribute("data-source-freshness-span-ms") || Number.NaN)
+      : Number.NaN;
     const expectedPerson = peopleSectionText.split("\n").filter(Boolean)[1] || "__missing_person__";
     const detailedPeopleResult = await timedVisibility(
       page.getByText(expectedPerson, { exact: true }).first(),
@@ -271,6 +287,9 @@ async function runQuery(browser, origin, testCase) {
     const detailedNewsRequests = networkTrace.filter((event) => event.path?.startsWith("/api/source-intelligence/news/v1"));
     const detailedNewsQueryBound = detailedNewsRequests.length > 0
       && detailedNewsRequests.every((event) => /[?&]q=/.test(event.path));
+    const detailedPublicSearchNotSharedCacheable = networkTrace
+      .filter((event) => event.path?.startsWith("/api/v1/public/search"))
+      .every((event) => String(event.cache_control || "").startsWith("no-store"));
     const detailedScreenshotPath = path.join(outputDir, `swfipn-canonical-search-${testCase.id}-view-all-latest.png`);
     await page.screenshot({ path: detailedScreenshotPath, fullPage: true });
     return {
@@ -287,18 +306,24 @@ async function runQuery(browser, origin, testCase) {
         && liveEntityMs <= liveEntityBudgetMs
         && newsMs <= newsBudgetMs
         && sourceLinkMatchesLiveResult
+        && modalPublicSearchNotSharedCacheable
         && laneSettlement.settled
         && resultSetComplete
         && resultSourcesComplete
         && fullPageSettlement.settled
         && freshnessVisible
         && Boolean(sourceGeneratedAt)
+        && Boolean(sourceOldestGeneratedAt)
+        && sourcePacketCount > 0
+        && sourceFreshnessCurrent
+        && Number.isFinite(sourceFreshnessSpanMs)
         && detailedEntityPresent
         && detailedNewsPresent
         && detailedPeoplePresent
         && detailedAumPass
         && detailedForbiddenAbsent
-        && detailedNewsQueryBound,
+        && detailedNewsQueryBound
+        && detailedPublicSearchNotSharedCacheable,
       entity_ms: entityMs,
       live_entity_ms: liveEntityMs,
       news_ms: newsMs,
@@ -312,6 +337,7 @@ async function runQuery(browser, origin, testCase) {
       people_result_present: peopleResult.present,
       people_section_text: peopleSectionText,
       source_link_matches_live_result: sourceLinkMatchesLiveResult,
+      public_search_not_shared_cacheable: modalPublicSearchNotSharedCacheable,
       search_lanes_settled: laneSettlement.settled,
       search_lane_settlement: laneSettlement,
       deterministic_result_set: resultSet.categories,
@@ -326,6 +352,10 @@ async function runQuery(browser, origin, testCase) {
         search_lane_settlement: fullPageSettlement,
         source_freshness_visible: freshnessVisible,
         source_generated_at: sourceGeneratedAt,
+        source_oldest_generated_at: sourceOldestGeneratedAt,
+        source_packet_count: sourcePacketCount,
+        source_freshness_current: sourceFreshnessCurrent,
+        source_freshness_span_ms: sourceFreshnessSpanMs,
         entity_present: detailedEntityPresent,
         entity_row: detailedEntityRow,
         news_present: detailedNewsPresent,
@@ -334,6 +364,7 @@ async function runQuery(browser, origin, testCase) {
         aum_pass: detailedAumPass,
         forbidden_absent: detailedForbiddenAbsent,
         news_requests_query_bound: detailedNewsQueryBound,
+        public_search_not_shared_cacheable: detailedPublicSearchNotSharedCacheable,
         network_trace: networkTrace.sort((left, right) => left.at_ms - right.at_ms),
         screenshot: detailedScreenshotPath,
         screenshot_sha256: fileSha256(detailedScreenshotPath),
@@ -469,6 +500,7 @@ async function main() {
         "adia_view_all_enriched_aum_and_query_bound_news",
         "hkic_view_all_query_bound_news_and_people",
         "detailed_search_source_freshness_receipt",
+        "public_search_no_shared_stale_cache",
         ...(liveTarget ? ["live_target_browser_behavior"] : []),
       ],
       unchecked_scope: liveTarget

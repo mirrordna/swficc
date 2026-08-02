@@ -77,6 +77,7 @@ export default function SearchResultsPage() {
   const [intentPackets, setIntentPackets] = useState<Packet[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchIssue, setSearchIssue] = useState("");
+  const [searchStartedAt, setSearchStartedAt] = useState(0);
   const [retryKey, setRetryKey] = useState(0);
   const [rowLimit, setRowLimit] = useState(10);
   const [allCategoryLimit, setAllCategoryLimit] = useState(5);
@@ -103,6 +104,7 @@ export default function SearchResultsPage() {
       setQuery(currentQuery);
       setCategory(currentCategory);
       setSearchIssue("");
+      setSearchStartedAt(Date.now());
       setIntentPackets([]);
       setPacket(cached);
       setEntityPackets([]);
@@ -162,7 +164,8 @@ export default function SearchResultsPage() {
 
     const canonicalInstitution = canonicalSearchName(currentQuery);
     const peopleVariants = canonicalInstitution ? [canonicalInstitution] : sourceVariants;
-    const peopleSearch = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "people")
+    const shouldSearchPeople = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "people");
+    const peopleSearch = shouldSearchPeople
       ? Promise.all(peopleVariants.map((variant) => (
           fetchPacket(`/api/people/search/v1?q=${encodeURIComponent(variant)}&limit=100`, 25_000, {
             signal: controller.signal,
@@ -180,7 +183,8 @@ export default function SearchResultsPage() {
         })
       : Promise.resolve([] as Packet[]);
 
-    const opportunitySearch = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "opportunities")
+    const shouldSearchOpportunities = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "opportunities");
+    const opportunitySearch = shouldSearchOpportunities
       ? Promise.all([
           fetchPacket("/api/live-opportunities/v1?limit=100&page=1", 25_000, {
             signal: controller.signal,
@@ -202,7 +206,8 @@ export default function SearchResultsPage() {
         })
       : Promise.resolve([] as Packet[]);
 
-    const newsSearch = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "news")
+    const shouldSearchNews = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "news");
+    const newsSearch = shouldSearchNews
       ? Promise.all(sourceVariants.map((variant) => (
           fetchPacket(`/api/source-intelligence/news/v1?q=${encodeURIComponent(variant)}&limit=100`, 25_000, {
             signal: controller.signal,
@@ -220,7 +225,8 @@ export default function SearchResultsPage() {
         })
       : Promise.resolve([] as Packet[]);
 
-    const transactionSearch = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "transactions")
+    const shouldSearchTransactions = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "transactions");
+    const transactionSearch = shouldSearchTransactions
       ? Promise.all([publicSearch, entitySearch]).then(async ([publicPacket, nextEntityPackets]) => {
           if (!active) return null;
           const entityName = resolvedEntityName(currentQuery, publicPacket, nextEntityPackets);
@@ -267,9 +273,30 @@ export default function SearchResultsPage() {
         })
       : Promise.resolve([] as Packet[]);
 
-    void Promise.allSettled([publicSearch, entitySearch, peopleSearch, opportunitySearch, newsSearch, transactionSearch, intentSearch]).then(() => {
-      if (active) setLoading(false);
-    });
+    void Promise.all([publicSearch, entitySearch, peopleSearch, opportunitySearch, newsSearch, transactionSearch, intentSearch])
+      .then(([publicPacket, nextEntityPackets, nextPeoplePackets, nextOpportunityPackets, nextNewsPackets, nextTransactionPacket, nextIntentPackets]) => {
+        if (!active) return;
+        const missingLanes: string[] = [];
+        if (shouldSearchPublic && (!publicPacket || !isFact(publicPacket))) missingLanes.push("primary search");
+        if (shouldSearchEntities && nextEntityPackets.length < sourceVariants.length) missingLanes.push("entities");
+        if (shouldSearchPeople && nextPeoplePackets.length < peopleVariants.length) missingLanes.push("people");
+        if (shouldSearchOpportunities && nextOpportunityPackets.length < 2) missingLanes.push("opportunities");
+        if (shouldSearchNews && nextNewsPackets.length < sourceVariants.length) missingLanes.push("news");
+        const entityName = resolvedEntityName(currentQuery, publicPacket, nextEntityPackets);
+        if (shouldSearchTransactions && entityName && (!nextTransactionPacket || !isFact(nextTransactionPacket))) {
+          missingLanes.push("transactions");
+        }
+        if (currentIntent && nextIntentPackets.length < currentIntent.requests.length) missingLanes.push("interpreted search");
+        setSearchIssue(missingLanes.length
+          ? `Current source verification is incomplete (${[...new Set(missingLanes)].join(", ")}); results are partial.`
+          : "");
+        setLoading(false);
+      })
+      .catch(() => {
+        if (!active) return;
+        setSearchIssue("Current source verification did not complete; results are partial.");
+        setLoading(false);
+      });
     return () => {
       active = false;
       window.clearTimeout(resetTimer);
@@ -370,7 +397,7 @@ export default function SearchResultsPage() {
   const unfilteredCount = resultRows.length;
   const lifecycleIntent = entityLifecycleIntent(query);
   const queryShort = isShortTextQuery(query);
-  const checkedAt = latestPacketGeneratedAt([
+  const sourceFreshness = packetFreshness([
     packet,
     transactionPacket,
     ...entityPackets,
@@ -379,6 +406,10 @@ export default function SearchResultsPage() {
     ...newsPackets,
     ...intentPackets,
   ]);
+  const sourceFreshnessBudgetMs = interpretedIntent?.id === "active-investors" ? 90_000 : 30_000;
+  const sourceFreshnessCurrent = sourceFreshness.count > 0
+    && sourceFreshness.spanMs <= sourceFreshnessBudgetMs
+    && Date.parse(sourceFreshness.newest) >= searchStartedAt - 5_000;
   const showingText = isTextQueryReady(query)
     ? `Showing ${visibleRows.length.toLocaleString("en-US")} of ${count.toLocaleString("en-US")}${activeFilterCount ? ` (${unfilteredCount.toLocaleString("en-US")} before filters)` : ""}`
     : queryShort ? `Enter at least ${MIN_TEXT_QUERY_CHARACTERS} characters` : "Awaiting search";
@@ -419,7 +450,7 @@ export default function SearchResultsPage() {
       <main
         className="mx-auto grid w-full max-w-[1188px] gap-4 p-4 sm:p-[20px_22px_30px]"
         data-search-results-query={query.trim().toLowerCase()}
-        data-search-results-ready={isTextQueryReady(query) && !loading ? "true" : "false"}
+        data-search-results-ready={isTextQueryReady(query) && !loading && !searchIssue && sourceFreshnessCurrent ? "true" : "false"}
       >
         <section className="rounded border border-[#DCE3EA] bg-white p-4" data-search-category={category}>
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -431,9 +462,17 @@ export default function SearchResultsPage() {
                   <span className="font-semibold">Interpreted as:</span> {interpretedIntent.explanation}
                 </p>
               ) : null}
-              {checkedAt ? (
-                <p className="m-0 mt-2 text-[11px] text-[#52687D]" data-testid="search-source-freshness" data-source-generated-at={checkedAt}>
-                  Sources checked {formatSourceCheckTime(checkedAt)}. Results remain bound to the current query.
+              {sourceFreshness.newest ? (
+                <p
+                  className="m-0 mt-2 text-[11px] text-[#52687D]"
+                  data-testid="search-source-freshness"
+                  data-source-generated-at={sourceFreshness.newest}
+                  data-source-oldest-generated-at={sourceFreshness.oldest}
+                  data-source-packet-count={sourceFreshness.count}
+                  data-source-freshness-current={sourceFreshnessCurrent ? "true" : "false"}
+                  data-source-freshness-span-ms={sourceFreshness.spanMs}
+                >
+                  Sources checked {formatSourceCheckTime(sourceFreshness.oldest)}{sourceFreshness.oldest !== sourceFreshness.newest ? ` through ${formatSourceCheckTime(sourceFreshness.newest)}` : ""}. Results remain bound to the current query.
                 </p>
               ) : null}
             </div>
@@ -602,14 +641,31 @@ function rankSearchRecordsAcrossVariants<T extends Record<string, unknown>>(
   return dedupeSearchRecords(variants.flatMap((variant) => rankSearchRecords(sourceRows, variant, kind)));
 }
 
-function latestPacketGeneratedAt(packets: Array<Packet | null | undefined>): string {
-  return packets.reduce((latest, packet) => {
-    if (!packet || !isFact(packet)) return latest;
-    const generatedAt = text(packet.generated_at, "").trim();
-    const stamp = Date.parse(generatedAt);
-    if (!generatedAt || !Number.isFinite(stamp)) return latest;
-    return !latest || stamp > Date.parse(latest) ? generatedAt : latest;
-  }, "");
+function packetFreshness(packets: Array<Packet | null | undefined>): { oldest: string; newest: string; count: number; spanMs: number } {
+  const timestamps = new Set<string>();
+  for (const packet of packets) {
+    if (!packet || !isFact(packet)) continue;
+    addPacketTimestamp(timestamps, packet.generated_at);
+    if (!packet.data || typeof packet.data !== "object" || Array.isArray(packet.data)) continue;
+    const sourceFreshness = (packet.data as Record<string, unknown>).source_freshness;
+    if (!sourceFreshness || typeof sourceFreshness !== "object" || Array.isArray(sourceFreshness)) continue;
+    const generatedByLane = (sourceFreshness as Record<string, unknown>).packet_generated_at;
+    if (!generatedByLane || typeof generatedByLane !== "object" || Array.isArray(generatedByLane)) continue;
+    for (const laneTimestamps of Object.values(generatedByLane as Record<string, unknown>)) {
+      if (!Array.isArray(laneTimestamps)) continue;
+      for (const generatedAt of laneTimestamps) addPacketTimestamp(timestamps, generatedAt);
+    }
+  }
+  const ordered = [...timestamps].sort((left, right) => Date.parse(left) - Date.parse(right));
+  const oldest = ordered[0] || "";
+  const newest = ordered.at(-1) || "";
+  const spanMs = oldest && newest ? Math.max(0, Date.parse(newest) - Date.parse(oldest)) : Number.POSITIVE_INFINITY;
+  return { oldest, newest, count: ordered.length, spanMs };
+}
+
+function addPacketTimestamp(timestamps: Set<string>, value: unknown): void {
+  const generatedAt = text(value, "").trim();
+  if (generatedAt && Number.isFinite(Date.parse(generatedAt))) timestamps.add(generatedAt);
 }
 
 function formatSourceCheckTime(generatedAt: string): string {

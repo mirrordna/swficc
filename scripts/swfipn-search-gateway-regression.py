@@ -68,9 +68,10 @@ checks = {
     "noncanonical_source_is_not_fast_path_eligible": not gateway.has_exact_canonical_search_result(
         "HKIC", [{**canonical_hkic, "source_url": "https://example.com/entities/hkic"}]
     ),
-    "background_cleanup_cannot_mutate_cached_results": not hasattr(handler, "finish_enhanced_public_search")
+    "background_enrichment_replaces_only_matching_generation": not hasattr(handler, "finish_enhanced_public_search")
     and not hasattr(handler, "enrichment_job_is_current")
-    and list(inspect.signature(handler.finish_stable_primary_cleanup).parameters) == ["executor", "futures"],
+    and list(inspect.signature(handler.finish_stable_primary_enrichment).parameters)
+    == ["executor", "futures", "query", "safe_limit", "cache_key", "generation_id"],
     "capacity_exhaustion_fails_closed": busy_state == "BUSY"
     and busy_cacheable is False
     and busy_payload.get("fact") is False
