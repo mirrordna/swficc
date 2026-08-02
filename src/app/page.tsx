@@ -57,7 +57,7 @@ function worldFlowPairs(transactionRows: Record<string, unknown>[]): WorldFlowPa
   return [...pairs.values()].sort((a, b) => b.deals - a.deals);
 }
 import { useDashboardSessionDisplayName } from "@/lib/dashboardAuth";
-import { businessSearchQueryVariants, canonicalSearchName, canonicalSearchSourceUrl, dedupeSearchRecords, rankSearchRecords, searchRelevanceScore as businessSearchRelevanceScore, type SearchKind } from "@/lib/searchRelevance";
+import { businessSearchQueryVariants, canonicalSearchIdentity, canonicalSearchName, canonicalSearchSourceUrl, dedupeSearchRecords, rankSearchRecords, searchRelevanceScore as businessSearchRelevanceScore, type SearchKind } from "@/lib/searchRelevance";
 import { filterSmartSearchIntentRows, smartSearchIntentForQuery, type SmartSearchIntent } from "@/lib/smartSearchIntent";
 import { isShortTextQuery, isTextQueryReady, MIN_TEXT_QUERY_CHARACTERS } from "@/lib/textQueryPolicy";
 
@@ -333,6 +333,7 @@ export default function DashboardPage() {
   ]), [dashboardEntitySearchRows, searchEntityPackets]);
   const liveSearchGroups = useMemo(() => brdPublicSearchGroups(searchQuery, searchPacket, searchEntityPackets), [searchQuery, searchPacket, searchEntityPackets]);
   const liveNewsSearchGroups = useMemo(() => newsSearchGroups(searchNewsPackets, searchQuery), [searchNewsPackets, searchQuery]);
+  const canonicalIdentityGroups = useMemo(() => canonicalIdentitySearchGroups(searchQuery), [searchQuery]);
   const searchIntent = useMemo(
     () => isTextQueryReady(searchQuery) ? smartSearchIntentForQuery(searchQuery) : null,
     [searchQuery],
@@ -342,8 +343,8 @@ export default function DashboardPage() {
     [searchIntent, searchIntentPackets],
   );
   const baseSearchGroups = useMemo(
-    () => mergeSearchGroups(intentSearchGroups, mergeSearchGroups(liveSearchGroups, dashboardSearchGroups)),
-    [intentSearchGroups, liveSearchGroups, dashboardSearchGroups],
+    () => mergeSearchGroups(intentSearchGroups, mergeSearchGroups(liveSearchGroups, mergeSearchGroups(canonicalIdentityGroups, dashboardSearchGroups))),
+    [intentSearchGroups, liveSearchGroups, canonicalIdentityGroups, dashboardSearchGroups],
   );
   // Resolve the top-ranked entity candidates for the query; their names drive the
   // entity->transactions fetch. We keep the top few (not just #1) so the join can fall
@@ -368,7 +369,7 @@ export default function DashboardPage() {
     const clean = searchQuery.trim();
     if (isShortTextQuery(clean)) return completeSearchGroups([]);
     if (isTextQueryReady(clean)) {
-      if (isShortBusinessQuery(clean) && (searchLoading || searchIntentLoading) && !hasAnySearchItems(liveSearchGroups) && !hasAnySearchItems(dashboardSearchGroups)) return completeSearchGroups([]);
+      if (isShortBusinessQuery(clean) && (searchLoading || searchIntentLoading) && !hasAnySearchItems(liveSearchGroups) && !hasAnySearchItems(canonicalIdentityGroups) && !hasAnySearchItems(dashboardSearchGroups)) return completeSearchGroups([]);
       // Live groups are PRIMARY so a resolved entity's real transactions lead the
       // Transactions category (fills the "No matches" gap) and the live /api/people/search
       // matches lead the People category instead of the 25-row pre-loaded slice.
@@ -380,7 +381,7 @@ export default function DashboardPage() {
       return completeSearchGroups(mergeSearchGroups(primaryLiveGroups, baseSearchGroups));
     }
     return dashboardSearchGroups;
-  }, [baseSearchGroups, dashboardSearchGroups, liveSearchGroups, liveNewsSearchGroups, searchLoading, searchIntentLoading, searchQuery, searchTransactionPacket, searchPeoplePackets]);
+  }, [baseSearchGroups, canonicalIdentityGroups, dashboardSearchGroups, liveSearchGroups, liveNewsSearchGroups, searchLoading, searchIntentLoading, searchQuery, searchTransactionPacket, searchPeoplePackets]);
   const searchItems = useMemo(() => searchGroups.flatMap((group) => group.items), [searchGroups]);
 
   useEffect(() => {
@@ -1467,6 +1468,22 @@ function completeSearchGroups(groups: BrdSearchGroup[]): BrdSearchGroup[] {
   return SEARCH_CATEGORY_LABELS
     .filter((label) => label !== "All")
     .map((label) => ({ label, items: byLabel.get(label) || [] }));
+}
+
+function canonicalIdentitySearchGroups(query: string): BrdSearchGroup[] {
+  if (!isTextQueryReady(query)) return [];
+  const identity = canonicalSearchIdentity(query);
+  if (!identity) return [];
+  return [{
+    label: "Entities",
+    items: [{
+      label: identity.name,
+      detail: "Verified SWFI identity · live profile facts loading",
+      href: dashboardProfileHref(identity),
+      sourceHref: identity.source_url,
+      prefetchRow: identity,
+    }],
+  }];
 }
 
 function smartSearchGroups(intent: SmartSearchIntent | null, packets: Packet[]): BrdSearchGroup[] {

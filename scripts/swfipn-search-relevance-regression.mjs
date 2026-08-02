@@ -11,7 +11,7 @@ const outputDir = path.join(cwd, "output");
 const receiptPath = path.join(outputDir, "swfipn-search-relevance-regression-latest.json");
 fs.mkdirSync(outputDir, { recursive: true });
 
-const { businessSearchQueryVariants, canonicalSearchName, mergeSearchRecordsPreferEnriched, rankSearchRecords, searchSubjectQuery } = await import(pathToFileURL(path.join(cwd, "src/lib/searchRelevance.ts")).href);
+const { businessSearchQueryVariants, canonicalSearchIdentity, canonicalSearchName, mergeSearchRecordsPreferEnriched, rankSearchRecords, searchSubjectQuery } = await import(pathToFileURL(path.join(cwd, "src/lib/searchRelevance.ts")).href);
 
 const fixtures = {
   abuDhabi: [
@@ -82,6 +82,21 @@ const checks = [
     query: "HKIC",
     actual: canonicalSearchName("HKIC"),
     expected: "Hong Kong Investment Corporation",
+  },
+  {
+    id: "canonical_identity_hkic_is_stable_id_only",
+    query: "HKIC",
+    actual: canonicalSearchIdentity("HKIC"),
+    expected: {
+      name: "Hong Kong Investment Corporation",
+      source_url: "https://www.swfi.com/v1/entities/63502488d68aa29d9a0da8a5",
+    },
+  },
+  {
+    id: "canonical_identity_unknown_is_not_invented",
+    query: "Unknown Fund",
+    actual: canonicalSearchIdentity("Unknown Fund"),
+    expected: null,
   },
   {
     id: "query_variant_adia_reverse",
