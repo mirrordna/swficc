@@ -6,7 +6,7 @@ import SwfiBrandHeader from "@/components/SwfiBrandHeader";
 import type { Packet } from "@/lib/sourcePackets";
 import { fetchPacket, isFact, money, packetReason, rows, text } from "@/lib/sourcePackets";
 import { appHref, isSwfiPlatformRecordHref, selfContainedHref, swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
-import { businessSearchQueryVariants, canonicalSearchName, dedupeSearchRecords, mergeSearchRecordsPreferEnriched, mergeSearchRecordsPreferPrimary, rankSearchRecords } from "@/lib/searchRelevance";
+import { businessSearchQueryVariants, canonicalSearchName, dedupeSearchRecords, hasVerifiedCanonicalSearchIdentity, mergeSearchRecordsPreferEnriched, mergeSearchRecordsPreferPrimary, rankSearchRecords } from "@/lib/searchRelevance";
 import { filterSmartSearchIntentRows, smartSearchIntentForQuery } from "@/lib/smartSearchIntent";
 import { entityLifecycleIntent } from "@/lib/entityLifecycle";
 import { isShortTextQuery, isTextQueryReady, MIN_TEXT_QUERY_CHARACTERS } from "@/lib/textQueryPolicy";
@@ -279,7 +279,11 @@ export default function SearchResultsPage() {
       .then(([publicPacket, nextEntityPackets, nextPeoplePackets, nextOpportunityPackets, nextNewsPackets, nextTransactionPacket, nextIntentPackets]) => {
         if (!active) return;
         const missingLanes: string[] = [];
-        if (shouldSearchPublic && (!publicPacket || !isFact(publicPacket))) missingLanes.push("primary search");
+        const canonicalEntityVerified = hasVerifiedCanonicalSearchIdentity(
+          currentQuery,
+          nextEntityPackets.flatMap((entityPacket) => packetRows(entityPacket)),
+        );
+        if (shouldSearchPublic && (!publicPacket || !isFact(publicPacket)) && !canonicalEntityVerified) missingLanes.push("primary search");
         if (shouldSearchEntities && nextEntityPackets.length < sourceVariants.length) missingLanes.push("entities");
         if (shouldSearchPeople && nextPeoplePackets.length < peopleVariants.length) missingLanes.push("people");
         if (shouldSearchOpportunities && nextOpportunityPackets.length < 2) missingLanes.push("opportunities");

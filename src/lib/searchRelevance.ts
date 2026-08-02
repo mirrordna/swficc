@@ -97,6 +97,23 @@ export function canonicalSearchIdentity(query: string): CanonicalSearchIdentity 
   return name && sourceUrl ? { name, source_url: sourceUrl } : null;
 }
 
+export function hasVerifiedCanonicalSearchIdentity(
+  query: string,
+  sourceRows: Record<string, unknown>[],
+): boolean {
+  const identity = canonicalSearchIdentity(query);
+  if (!identity) return false;
+  const expectedName = normalizeSearchText(identity.name);
+  const expectedSource = identity.source_url.replace(/\/+$/, "").toLowerCase();
+  return sourceRows.some((row) => {
+    const name = normalizeSearchText(primarySearchName(row));
+    const source = text(row.source_url || row.swfi_url || row.url || row.profile_url, "")
+      .replace(/\/+$/, "")
+      .toLowerCase();
+    return name === expectedName && source === expectedSource;
+  });
+}
+
 export function dedupeSearchRecords<T extends Record<string, unknown>>(sourceRows: T[]): T[] {
   const seen = new Set<string>();
   const next: T[] = [];

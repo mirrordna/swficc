@@ -11,7 +11,7 @@ const outputDir = path.join(cwd, "output");
 const receiptPath = path.join(outputDir, "swfipn-search-relevance-regression-latest.json");
 fs.mkdirSync(outputDir, { recursive: true });
 
-const { businessSearchQueryVariants, canonicalSearchIdentity, canonicalSearchName, mergeSearchRecordsPreferEnriched, rankSearchRecords, searchSubjectQuery } = await import(pathToFileURL(path.join(cwd, "src/lib/searchRelevance.ts")).href);
+const { businessSearchQueryVariants, canonicalSearchIdentity, canonicalSearchName, hasVerifiedCanonicalSearchIdentity, mergeSearchRecordsPreferEnriched, rankSearchRecords, searchSubjectQuery } = await import(pathToFileURL(path.join(cwd, "src/lib/searchRelevance.ts")).href);
 
 const fixtures = {
   abuDhabi: [
@@ -97,6 +97,24 @@ const checks = [
     query: "Unknown Fund",
     actual: canonicalSearchIdentity("Unknown Fund"),
     expected: null,
+  },
+  {
+    id: "canonical_identity_independent_source_verification",
+    query: "ADIA",
+    actual: hasVerifiedCanonicalSearchIdentity("ADIA", [{
+      name: "Abu Dhabi Investment Authority",
+      source_url: "https://www.swfi.com/v1/entities/598cdaa50124e9fd2d05a79b",
+    }]),
+    expected: true,
+  },
+  {
+    id: "canonical_identity_wrong_source_is_rejected",
+    query: "ADIA",
+    actual: hasVerifiedCanonicalSearchIdentity("ADIA", [{
+      name: "Abu Dhabi Investment Authority",
+      source_url: "https://www.swfi.com/v1/entities/not-the-verified-record",
+    }]),
+    expected: false,
   },
   {
     id: "query_variant_adia_reverse",
