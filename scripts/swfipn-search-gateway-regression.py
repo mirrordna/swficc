@@ -42,6 +42,7 @@ finally:
     gateway.PUBLIC_SEARCH_QUEUE_WAIT_SECONDS = original_wait
     handler.server.public_search_upstream_slots.release()
 busy_payload = json.loads(busy_body)
+transport_failure_payload = json.loads(gateway.backend_fetch_failure_body())
 
 checks = {
     "acronym_resolves_to_one_canonical_upstream": gateway.upstream_search_query_variants("HKIC")
@@ -76,6 +77,9 @@ checks = {
     and busy_cacheable is False
     and busy_payload.get("fact") is False
     and busy_payload.get("data", {}).get("reason") == "search_capacity_exhausted",
+    "transport_failure_is_retryable_and_fail_closed": transport_failure_payload.get("status") == "unavailable"
+    and transport_failure_payload.get("fact") is False
+    and transport_failure_payload.get("unavailable_reason") == "backend_fetch_failed",
 }
 
 receipt = {"status": "pass" if all(checks.values()) else "fail", "checks": checks}

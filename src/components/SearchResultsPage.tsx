@@ -121,15 +121,15 @@ export default function SearchResultsPage() {
         controller.abort();
       };
     }
-    // A failed source becomes an explicit partial state within one bounded wait.
-    // The visible Retry control starts a new generation instead of hiding a second request.
+    // One transport retry fits inside the 30s page deadline. Persistent failure
+    // becomes an explicit partial state and the visible Retry starts a new generation.
     const shouldSearchPublic = !currentIntent
       && !lifecycleIntent.explicitDefunctRequest
       && (currentCategory === "all" || currentCategory === "entities" || currentCategory === "transactions");
     const publicSearch: Promise<Packet | null> = shouldSearchPublic
-      ? fetchPacket(`/api/v1/public/search?q=${encodeURIComponent(currentQuery)}&limit=100`, 20_000, {
+      ? fetchPacket(`/api/v1/public/search?q=${encodeURIComponent(currentQuery)}&limit=100`, 14_000, {
         signal: controller.signal,
-        attempts: 1,
+        attempts: 2,
       }).then((nextPacket) => {
         if (!active) return nextPacket;
         if (isFact(nextPacket)) {
@@ -148,9 +148,9 @@ export default function SearchResultsPage() {
       && (lifecycleIntent.explicitDefunctRequest || currentCategory === "all" || currentCategory === "entities" || currentCategory === "transactions");
     const entitySearch = shouldSearchEntities
       ? Promise.all(sourceVariants.map((variant) => (
-        fetchPacket(`/api/source-data/search/v1?collection=entities${variant ? `&q=${encodeURIComponent(variant)}` : ""}${lifecycleQuery}&limit=100`, 25_000, {
+        fetchPacket(`/api/source-data/search/v1?collection=entities${variant ? `&q=${encodeURIComponent(variant)}` : ""}${lifecycleQuery}&limit=100`, 14_000, {
           signal: controller.signal,
-          attempts: 1,
+          attempts: 2,
         })
       ))).then((nextPackets) => {
       const factPackets = nextPackets.filter(isFact);
@@ -169,9 +169,9 @@ export default function SearchResultsPage() {
     const shouldSearchPeople = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "people");
     const peopleSearch = shouldSearchPeople
       ? Promise.all(peopleVariants.map((variant) => (
-          fetchPacket(`/api/people/search/v1?q=${encodeURIComponent(variant)}&limit=100`, 25_000, {
+          fetchPacket(`/api/people/search/v1?q=${encodeURIComponent(variant)}&limit=100`, 14_000, {
             signal: controller.signal,
-            attempts: 1,
+            attempts: 2,
           })
         ))).then((nextPackets) => {
           const factPackets = nextPackets.filter(isFact);
@@ -188,13 +188,13 @@ export default function SearchResultsPage() {
     const shouldSearchOpportunities = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "opportunities");
     const opportunitySearch = shouldSearchOpportunities
       ? Promise.all([
-          fetchPacket("/api/live-opportunities/v1?limit=100&page=1", 25_000, {
+          fetchPacket("/api/live-opportunities/v1?limit=100&page=1", 14_000, {
             signal: controller.signal,
-            attempts: 1,
+            attempts: 2,
           }),
-          fetchPacket("/api/live-mandates/v1?limit=100&page=1", 25_000, {
+          fetchPacket("/api/live-mandates/v1?limit=100&page=1", 14_000, {
             signal: controller.signal,
-            attempts: 1,
+            attempts: 2,
           }),
         ]).then((nextPackets) => {
           const factPackets = nextPackets.filter(isFact);
@@ -211,9 +211,9 @@ export default function SearchResultsPage() {
     const shouldSearchNews = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "news");
     const newsSearch = shouldSearchNews
       ? Promise.all(sourceVariants.map((variant) => (
-          fetchPacket(`/api/source-intelligence/news/v1?q=${encodeURIComponent(variant)}&limit=100`, 25_000, {
+          fetchPacket(`/api/source-intelligence/news/v1?q=${encodeURIComponent(variant)}&limit=100`, 14_000, {
             signal: controller.signal,
-            attempts: 1,
+            attempts: 2,
           })
         ))).then((nextPackets) => {
           const factPackets = nextPackets.filter(isFact);
@@ -233,9 +233,9 @@ export default function SearchResultsPage() {
           if (!active) return null;
           const entityName = resolvedEntityName(currentQuery, publicPacket, nextEntityPackets);
           if (!entityName) return null;
-          const nextPacket = await fetchPacket(`/api/entity-transactions/v1?name=${encodeURIComponent(entityName)}&limit=100`, 25_000, {
+          const nextPacket = await fetchPacket(`/api/entity-transactions/v1?name=${encodeURIComponent(entityName)}&limit=100`, 14_000, {
             signal: controller.signal,
-            attempts: 1,
+            attempts: 2,
           }).catch(() => null);
           if (active && nextPacket && isFact(nextPacket)) {
             setTransactionPacket(nextPacket);

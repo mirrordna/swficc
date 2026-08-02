@@ -154,6 +154,15 @@ def search_text(value):
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", str(value or "").lower().replace("&", " and "))).strip()
 
 
+def backend_fetch_failure_body():
+    return json.dumps({
+        "status": "unavailable",
+        "fact": False,
+        "unavailable_reason": "backend_fetch_failed",
+        "data": {"rows": [], "count": 0},
+    }, separators=(",", ":")).encode("utf-8")
+
+
 def search_query_variants(query):
     clean = str(query or "").strip()
     if not clean:
@@ -1456,11 +1465,7 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
             if not head:
                 self.write_body(body)
         except Exception:
-            body = json.dumps({
-                "status": "unavailable",
-                "fact": False,
-                "data": {"rows": [], "count": 0},
-            }, separators=(",", ":")).encode("utf-8")
+            body = backend_fetch_failure_body()
             self.send_response(HTTPStatus.OK)
             self.send_security_headers()
             self.send_header("Content-Type", "application/json; charset=utf-8")
