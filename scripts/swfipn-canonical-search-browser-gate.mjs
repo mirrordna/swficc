@@ -238,6 +238,41 @@ async function runQuery(browser, origin, testCase) {
     const peopleSectionText = await peopleSection.innerText().catch(() => "");
     const screenshotPath = path.join(outputDir, `swfipn-canonical-search-${testCase.id}-latest.png`);
     await page.screenshot({ path: screenshotPath, fullPage: true });
+    const modalNetworkTrace = [...networkTrace];
+    networkTrace.length = 0;
+    const fullPageStartedAt = Date.now();
+    await Promise.all([
+      page.waitForURL(/\/search\/?(?:\?|$)/, { timeout: 10_000 }),
+      page.getByRole("link", { name: "View all results", exact: true }).click(),
+    ]);
+    const fullPageSettlement = await waitForSearchLanes(page, networkTrace, 35_000);
+    await page.locator('[data-search-results-ready="true"]').waitFor({ state: "attached", timeout: 35_000 });
+    const freshnessReceipt = page.getByTestId("search-source-freshness");
+    const freshnessVisible = await freshnessReceipt.isVisible().catch(() => false);
+    const sourceGeneratedAt = freshnessVisible
+      ? await freshnessReceipt.getAttribute("data-source-generated-at")
+      : null;
+    const expectedPerson = peopleSectionText.split("\n").filter(Boolean)[1] || "__missing_person__";
+    const detailedPeopleResult = await timedVisibility(
+      page.getByText(expectedPerson, { exact: true }).first(),
+      fullPageStartedAt,
+      5_000,
+    );
+    const detailedBody = await page.locator("body").innerText();
+    const detailedEntityLink = page.getByRole("link", { name: testCase.entity, exact: true }).first();
+    const detailedEntityPresent = await detailedEntityLink.isVisible().catch(() => false);
+    const detailedEntityRow = detailedEntityPresent
+      ? await detailedEntityLink.locator("xpath=ancestor::tr[1]").innerText().catch(() => "")
+      : "";
+    const detailedNewsPresent = detailedBody.includes(testCase.news);
+    const detailedPeoplePresent = detailedPeopleResult.present;
+    const detailedAumPass = !testCase.aumDisplay || detailedEntityRow.includes(testCase.aumDisplay);
+    const detailedForbiddenAbsent = testCase.forbidden.every((value) => !detailedBody.includes(value));
+    const detailedNewsRequests = networkTrace.filter((event) => event.path?.startsWith("/api/source-intelligence/news/v1"));
+    const detailedNewsQueryBound = detailedNewsRequests.length > 0
+      && detailedNewsRequests.every((event) => /[?&]q=/.test(event.path));
+    const detailedScreenshotPath = path.join(outputDir, `swfipn-canonical-search-${testCase.id}-view-all-latest.png`);
+    await page.screenshot({ path: detailedScreenshotPath, fullPage: true });
     return {
       id: testCase.id,
       pass: canonicalIdentity.present
@@ -254,7 +289,16 @@ async function runQuery(browser, origin, testCase) {
         && sourceLinkMatchesLiveResult
         && laneSettlement.settled
         && resultSetComplete
-        && resultSourcesComplete,
+        && resultSourcesComplete
+        && fullPageSettlement.settled
+        && freshnessVisible
+        && Boolean(sourceGeneratedAt)
+        && detailedEntityPresent
+        && detailedNewsPresent
+        && detailedPeoplePresent
+        && detailedAumPass
+        && detailedForbiddenAbsent
+        && detailedNewsQueryBound,
       entity_ms: entityMs,
       live_entity_ms: liveEntityMs,
       news_ms: newsMs,
@@ -275,7 +319,25 @@ async function runQuery(browser, origin, testCase) {
       deterministic_result_fingerprint_sha256: resultSet.fingerprint_sha256,
       deterministic_result_set_complete: resultSetComplete,
       deterministic_result_sources_complete: resultSourcesComplete,
-      network_trace: networkTrace.sort((left, right) => left.at_ms - right.at_ms),
+      network_trace: modalNetworkTrace.sort((left, right) => left.at_ms - right.at_ms),
+      detailed_results: {
+        elapsed_ms: Date.now() - fullPageStartedAt,
+        search_lanes_settled: fullPageSettlement.settled,
+        search_lane_settlement: fullPageSettlement,
+        source_freshness_visible: freshnessVisible,
+        source_generated_at: sourceGeneratedAt,
+        entity_present: detailedEntityPresent,
+        entity_row: detailedEntityRow,
+        news_present: detailedNewsPresent,
+        people_present: detailedPeoplePresent,
+        expected_aum: testCase.aumDisplay || null,
+        aum_pass: detailedAumPass,
+        forbidden_absent: detailedForbiddenAbsent,
+        news_requests_query_bound: detailedNewsQueryBound,
+        network_trace: networkTrace.sort((left, right) => left.at_ms - right.at_ms),
+        screenshot: detailedScreenshotPath,
+        screenshot_sha256: fileSha256(detailedScreenshotPath),
+      },
       entity: testCase.entity,
       news: testCase.news,
       forbidden_absent: testCase.forbidden.filter((value) => !body.includes(value)),
@@ -374,7 +436,7 @@ async function main() {
     await firstPaintPage.close();
 
     const cases = [
-      { id: "adia", query: "ADIA", entity: "Abu Dhabi Investment Authority", news: "ADIA and Mubadala Back EQT", forbidden: ["Kapadia", "Nadia"] },
+      { id: "adia", query: "ADIA", entity: "Abu Dhabi Investment Authority", news: "ADIA and Mubadala Back EQT", aumDisplay: "$1.13T", forbidden: ["Kapadia", "Nadia"] },
       { id: "hkic", query: "Hong Kong Investment Corporation", entity: "Hong Kong Investment Corporation", news: "HKIC Supports Government Budget", forbidden: ["HealthKick", "MaRS HealthKick"] },
     ];
     const checks = [];
@@ -387,7 +449,7 @@ async function main() {
       || (/^[a-f0-9]{40}$/i.test(testedReleaseGitSha) && Boolean(testedReleaseAssetVersion));
     const candidate = liveTarget ? null : candidateIdentity();
     const receipt = {
-      schema_version: "swfipn.canonical_search_browser_gate.v1",
+      schema_version: "swfipn.canonical_search_browser_gate.v2",
       generated_at: new Date().toISOString(),
       evidence_class: liveTarget
         ? "LIVE_TARGET_SURFACE_BEHAVIOR_NOT_GLOBAL_ACCEPTANCE"
@@ -404,6 +466,9 @@ async function main() {
         "top_aum_first_paint",
         "adia_entity_news_people_semantics",
         "hkic_entity_news_people_semantics",
+        "adia_view_all_enriched_aum_and_query_bound_news",
+        "hkic_view_all_query_bound_news_and_people",
+        "detailed_search_source_freshness_receipt",
         ...(liveTarget ? ["live_target_browser_behavior"] : []),
       ],
       unchecked_scope: liveTarget

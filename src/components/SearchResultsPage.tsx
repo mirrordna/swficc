@@ -6,7 +6,7 @@ import SwfiBrandHeader from "@/components/SwfiBrandHeader";
 import type { Packet } from "@/lib/sourcePackets";
 import { fetchPacket, isFact, money, packetReason, rows, text } from "@/lib/sourcePackets";
 import { appHref, isSwfiPlatformRecordHref, selfContainedHref, swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
-import { businessSearchQueryVariants, dedupeSearchRecords, mergeSearchRecordsPreferPrimary, rankSearchRecords } from "@/lib/searchRelevance";
+import { businessSearchQueryVariants, canonicalSearchName, dedupeSearchRecords, mergeSearchRecordsPreferEnriched, mergeSearchRecordsPreferPrimary, rankSearchRecords } from "@/lib/searchRelevance";
 import { filterSmartSearchIntentRows, smartSearchIntentForQuery } from "@/lib/smartSearchIntent";
 import { entityLifecycleIntent } from "@/lib/entityLifecycle";
 import { isShortTextQuery, isTextQueryReady, MIN_TEXT_QUERY_CHARACTERS } from "@/lib/textQueryPolicy";
@@ -71,9 +71,9 @@ export default function SearchResultsPage() {
   const [packet, setPacket] = useState<Packet | null>(null);
   const [entityPackets, setEntityPackets] = useState<Packet[]>([]);
   const [transactionPacket, setTransactionPacket] = useState<Packet | null>(null);
-  const [peoplePacket, setPeoplePacket] = useState<Packet | null>(null);
+  const [peoplePackets, setPeoplePackets] = useState<Packet[]>([]);
   const [opportunityPackets, setOpportunityPackets] = useState<Packet[]>([]);
-  const [newsPacket, setNewsPacket] = useState<Packet | null>(null);
+  const [newsPackets, setNewsPackets] = useState<Packet[]>([]);
   const [intentPackets, setIntentPackets] = useState<Packet[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchIssue, setSearchIssue] = useState("");
@@ -107,10 +107,10 @@ export default function SearchResultsPage() {
       setPacket(cached);
       setEntityPackets([]);
       setTransactionPacket(null);
-      setPeoplePacket(null);
+      setPeoplePackets([]);
       setOpportunityPackets([]);
-      setNewsPacket(null);
-      setLoading(queryReady && !cached);
+      setNewsPackets([]);
+      setLoading(queryReady);
     }, 0);
     if (!queryReady) {
       return () => {
@@ -134,10 +134,6 @@ export default function SearchResultsPage() {
               ? nextPacket
               : currentPacket
           ));
-          const hasVisibleCategory = currentCategory === "all"
-            || currentCategory === "entities"
-            || packetRows(nextPacket).some((row) => inferSearchCategory(row) === currentCategory);
-          if (hasVisibleCategory) setLoading(false);
         }
         return nextPacket;
       })
@@ -156,7 +152,6 @@ export default function SearchResultsPage() {
       const factPackets = nextPackets.filter(isFact);
       if (active) {
         setEntityPackets(factPackets);
-        if (lifecycleIntent.explicitDefunctRequest && factPackets.length) setLoading(false);
       }
       return factPackets;
     }).catch(() => {
@@ -165,18 +160,25 @@ export default function SearchResultsPage() {
     })
       : Promise.resolve([] as Packet[]);
 
+    const canonicalInstitution = canonicalSearchName(currentQuery);
+    const peopleVariants = canonicalInstitution ? [canonicalInstitution] : sourceVariants;
     const peopleSearch = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "people")
-      ? fetchPacket(`/api/people/search/v1?q=${encodeURIComponent(currentQuery)}&limit=100`, 25_000, {
-          signal: controller.signal,
-          attempts: 2,
-        }).then((nextPacket) => {
-          if (active && isFact(nextPacket)) {
-            setPeoplePacket(nextPacket);
-            setLoading(false);
+      ? Promise.all(peopleVariants.map((variant) => (
+          fetchPacket(`/api/people/search/v1?q=${encodeURIComponent(variant)}&limit=100`, 25_000, {
+            signal: controller.signal,
+            attempts: 2,
+          })
+        ))).then((nextPackets) => {
+          const factPackets = nextPackets.filter(isFact);
+          if (active) {
+            setPeoplePackets(factPackets);
           }
-          return nextPacket;
-        }).catch(() => null)
-      : Promise.resolve(null);
+          return factPackets;
+        }).catch(() => {
+          if (active) setPeoplePackets([]);
+          return [] as Packet[];
+        })
+      : Promise.resolve([] as Packet[]);
 
     const opportunitySearch = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "opportunities")
       ? Promise.all([
@@ -192,7 +194,6 @@ export default function SearchResultsPage() {
           const factPackets = nextPackets.filter(isFact);
           if (active) {
             setOpportunityPackets(factPackets);
-            if (factPackets.length) setLoading(false);
           }
           return factPackets;
         }).catch(() => {
@@ -202,17 +203,22 @@ export default function SearchResultsPage() {
       : Promise.resolve([] as Packet[]);
 
     const newsSearch = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "news")
-      ? fetchPacket("/api/source-intelligence/news/v1?limit=100", 25_000, {
-          signal: controller.signal,
-          attempts: 2,
-        }).then((nextPacket) => {
-          if (active && isFact(nextPacket)) {
-            setNewsPacket(nextPacket);
-            setLoading(false);
+      ? Promise.all(sourceVariants.map((variant) => (
+          fetchPacket(`/api/source-intelligence/news/v1?q=${encodeURIComponent(variant)}&limit=100`, 25_000, {
+            signal: controller.signal,
+            attempts: 2,
+          })
+        ))).then((nextPackets) => {
+          const factPackets = nextPackets.filter(isFact);
+          if (active) {
+            setNewsPackets(factPackets);
           }
-          return nextPacket;
-        }).catch(() => null)
-      : Promise.resolve(null);
+          return factPackets;
+        }).catch(() => {
+          if (active) setNewsPackets([]);
+          return [] as Packet[];
+        })
+      : Promise.resolve([] as Packet[]);
 
     const transactionSearch = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "transactions")
       ? Promise.all([publicSearch, entitySearch]).then(async ([publicPacket, nextEntityPackets]) => {
@@ -225,7 +231,6 @@ export default function SearchResultsPage() {
           }).catch(() => null);
           if (active && nextPacket && isFact(nextPacket)) {
             setTransactionPacket(nextPacket);
-            setLoading(false);
           }
           return nextPacket;
         })
@@ -243,7 +248,6 @@ export default function SearchResultsPage() {
           const factPackets = nextPackets.filter(isFact);
           if (active) {
             setIntentPackets(factPackets);
-            if (factPackets.length) setLoading(false);
             const transportFailures = nextPackets
               .map(packetReason)
               .filter((reason) => /^(?:backend_fetch_|backend_http_5|frontend_fetch_)/.test(reason));
@@ -295,7 +299,7 @@ export default function SearchResultsPage() {
       .map((row) => categorizedSearchRow(row, "entities"));
     const entities = dedupeSearchRecords([
       ...intentEntities,
-      ...mergeSearchRecordsPreferPrimary(publicEntities, entityRows, relevanceQuery, "entity"),
+      ...mergeSearchRecordsPreferEnriched(publicEntities, entityRows, relevanceQuery, "entity"),
     ]);
     const matchedEntityName = transactionPacketEntityName(transactionPacket);
     const joinedTransactions = packetRows(transactionPacket).map((row) => ({
@@ -311,22 +315,22 @@ export default function SearchResultsPage() {
     // returns newest-first rows. Do not text-filter those records by the acronym again:
     // many rows carry the entity only as a backend reference plus `role=Buyer`.
     const transactions = dedupeSearchRecords([...intentTransactions, ...joinedTransactions, ...publicTransactions]);
-    const people = rankSearchRecords(dedupeSearchRecords([
-      ...packetRows(peoplePacket).map((row) => categorizedSearchRow(row, "people")),
+    const people = rankSearchRecordsAcrossVariants(dedupeSearchRecords([
+      ...peoplePackets.flatMap((peoplePacket) => packetRows(peoplePacket)).map((row) => categorizedSearchRow(row, "people")),
       ...publicRows.filter((row) => row.__searchCategory === "people"),
-    ]), query, "person");
+    ]), relevanceQuery, "person");
     const keywordOpportunities = rankSearchRecords(dedupeSearchRecords([
       ...opportunityPackets.flatMap((opportunityPacket) => packetRows(opportunityPacket)).map((row) => categorizedSearchRow(row, "opportunities")),
       ...publicRows.filter((row) => row.__searchCategory === "opportunities"),
     ]), query, "rfp");
     const opportunities = dedupeSearchRecords([...intentOpportunities, ...keywordOpportunities]);
-    const news = rankSearchRecords(dedupeSearchRecords([
-      ...packetRows(newsPacket).map((row) => categorizedSearchRow(row, "news")),
+    const news = rankSearchRecordsAcrossVariants(dedupeSearchRecords([
+      ...newsPackets.flatMap((newsPacket) => packetRows(newsPacket)).map((row) => categorizedSearchRow(row, "news")),
       ...publicRows.filter((row) => row.__searchCategory === "news"),
-    ]), query, "news");
+    ]), relevanceQuery, "news");
 
     return dedupeSearchRecords([...entities, ...transactions, ...opportunities, ...news, ...people]);
-  }, [category, entityPackets, intentPackets, newsPacket, opportunityPackets, packet, peoplePacket, query, transactionPacket]);
+  }, [category, entityPackets, intentPackets, newsPackets, opportunityPackets, packet, peoplePackets, query, transactionPacket]);
   const resultRows = useMemo(() => (
     category === "all"
       ? allResultRows
@@ -366,6 +370,15 @@ export default function SearchResultsPage() {
   const unfilteredCount = resultRows.length;
   const lifecycleIntent = entityLifecycleIntent(query);
   const queryShort = isShortTextQuery(query);
+  const checkedAt = latestPacketGeneratedAt([
+    packet,
+    transactionPacket,
+    ...entityPackets,
+    ...peoplePackets,
+    ...opportunityPackets,
+    ...newsPackets,
+    ...intentPackets,
+  ]);
   const showingText = isTextQueryReady(query)
     ? `Showing ${visibleRows.length.toLocaleString("en-US")} of ${count.toLocaleString("en-US")}${activeFilterCount ? ` (${unfilteredCount.toLocaleString("en-US")} before filters)` : ""}`
     : queryShort ? `Enter at least ${MIN_TEXT_QUERY_CHARACTERS} characters` : "Awaiting search";
@@ -386,9 +399,9 @@ export default function SearchResultsPage() {
     setPacket(null);
     setEntityPackets([]);
     setTransactionPacket(null);
-    setPeoplePacket(null);
+    setPeoplePackets([]);
     setOpportunityPackets([]);
-    setNewsPacket(null);
+    setNewsPackets([]);
     setIntentPackets([]);
     setSearchFilters({ ...EMPTY_SEARCH_FILTERS });
     setLoading(isTextQueryReady(query));
@@ -418,9 +431,14 @@ export default function SearchResultsPage() {
                   <span className="font-semibold">Interpreted as:</span> {interpretedIntent.explanation}
                 </p>
               ) : null}
+              {checkedAt ? (
+                <p className="m-0 mt-2 text-[11px] text-[#52687D]" data-testid="search-source-freshness" data-source-generated-at={checkedAt}>
+                  Sources checked {formatSourceCheckTime(checkedAt)}. Results remain bound to the current query.
+                </p>
+              ) : null}
             </div>
             <div className="rounded border border-[#DCE3EA] px-3 py-2 text-[12px] text-[#41566B]" data-testid="search-result-status">
-              <span className="font-semibold">{searchCategoryLabel(category)}</span> · {loading ? "Loading" : showingText}
+              <span className="font-semibold">{searchCategoryLabel(category)}</span> · {loading ? (allResultRows.length ? `Refreshing sources · ${showingText}` : "Loading") : showingText}
             </div>
           </div>
         </section>
@@ -573,6 +591,31 @@ function packetRows(packet: Packet | null | undefined): Record<string, unknown>[
   if (results.length) return results;
   const dataRows = rows(packet, "rows");
   return dataRows.length ? dataRows : rows(packet);
+}
+
+function rankSearchRecordsAcrossVariants<T extends Record<string, unknown>>(
+  sourceRows: T[],
+  query: string,
+  kind: "person" | "news",
+): T[] {
+  const variants = businessSearchQueryVariants(query);
+  return dedupeSearchRecords(variants.flatMap((variant) => rankSearchRecords(sourceRows, variant, kind)));
+}
+
+function latestPacketGeneratedAt(packets: Array<Packet | null | undefined>): string {
+  return packets.reduce((latest, packet) => {
+    if (!packet || !isFact(packet)) return latest;
+    const generatedAt = text(packet.generated_at, "").trim();
+    const stamp = Date.parse(generatedAt);
+    if (!generatedAt || !Number.isFinite(stamp)) return latest;
+    return !latest || stamp > Date.parse(latest) ? generatedAt : latest;
+  }, "");
+}
+
+function formatSourceCheckTime(generatedAt: string): string {
+  const stamp = Date.parse(generatedAt);
+  if (!Number.isFinite(stamp)) return generatedAt;
+  return new Date(stamp).toISOString().replace("T", " ").replace(/\.\d{3}Z$/, " UTC");
 }
 
 function resolvedEntityName(query: string, publicPacket: Packet | null, entityPackets: Packet[]): string {

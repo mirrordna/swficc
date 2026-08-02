@@ -66,6 +66,9 @@ assert.match(searchPageSource, /useState\(10\)/, "category detail pages default 
 assert.match(searchPageSource, /Rows per category/, "All results exposes the bounded per-category control");
 assert.match(searchPageSource, /search-result-category-refinements/, "the detailed screen can refine category in place");
 assert.match(searchPageSource, /searchResultRecordType\(categorizedRow\)/, "rows display source-specific record types");
+assert.match(searchPageSource, /source-intelligence\/news\/v1\?q=/, "detailed news retrieval is bound to the active query");
+assert.match(searchPageSource, /mergeSearchRecordsPreferEnriched/, "detailed entity results prefer source-enriched duplicate facts");
+assert.match(searchPageSource, /search-source-freshness/, "detailed results expose the live source response timestamp");
 
 const routeProbe = execFileSync("python3", [
   "-c",

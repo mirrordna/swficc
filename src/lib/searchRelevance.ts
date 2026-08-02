@@ -201,6 +201,26 @@ export function mergeSearchRecordsPreferPrimary<T extends Record<string, unknown
   return (suppressed.length ? suppressed : ordered).map((item) => item.row);
 }
 
+// Preserve the primary endpoint's ordering while filling duplicate rows from a
+// richer source endpoint. Empty enrichment values never erase an existing fact.
+export function mergeSearchRecordsPreferEnriched<T extends Record<string, unknown>>(
+  primaryRows: T[],
+  enrichedRows: T[],
+  query: string,
+  kind: SearchKind = "entity",
+): T[] {
+  const enrichedByKey = new Map<string, T>();
+  for (const row of dedupeSearchRecords(enrichedRows)) {
+    enrichedByKey.set(searchRecordKey(row), row);
+  }
+  const enrichedPrimary = dedupeSearchRecords(primaryRows).map((row) => {
+    const enrichment = enrichedByKey.get(searchRecordKey(row));
+    if (!enrichment) return row;
+    return mergeMeaningfulSearchValues(row, enrichment);
+  });
+  return mergeSearchRecordsPreferPrimary(enrichedPrimary, enrichedRows, query, kind);
+}
+
 export function searchSubjectQuery(query: string): string {
   const clean = query.trim();
   if (!clean) return "";
@@ -429,6 +449,22 @@ function uniqueStrings(values: string[]): string[] {
     next.push(clean);
   }
   return next;
+}
+
+function mergeMeaningfulSearchValues<T extends Record<string, unknown>>(primary: T, enrichment: T): T {
+  const merged: Record<string, unknown> = { ...primary };
+  for (const [key, value] of Object.entries(enrichment)) {
+    if (!isMeaningfulSearchValue(value)) continue;
+    merged[key] = value;
+  }
+  return merged as T;
+}
+
+function isMeaningfulSearchValue(value: unknown): boolean {
+  if (value == null) return false;
+  if (typeof value === "string") return value.trim() !== "" && !/^(not disclosed|unavailable)$/i.test(value.trim());
+  if (Array.isArray(value)) return value.length > 0;
+  return true;
 }
 
 function text(value: unknown, fallback = ""): string {
