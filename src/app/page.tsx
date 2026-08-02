@@ -297,11 +297,13 @@ export default function DashboardPage() {
   // Two-layer truth (2026-07-06): the backend serves swfi.com-parity order
   // (source-of-truth mirror, gate-verified row-for-row); the DASHBOARD
   // re-ranks on the verified-USD value so cross-currency magnitudes never
-  // masquerade as a ranking (doctrine 2026-07-05). Rows without a USD value
-  // keep their relative order at the tail.
+  // masquerade as a ranking (doctrine 2026-07-05). Rows without complete USD
+  // lineage are excluded from this ranked surface.
   const topAumRows = useMemo(() => {
     const served = factRows(packets.top20).slice(0, 25);
-    return [...served].sort((a, b) => (numberValue(b.aum_usd) || 0) - (numberValue(a.aum_usd) || 0));
+    return served
+      .filter((row) => hasProvenUsdAum(row))
+      .sort((a, b) => (numberValue(b.aum_usd) || 0) - (numberValue(a.aum_usd) || 0));
   }, [packets.top20]);
   const dashboardEntitySearchRows = useMemo(() => dedupeSearchRecords([...topAumRows, ...entityRows]), [entityRows, topAumRows]);
   const dashboardReady = useMemo(() => {
@@ -702,12 +704,12 @@ function BrdCommandCenterSidebar({ topRows, pending = false }: { topRows: Record
           ))}
         </nav>
       </div>
-      <div className="mx-4 border-t border-[#E8ECF1] py-4">
+      <div data-testid="top-aum-ranking" data-aum-basis="proven-usd" className="mx-4 border-t border-[#E8ECF1] py-4">
         <div className="mb-2 flex items-center justify-between text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#4A5665]">
           {/* Honest label 2026-07-06: these are the top-AUM ranked rows, not a
               user-curated watchlist (this preview has no accounts). */}
           <span>Top by AUM</span>
-          <span className="text-[#7B8996]">AUM</span>
+          <span className="text-[#7B8996]">Verified USD</span>
         </div>
         <div className="grid gap-2">
           {watched.length ? watched.map((row, index) => (
@@ -3467,6 +3469,10 @@ function compactNumber(value: number) {
   return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: value >= 1000 ? 1 : 0 }).format(value);
 }
 
+function compactRankedUsd(value: number) {
+  return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 2 }).format(value);
+}
+
 function compactMoney(value: number) {
   if (!Number.isFinite(value)) return "Not disclosed";
   if (value === 0) return "$0";
@@ -3736,12 +3742,18 @@ function publishedRecencyScore(row: Record<string, unknown>) {
 }
 
 function aumDisplay(row: Record<string, unknown>) {
-  const numeric = numericSortValue(text(row.aum, ""));
-  const currency = text(row.aum_currency, "").trim();
-  if (numeric == null || !currency) return "Not disclosed";
-  // Sidebar/watchlist columns are ~76px: raw integers (NOK 2,048,995,080,000)
-  // overflow and read as noise — compact to the native currency + magnitude.
-  return `${currency} ${compactNumber(numeric)}`;
+  if (!hasProvenUsdAum(row)) return "Not disclosed";
+  const numeric = numberValue(row.aum_usd) || 0;
+  // Sidebar/watchlist columns are ~76px: raw integers (USD 2,048,995,080,000)
+  // overflow and read as noise, so compact the provenance-backed USD value.
+  return `USD ${compactRankedUsd(numeric)}`;
+}
+
+function hasProvenUsdAum(row: Record<string, unknown>) {
+  return (numberValue(row.aum_usd) || 0) > 0
+    && text(row.aum_currency, "").trim().toUpperCase() === "USD"
+    && Boolean(text(row.aum_usd_basis, "").trim())
+    && Boolean(text(row.aum_usd_source, "").trim());
 }
 
 function sourceHref(row: Record<string, unknown>): string | undefined {

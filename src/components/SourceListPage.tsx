@@ -23,7 +23,7 @@ import SwfiBrandHeader from "@/components/SwfiBrandHeader";
 import AlertsRuleManager from "@/components/AlertsRuleManager";
 import SavedSearchManager from "@/components/SavedSearchManager";
 import CompetitionAnalysisWorkbench from "@/components/CompetitionAnalysisWorkbench";
-import { defaultSortColumn, defaultSortDir, type Kind } from "@/lib/recordSort";
+import { defaultSortColumn, defaultSortDir, isSortableRecordColumn, type Kind } from "@/lib/recordSort";
 import { entityLifecycleIntent } from "@/lib/entityLifecycle";
 import { eligibleTextQuery, isShortTextQuery, isTextQueryReady, MIN_TEXT_QUERY_CHARACTERS } from "@/lib/textQueryPolicy";
 
@@ -75,7 +75,8 @@ const CONFIG: Record<Kind, { title: string; endpoint: string; columns: string[];
   profiles: {
     title: "Institutions",
     endpoint: "/api/source-data/search/v1?collection=entities&limit=100",
-    columns: ["Entity Name", "Type", "Country", "AUM", "Status"],
+    columns: ["Entity Name", "Type", "Country", "Source-reported AUM", "Status"],
+    columnsNote: "AUM retains its source currency and is not ranked across currencies. Use Dashboard > Top by AUM for the provenance-backed USD ranking.",
   },
   people: {
     // Columns follow the SOURCE schema (keys-only probe, Paul-authorized
@@ -105,11 +106,13 @@ const CONFIG: Record<Kind, { title: string; endpoint: string; columns: string[];
     title: "Active Allocators",
     endpoint: "/api/allocator-activity/v1?days=90&limit=100&page=1&sort=activity_count&direction=desc",
     columns: ["Entity Name", "Entity Type", "Country", "Region", "Number of Deals", "Total Deal Value", "Last Transaction Date", "AUM"],
+    columnsNote: "AUM retains its source currency and is not ranked across currencies. Activity and disclosed deal values remain independently sortable.",
   },
   comparisons: {
     title: "Peer Comparisons",
     endpoint: "/api/source-data/search/v1?collection=entities&limit=100",
-    columns: ["Institution", "Entity Type", "Country / Region", "AUM", "Peer Group", "Status"],
+    columns: ["Institution", "Entity Type", "Country / Region", "Source-reported AUM", "Peer Group", "Status"],
+    columnsNote: "AUM retains its source currency and is not ranked across currencies. Use Dashboard > Top by AUM for the provenance-backed USD ranking.",
   },
   mandates: {
     // Amount added 2026-07-06 (unleveraged-fields probe: amount_display is
@@ -212,8 +215,8 @@ const allocatorSortOptions = [
   ["entity_type", "Entity Type"],
 ] as const;
 
-// defaultSortColumn / defaultSortDir moved to @/lib/recordSort so the
-// "Top Ranked AUM" default (profiles -> AUM descending) is unit-testable.
+// Sort behavior is centralized so source-reported AUM cannot silently become a
+// cross-currency ranking.
 
 function allocatorSortParamForColumn(column: string): string {
   const normalized = column.toLowerCase();
@@ -1109,19 +1112,23 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
               <tr className="bg-[#F7F9FA]">
                 {config.columns.map((column) => (
                   <th key={column} className="border-b border-[#DCE3EA] px-3 py-2 font-semibold text-[#41566B]">
-                    <button
-                      type="button"
-                      className="w-full bg-transparent text-left font-semibold"
-                      onClick={() => {
-                        const nextIndex = config.columns.indexOf(column);
-                        setSortColumn(nextIndex);
-                        setSortDir(sortColumn === nextIndex && sortDir === "asc" ? "desc" : "asc");
-                        if (kind === "allocators") setAllocatorSort(allocatorSortParamForColumn(column));
-                        setPageIndex(0);
-                      }}
-                    >
-                      {column}{sortColumn === config.columns.indexOf(column) ? ` ${sortDir}` : ""}
-                    </button>
+                    {isSortableRecordColumn(kind, column) ? (
+                      <button
+                        type="button"
+                        className="w-full bg-transparent text-left font-semibold"
+                        onClick={() => {
+                          const nextIndex = config.columns.indexOf(column);
+                          setSortColumn(nextIndex);
+                          setSortDir(sortColumn === nextIndex && sortDir === "asc" ? "desc" : "asc");
+                          if (kind === "allocators") setAllocatorSort(allocatorSortParamForColumn(column));
+                          setPageIndex(0);
+                        }}
+                      >
+                        {column}{sortColumn === config.columns.indexOf(column) ? ` ${sortDir}` : ""}
+                      </button>
+                    ) : (
+                      <span data-aum-comparability="source-currency-only" className="block">{column}</span>
+                    )}
                   </th>
                 ))}
               </tr>

@@ -19,6 +19,10 @@ function dataRows(packet) {
   return packet?.data?.rows || packet?.data?.results || [];
 }
 
+function compactRankedUsd(value) {
+  return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 2 }).format(Number(value));
+}
+
 const browser = await chromium.launch({ headless: true });
 
 try {
@@ -68,26 +72,53 @@ try {
   });
   console.log("kp-feedback-gate: smart search complete");
 
-  const aumPacket = await json("/api/source-data/search/v1?collection=entities&q=Sovereign%20Wealth%20Fund&limit=25&page=1");
+  const aumPacket = await json("/v1/swfi/top20?limit=25");
   const expectedAumRows = dataRows(aumPacket)
-    .filter((row) => Number.isFinite(Number(row.aum || row.assets)))
-    .sort((a, b) => Number(b.aum || b.assets) - Number(a.aum || a.assets));
+    .filter((row) => Number.isFinite(Number(row.aum_usd)) && Number(row.aum_usd) > 0)
+    .sort((a, b) => Number(b.aum_usd) - Number(a.aum_usd));
+  const sourceAumFailures = expectedAumRows.filter((row) =>
+    String(row.aum_currency || "").toUpperCase() !== "USD"
+    || !String(row.aum_usd_basis || "").trim()
+    || !String(row.aum_usd_source || "").trim()
+    || !String(row.aum_date || "").trim()
+  );
+  check(
+    "aum_rank_source_has_usd_provenance",
+    expectedAumRows.length >= 10 && sourceAumFailures.length === 0,
+    JSON.stringify({ rows: expectedAumRows.length, failures: sourceAumFailures.map((row) => row.name) }),
+  );
   const aumPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   aumPage.setDefaultTimeout(120_000);
-  await aumPage.goto(`${ORIGIN}/swficc/profiles/?filter=${encodeURIComponent("Sovereign Wealth Fund")}`, { waitUntil: "domcontentloaded", timeout: 120_000 });
-  await aumPage.getByRole("button", { name: "AUM desc" }).waitFor({ state: "visible" });
-  await aumPage.waitForFunction(() => {
-    const rows = document.querySelectorAll("main tbody tr");
-    return rows.length > 1 && !document.querySelector("main")?.innerText.includes("Loading");
-  }, null, { timeout: 120_000 });
-  const firstAumName = (await aumPage.locator("main tbody tr").first().locator("td").first().innerText()).trim();
+  await aumPage.goto(`${ORIGIN}/swficc/`, { waitUntil: "domcontentloaded", timeout: 120_000 });
+  const ranking = aumPage.getByTestId("top-aum-ranking");
+  await ranking.waitFor({ state: "visible" });
+  await ranking.locator("a").first().waitFor({ state: "visible" });
+  const rankingBasis = await ranking.getAttribute("data-aum-basis");
+  const renderedAumRows = (await ranking.locator("a").allTextContents()).map((value) => value.replace(/\s+/g, " ").trim());
   check(
-    "aum_default_desc_matches_source",
-    Boolean(expectedAumRows[0]?.name) && firstAumName === expectedAumRows[0].name,
-    `source=${expectedAumRows[0]?.name} (${expectedAumRows[0]?.aum || expectedAumRows[0]?.assets}) ui=${firstAumName}`,
+    "aum_dashboard_matches_proven_usd_rank",
+    rankingBasis === "proven-usd"
+      && Boolean(expectedAumRows[0]?.name)
+      && renderedAumRows[0]?.startsWith(expectedAumRows[0].name)
+      && renderedAumRows.every((value, index) => value.endsWith(`USD ${compactRankedUsd(expectedAumRows[index]?.aum_usd)}`)),
+    JSON.stringify({ basis: rankingBasis, source_first: expectedAumRows[0]?.name, rendered: renderedAumRows }),
   );
   await aumPage.screenshot({ path: "output/swfipn-kp-aum-ranking-latest.png", fullPage: true });
   await aumPage.close();
+
+  const directoryPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  directoryPage.setDefaultTimeout(120_000);
+  await directoryPage.goto(`${ORIGIN}/swficc/profiles/?filter=${encodeURIComponent("Sovereign Wealth Fund")}`, { waitUntil: "domcontentloaded", timeout: 120_000 });
+  await directoryPage.getByRole("button", { name: "Entity Name asc" }).waitFor({ state: "visible" });
+  await directoryPage.getByText("AUM retains its source currency and is not ranked across currencies.", { exact: false }).waitFor({ state: "visible" });
+  const nativeAumHeader = directoryPage.locator('[data-aum-comparability="source-currency-only"]');
+  const sortableAumButtons = await directoryPage.getByRole("button", { name: /AUM (?:asc|desc)/ }).count();
+  check(
+    "aum_directory_discloses_non_comparability",
+    await nativeAumHeader.isVisible() && sortableAumButtons === 0,
+    JSON.stringify({ header: await nativeAumHeader.innerText(), sortable_aum_buttons: sortableAumButtons }),
+  );
+  await directoryPage.close();
   console.log("kp-feedback-gate: AUM ranking complete");
 
   const dealsPage = await browser.newPage({ viewport: { width: 1440, height: 1050 } });
