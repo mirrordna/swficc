@@ -275,10 +275,18 @@ async function runQuery(browser, origin, testCase) {
       page.getByRole("link", { name: "View all results", exact: true }).click(),
     ]);
     const searchResultsRoot = page.locator("main[data-search-results-state]");
-    const [fullPageSettlement] = await Promise.all([
-      waitForSearchLanes(page, networkTrace, 30_000, requiredSearchPaths, fullPageRequiredLimits),
-      page.locator('main[data-search-results-state]:not([data-search-results-state="loading"])').waitFor({ state: "attached", timeout: 30_000 }),
-    ]);
+    const fullPageSettlement = await waitForSearchLanes(
+      page,
+      networkTrace,
+      30_000,
+      requiredSearchPaths,
+      fullPageRequiredLimits,
+    );
+    // Waiting concurrently can match the initial idle render before the query
+    // effect starts. First prove every required response, then observe the
+    // terminal UI state produced by those responses.
+    await page.locator('main[data-search-results-state]:not([data-search-results-state="loading"])')
+      .waitFor({ state: "attached", timeout: 5_000 });
     const searchResultsState = await searchResultsRoot.getAttribute("data-search-results-state");
     const searchIssue = await searchResultsRoot.getAttribute("data-search-results-issue");
     const freshnessReceipt = page.getByTestId("search-source-freshness");
