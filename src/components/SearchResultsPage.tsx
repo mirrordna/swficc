@@ -13,6 +13,7 @@ import { isShortTextQuery, isTextQueryReady, MIN_TEXT_QUERY_CHARACTERS } from "@
 import { searchResultCategoryCounts, searchResultRecordType, visibleSearchResultRows } from "@/lib/searchResultPresentation";
 
 const SEARCH_PREFETCH_CACHE_PREFIX = "swfipn.search.prefetch.v1:";
+const SEARCH_NEWS_TRANSPORT_TIMEOUT_MS = 15_000;
 const SEARCH_CATEGORIES = ["all", "entities", "opportunities", "transactions", "news", "people"] as const;
 type SearchCategory = (typeof SEARCH_CATEGORIES)[number];
 type CategorizedSearchRow = Record<string, unknown> & { __searchCategory: Exclude<SearchCategory, "all"> };
@@ -212,7 +213,7 @@ export default function SearchResultsPage() {
     const progressiveNewsPackets: Array<Packet | undefined> = Array.from({ length: sourceVariants.length });
     const newsSearch = shouldSearchNews
       ? collectFactPacketsProgressively(sourceVariants.map((variant) => (
-          fetchPacket(`/api/source-intelligence/news/v1?q=${encodeURIComponent(variant)}&limit=25&count_mode=bounded`, 8_000, {
+          fetchPacket(`/api/source-intelligence/news/v1?q=${encodeURIComponent(variant)}&limit=25&count_mode=bounded`, SEARCH_NEWS_TRANSPORT_TIMEOUT_MS, {
             signal: controller.signal,
             attempts: 1,
           })

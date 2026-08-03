@@ -83,6 +83,7 @@ const NEWS_REFRESH_INTERVAL_MS = 5 * 60_000;
 const NEWS_REFRESH_MIN_GAP_MS = 60_000;
 const NEWS_REFRESH_EVENT = "swfi:refresh-news";
 const SEARCH_PREFETCH_CACHE_PREFIX = "swfipn.search.prefetch.v1:";
+const SEARCH_NEWS_TRANSPORT_TIMEOUT_MS = 15_000;
 const HOME_SNAPSHOT_FRESH_AGE_MS = 6 * 60 * 60_000;
 // The snapshot is a visibly dated first-paint fallback only. Live fact packets
 // immediately revalidate it after hydration, so a source outage does not turn
@@ -205,6 +206,13 @@ export default function DashboardPage() {
 
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
+    if (searchOpen) {
+      return () => {
+        active = false;
+        controller.abort();
+      };
+    }
     const snapshot = freshHomeSnapshot();
     const snapshotTimer = window.setTimeout(() => {
       if (active && Object.keys(snapshot).length) {
@@ -218,24 +226,35 @@ export default function DashboardPage() {
           ...current,
           [key]: shouldReplacePacket(current[key], packet) ? packet : current[key],
         }));
-      });
+      }, controller.signal);
     }, Object.keys(snapshot).length ? 8_000 : 0);
     return () => {
       active = false;
+      controller.abort();
       window.clearTimeout(snapshotTimer);
       window.clearTimeout(refreshTimer);
     };
-  }, []);
+  }, [searchOpen]);
 
   useEffect(() => {
     let active = true;
     let refreshing = false;
     let lastRefreshAt = Date.now();
+    const controller = new AbortController();
+    if (searchOpen) {
+      return () => {
+        active = false;
+        controller.abort();
+      };
+    }
     const refreshNews = async (force = false) => {
       if (refreshing || (!force && Date.now() - lastRefreshAt < NEWS_REFRESH_MIN_GAP_MS)) return;
       refreshing = true;
       try {
-        const packet = await fetchPacket(ENDPOINTS.news, 30_000, { attempts: 2 });
+        const packet = await fetchPacket(ENDPOINTS.news, 30_000, {
+          attempts: 2,
+          signal: controller.signal,
+        });
         if (!active) return;
         setPackets((current) => ({
           ...current,
@@ -255,11 +274,12 @@ export default function DashboardPage() {
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       active = false;
+      controller.abort();
       window.clearInterval(interval);
       window.removeEventListener(NEWS_REFRESH_EVENT, onRefreshNews);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, []);
+  }, [searchOpen]);
 
   useEffect(() => {
     function onKeyDown(event: globalThis.KeyboardEvent) {
@@ -462,7 +482,7 @@ export default function DashboardPage() {
       });
       const progressiveNewsPackets: Array<Packet | undefined> = Array.from({ length: queryVariants.length });
       const newsSearch = collectFactPacketsProgressively(queryVariants.map((variant) => (
-        fetchPacket(`/api/source-intelligence/news/v1?q=${encodeURIComponent(variant)}&limit=25&count_mode=bounded`, 8_000, {
+        fetchPacket(`/api/source-intelligence/news/v1?q=${encodeURIComponent(variant)}&limit=25&count_mode=bounded`, SEARCH_NEWS_TRANSPORT_TIMEOUT_MS, {
           signal: controller.signal,
           attempts: 1,
         })
@@ -3545,14 +3565,21 @@ function researchRecordHref(row: Record<string, unknown>) {
   return dashboardSearchFallback(row, "/intelligence");
 }
 
-async function loadDashboardPackets(onPacket: (key: PacketKey, packet: Packet) => void) {
+async function loadDashboardPackets(
+  onPacket: (key: PacketKey, packet: Packet) => void,
+  signal?: AbortSignal,
+) {
   const entries = DASHBOARD_LOAD_ORDER.map((key) => [key, ENDPOINTS[key]] as [PacketKey, string]);
   const workers = Array.from({ length: Math.min(3, entries.length) }, async () => {
-    while (entries.length) {
+    while (entries.length && !signal?.aborted) {
       const entry = entries.shift();
       if (!entry) return;
       const [key, path] = entry;
-      const packet = await fetchPacket(path, dashboardTimeout(key), { attempts: dashboardAttempts(key) });
+      const packet = await fetchPacket(path, dashboardTimeout(key), {
+        attempts: dashboardAttempts(key),
+        signal,
+      });
+      if (signal?.aborted) return;
       onPacket(key, packet);
     }
   });

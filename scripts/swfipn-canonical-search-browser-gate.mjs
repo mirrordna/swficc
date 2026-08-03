@@ -12,6 +12,7 @@ const receiptPath = path.join(outputDir, "swfipn-canonical-search-browser-gate-l
 const entityBudgetMs = 5_000;
 const liveEntityBudgetMs = 8_000;
 const newsBudgetMs = 8_000;
+const includeMobile = /^(1|true|yes)$/i.test(String(process.env.SWFIPN_INCLUDE_MOBILE || ""));
 const resultCategories = ["Entities", "RFPs & Opportunities", "Transactions", "News & Articles", "People"];
 const requiredPopulatedCategories = ["Entities", "Transactions", "News & Articles", "People"];
 const requiredSearchPaths = [
@@ -22,6 +23,13 @@ const requiredSearchPaths = [
   "/api/entity-transactions/v1",
   "/api/live-opportunities/v1",
   "/api/live-mandates/v1",
+];
+const modalForegroundSearchPaths = [
+  "/api/v1/public/search",
+  "/api/source-data/search/v1",
+  "/api/source-intelligence/news/v1",
+  "/api/people/search/v1",
+  "/api/entity-transactions/v1",
 ];
 const fullPageRequiredLimits = {
   "/api/v1/public/search": 100,
@@ -188,8 +196,15 @@ async function waitForSearchLanes(page, networkTrace, timeout = 30_000, required
   };
 }
 
-async function runQuery(browser, origin, testCase) {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+async function runQuery(browser, origin, testCase, options = {}) {
+  const mobile = options.mobile === true;
+  const checkId = String(options.id || testCase.id);
+  const page = await browser.newPage({
+    viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1000 },
+    deviceScaleFactor: mobile ? 2 : 1,
+    hasTouch: mobile,
+    isMobile: mobile,
+  });
   const startedAt = Date.now();
   const networkTrace = [];
   const relevantPath = (value) => /\/api\/(?:v1\/public\/search|source-data\/search\/v1|source-intelligence\/news\/v1|people\/search\/v1|entity-transactions\/v1|live-opportunities\/v1|live-mandates\/v1)/.test(value);
@@ -254,7 +269,9 @@ async function runQuery(browser, origin, testCase) {
       : "";
     const sourceLinkMatchesLiveResult = Boolean(canonicalSourceHref)
       && normalizeComparableUrl(canonicalSourceHref) === normalizeComparableUrl(liveEntityHref);
-    const laneSettlement = await waitForSearchLanes(page, networkTrace);
+    // The modal proves only request lanes owned by the active query. Requiring
+    // dashboard opportunity feeds here would reward background contention.
+    const laneSettlement = await waitForSearchLanes(page, networkTrace, 30_000, modalForegroundSearchPaths);
     const resultSet = await orderedResultSet(page);
     const resultSetComplete = requiredPopulatedCategories.every((category) => resultSet.counts[category] > 0);
     const resultSourcesComplete = Object.values(resultSet.categories)
@@ -262,7 +279,11 @@ async function runQuery(browser, origin, testCase) {
       .every((row) => Boolean(row.source_identity));
     const body = await page.locator("body").innerText();
     const peopleSectionText = await peopleSection.innerText().catch(() => "");
-    const screenshotPath = path.join(outputDir, `swfipn-canonical-search-${testCase.id}-latest.png`);
+    const modalLayout = await page.evaluate(() => ({
+      viewport_width: document.documentElement.clientWidth,
+      document_width: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth),
+    }));
+    const screenshotPath = path.join(outputDir, `swfipn-canonical-search-${checkId}-latest.png`);
     await page.screenshot({ path: screenshotPath, fullPage: true });
     const modalNetworkTrace = [...networkTrace];
     const modalPublicSearchNotSharedCacheable = modalNetworkTrace
@@ -336,10 +357,34 @@ async function runQuery(browser, origin, testCase) {
     const detailedPublicSearchNotSharedCacheable = networkTrace
       .filter((event) => event.path?.startsWith("/api/v1/public/search"))
       .every((event) => String(event.cache_control || "").startsWith("no-store"));
-    const detailedScreenshotPath = path.join(outputDir, `swfipn-canonical-search-${testCase.id}-view-all-latest.png`);
+    const detailedLayout = await page.evaluate(() => {
+      const root = document.querySelector("main[data-search-results-state]");
+      const table = root?.querySelector("table");
+      const tableScroller = table?.parentElement;
+      const rootRect = root?.getBoundingClientRect();
+      return {
+        viewport_width: document.documentElement.clientWidth,
+        document_width: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth),
+        root_within_viewport: Boolean(rootRect)
+          && (rootRect?.left || 0) >= -1
+          && (rootRect?.right || 0) <= document.documentElement.clientWidth + 1,
+        table_scroller_overflow_x: tableScroller ? getComputedStyle(tableScroller).overflowX : null,
+        table_scroll_contained: Boolean(table && tableScroller)
+          && (table?.scrollWidth || 0) >= (tableScroller?.clientWidth || 0)
+          && (tableScroller?.scrollWidth || 0) >= (tableScroller?.clientWidth || 0),
+      };
+    });
+    const mobileLayoutPass = !mobile || (
+      modalLayout.document_width <= modalLayout.viewport_width + 2
+      && detailedLayout.document_width <= detailedLayout.viewport_width + 2
+      && detailedLayout.root_within_viewport
+      && detailedLayout.table_scroller_overflow_x === "auto"
+      && detailedLayout.table_scroll_contained
+    );
+    const detailedScreenshotPath = path.join(outputDir, `swfipn-canonical-search-${checkId}-view-all-latest.png`);
     await page.screenshot({ path: detailedScreenshotPath, fullPage: true });
     return {
-      id: testCase.id,
+      id: checkId,
       pass: canonicalIdentity.present
         && liveEntityPresent
         && newsResult.present
@@ -370,7 +415,10 @@ async function runQuery(browser, origin, testCase) {
         && detailedAumPass
         && detailedForbiddenAbsent
         && detailedNewsQueryBound
-        && detailedPublicSearchNotSharedCacheable,
+        && detailedPublicSearchNotSharedCacheable
+        && mobileLayoutPass,
+      viewport_mode: mobile ? "mobile_emulation" : "desktop",
+      modal_layout: modalLayout,
       entity_ms: entityMs,
       live_entity_ms: liveEntityMs,
       news_ms: newsMs,
@@ -415,6 +463,8 @@ async function runQuery(browser, origin, testCase) {
         news_requests_query_bound: detailedNewsQueryBound,
         news_search_request_paths: detailedNewsSearchRequests.map((event) => event.path),
         public_search_not_shared_cacheable: detailedPublicSearchNotSharedCacheable,
+        layout: detailedLayout,
+        mobile_layout_pass: mobileLayoutPass,
         network_trace: networkTrace.sort((left, right) => left.at_ms - right.at_ms),
         screenshot: detailedScreenshotPath,
         screenshot_sha256: fileSha256(detailedScreenshotPath),
@@ -426,11 +476,12 @@ async function runQuery(browser, origin, testCase) {
       screenshot_sha256: fileSha256(screenshotPath),
     };
   } catch (error) {
-    const screenshotPath = path.join(outputDir, `swfipn-canonical-search-${testCase.id}-failure-latest.png`);
+    const screenshotPath = path.join(outputDir, `swfipn-canonical-search-${checkId}-failure-latest.png`);
     await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {});
     const searchResultsRoot = page.locator("main[data-search-results-state]");
     return {
-      id: testCase.id,
+      id: checkId,
+      viewport_mode: mobile ? "mobile_emulation" : "desktop",
       pass: false,
       error: error instanceof Error ? error.message : String(error),
       search_results_state: await searchResultsRoot.getAttribute("data-search-results-state").catch(() => null),
@@ -540,6 +591,14 @@ async function main() {
     ];
     const checks = [];
     for (const testCase of cases) checks.push(await runQuery(browser, origin, testCase));
+    if (includeMobile) {
+      for (const testCase of cases) {
+        checks.push(await runQuery(browser, origin, testCase, {
+          id: `${testCase.id}_mobile`,
+          mobile: true,
+        }));
+      }
+    }
     checks.push(await runRapidReplacement(browser, origin));
     checks.unshift({ id: "top_aum_first_paint", pass: topAumFirstPaint, assertions: firstPaintAssertions });
     const testedReleaseGitSha = liveTarget ? String(process.env.SWFIPN_RELEASE_GIT_SHA || "").trim() : "";
@@ -583,11 +642,12 @@ async function main() {
         "hkic_view_all_query_bound_news_and_people",
         "detailed_search_source_freshness_receipt",
         "public_search_no_shared_stale_cache",
+        ...(includeMobile ? ["mobile_emulated_adia_hkic_search_semantics_and_layout"] : []),
         ...(liveTarget ? ["live_target_browser_behavior"] : []),
       ],
       unchecked_scope: liveTarget
-        ? ["stakeholder_acceptance", "Mongo_record_parity", "global_release_acceptance"]
-        : ["deployed_production", "stakeholder_acceptance", "Mongo_record_parity"],
+        ? ["stakeholder_acceptance", "Mongo_record_parity", "global_release_acceptance", ...(includeMobile ? ["physical_mobile_device"] : [])]
+        : ["deployed_production", "stakeholder_acceptance", "Mongo_record_parity", ...(includeMobile ? ["physical_mobile_device"] : [])],
       bad_news: [
         ...(!releaseIdentityPinned ? ["live_target_release_identity_unpinned"] : []),
         ...(!candidateIdentityPinned ? ["candidate_or_source_backend_identity_unpinned"] : []),
