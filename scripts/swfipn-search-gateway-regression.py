@@ -42,6 +42,7 @@ finally:
     gateway.PUBLIC_SEARCH_QUEUE_WAIT_SECONDS = original_wait
     handler.server.public_search_upstream_slots.release()
 busy_payload = json.loads(busy_body)
+transport_failure_payload = json.loads(gateway.backend_fetch_failure_body())
 
 checks = {
     "acronym_resolves_to_one_canonical_upstream": gateway.upstream_search_query_variants("HKIC")
@@ -68,13 +69,17 @@ checks = {
     "noncanonical_source_is_not_fast_path_eligible": not gateway.has_exact_canonical_search_result(
         "HKIC", [{**canonical_hkic, "source_url": "https://example.com/entities/hkic"}]
     ),
-    "background_cleanup_cannot_mutate_cached_results": not hasattr(handler, "finish_enhanced_public_search")
+    "background_enrichment_replaces_only_matching_generation": not hasattr(handler, "finish_enhanced_public_search")
     and not hasattr(handler, "enrichment_job_is_current")
-    and list(inspect.signature(handler.finish_stable_primary_cleanup).parameters) == ["executor", "futures"],
+    and list(inspect.signature(handler.finish_stable_primary_enrichment).parameters)
+    == ["executor", "futures", "query", "safe_limit", "cache_key", "generation_id"],
     "capacity_exhaustion_fails_closed": busy_state == "BUSY"
     and busy_cacheable is False
     and busy_payload.get("fact") is False
     and busy_payload.get("data", {}).get("reason") == "search_capacity_exhausted",
+    "transport_failure_is_retryable_and_fail_closed": transport_failure_payload.get("status") == "unavailable"
+    and transport_failure_payload.get("fact") is False
+    and transport_failure_payload.get("unavailable_reason") == "backend_fetch_failed",
 }
 
 receipt = {"status": "pass" if all(checks.values()) else "fail", "checks": checks}

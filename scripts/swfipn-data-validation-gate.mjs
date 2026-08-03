@@ -362,15 +362,23 @@ function validateCompareEntities(result, packet) {
 
 function validateAumRankings(result, packet) {
   const rows = packetRows(packet);
-  if (rows.length < 10) result.failures.push(`aum_rows_${rows.length}_lt_10`);
-  rows.forEach((row, index) => {
+  const rankedRows = rows.filter((row) => numberValue(row.aum_usd) > 0);
+  const firstSourceGap = rows.findIndex((row) => numberValue(row.aum_usd) <= 0);
+  if (rankedRows.length < 10) result.failures.push(`aum_ranked_rows_${rankedRows.length}_lt_10`);
+  if (firstSourceGap >= 0 && rows.slice(firstSourceGap).some((row) => numberValue(row.aum_usd) > 0)) {
+    result.failures.push("aum_disclosed_row_after_source_gap");
+  }
+  rankedRows.forEach((row, index) => {
     const name = cleanText(row.name || index);
-    if (numberValue(row.aum || row.assets) <= 0) result.failures.push(`aum_${name}_missing_numeric_aum`);
-    if (!cleanText(row.aum_currency || row.currency)) result.failures.push(`aum_${name}_missing_currency`);
+    if (numberValue(row.aum_usd) <= 0) result.failures.push(`aum_${name}_missing_numeric_aum_usd`);
+    if (cleanText(row.aum_currency || row.currency).toUpperCase() !== "USD") result.failures.push(`aum_${name}_currency_not_usd`);
+    if (!cleanText(row.aum_usd_basis)) result.failures.push(`aum_${name}_missing_usd_basis`);
+    if (!cleanText(row.aum_usd_source)) result.failures.push(`aum_${name}_missing_usd_source`);
     if (!cleanText(row.aum_date || row.as_of_date)) result.failures.push(`aum_${name}_missing_as_of_date`);
     if (!hasSwfiSource(row)) result.failures.push(`aum_${name}_missing_swfi_source_url`);
-    if (index < rows.length - 1 && numberValue(row.aum || row.assets) < numberValue(rows[index + 1].aum || rows[index + 1].assets)) {
-      result.failures.push(`aum_sort_violation:${name}->${cleanText(rows[index + 1].name) || index + 1}`);
+    if (numberValue(row.rank) !== index + 1) result.failures.push(`aum_${name}_rank_${numberValue(row.rank)}_expected_${index + 1}`);
+    if (index < rankedRows.length - 1 && numberValue(row.aum_usd) < numberValue(rankedRows[index + 1].aum_usd)) {
+      result.failures.push(`aum_sort_violation:${name}->${cleanText(rankedRows[index + 1].name) || index + 1}`);
     }
   });
 }

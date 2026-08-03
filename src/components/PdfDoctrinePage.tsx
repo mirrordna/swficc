@@ -141,6 +141,7 @@ export default function PdfDoctrinePage() {
   const reportCatalogSummary = latestReportDate
     ? `Latest report on file: ${displayDate(latestReportDate)} · ${historicalReportCatalog ? "Historical catalog" : "Current catalog"}${reportCatalogAgeDays === null ? "" : ` · Source age ${reportCatalogAgeDays.toLocaleString("en-US")} days`} · ${reportSourceTotal.toLocaleString("en-US")} records`
     : `${reportSourceTotal.toLocaleString("en-US")} report records on file · latest publication date not disclosed`;
+  const reportsReady = Object.keys(ENDPOINTS).every((key) => packets[key] !== undefined);
 
   const summaryRows: TableCell[][] = [
     ["Institutions", metricValue(packets.metrics, "institutions") || topAumRows.length.toLocaleString("en-US"), "SWFI records"],
@@ -220,6 +221,7 @@ export default function PdfDoctrinePage() {
                   allocatorRows={allocatorRows}
                   transactionRows={transactionRows}
                   reportCatalogSummary={reportCatalogSummary}
+                  ready={reportsReady}
                 />
               ) : null}
             </section>
@@ -307,7 +309,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function ReportsVisualization({ reportRows, marketRows, allocatorRows, transactionRows, reportCatalogSummary }: { reportRows: TableCell[][]; marketRows: TableCell[][]; allocatorRows: TableCell[][]; transactionRows: TableCell[][]; reportCatalogSummary: string }) {
+function ReportsVisualization({ reportRows, marketRows, allocatorRows, transactionRows, reportCatalogSummary, ready }: { reportRows: TableCell[][]; marketRows: TableCell[][]; allocatorRows: TableCell[][]; transactionRows: TableCell[][]; reportCatalogSummary: string; ready: boolean }) {
   const reportBuckets = bucketTableRows(reportRows, 1);
   const marketBuckets = marketRows.slice(0, 8).map((row) => ({ label: displayText(row[0]), count: numericSortValue(displayText(row[2])) || 1 }));
   const summary = [
@@ -316,8 +318,15 @@ function ReportsVisualization({ reportRows, marketRows, allocatorRows, transacti
     ["Recent Transactions", transactionRows.length.toLocaleString("en-US")],
     ["Active Allocators", allocatorRows.length.toLocaleString("en-US")],
   ] as const;
+  const visibleCount = reportRows.length + marketRows.length + allocatorRows.length + transactionRows.length;
   return (
-    <div className="grid gap-4" data-brd-reports-visualization="true">
+    <div
+      className="grid gap-4"
+      data-brd-reports-visualization="true"
+      data-source-ready={ready ? "true" : "false"}
+      data-source-visible-count={visibleCount}
+      data-source-total-count={reportRows.length}
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="grid gap-1 text-[12px] text-[#7A8A9B]">
           <span>{reportCatalogSummary}</span>

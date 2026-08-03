@@ -4,15 +4,16 @@ import { useEffect, useMemo, useState } from "react";
 import SavedSearchManager from "@/components/SavedSearchManager";
 import SwfiBrandHeader from "@/components/SwfiBrandHeader";
 import type { Packet } from "@/lib/sourcePackets";
-import { fetchPacket, isFact, money, packetReason, rows, text } from "@/lib/sourcePackets";
+import { collectFactPacketsProgressively, fetchPacket, isFact, money, packetReason, rows, text } from "@/lib/sourcePackets";
 import { appHref, isSwfiPlatformRecordHref, selfContainedHref, swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
-import { businessSearchQueryVariants, dedupeSearchRecords, mergeSearchRecordsPreferPrimary, rankSearchRecords } from "@/lib/searchRelevance";
+import { businessSearchQueryVariants, canonicalSearchName, dedupeSearchRecords, hasVerifiedCanonicalSearchIdentity, mergeSearchRecordsPreferEnriched, mergeSearchRecordsPreferPrimary, rankSearchRecords } from "@/lib/searchRelevance";
 import { filterSmartSearchIntentRows, smartSearchIntentForQuery } from "@/lib/smartSearchIntent";
 import { entityLifecycleIntent } from "@/lib/entityLifecycle";
 import { isShortTextQuery, isTextQueryReady, MIN_TEXT_QUERY_CHARACTERS } from "@/lib/textQueryPolicy";
 import { searchResultCategoryCounts, searchResultRecordType, visibleSearchResultRows } from "@/lib/searchResultPresentation";
 
 const SEARCH_PREFETCH_CACHE_PREFIX = "swfipn.search.prefetch.v1:";
+const SEARCH_NEWS_TRANSPORT_TIMEOUT_MS = 15_000;
 const SEARCH_CATEGORIES = ["all", "entities", "opportunities", "transactions", "news", "people"] as const;
 type SearchCategory = (typeof SEARCH_CATEGORIES)[number];
 type CategorizedSearchRow = Record<string, unknown> & { __searchCategory: Exclude<SearchCategory, "all"> };
@@ -71,12 +72,13 @@ export default function SearchResultsPage() {
   const [packet, setPacket] = useState<Packet | null>(null);
   const [entityPackets, setEntityPackets] = useState<Packet[]>([]);
   const [transactionPacket, setTransactionPacket] = useState<Packet | null>(null);
-  const [peoplePacket, setPeoplePacket] = useState<Packet | null>(null);
+  const [peoplePackets, setPeoplePackets] = useState<Packet[]>([]);
   const [opportunityPackets, setOpportunityPackets] = useState<Packet[]>([]);
-  const [newsPacket, setNewsPacket] = useState<Packet | null>(null);
+  const [newsPackets, setNewsPackets] = useState<Packet[]>([]);
   const [intentPackets, setIntentPackets] = useState<Packet[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchIssue, setSearchIssue] = useState("");
+  const [searchStartedAt, setSearchStartedAt] = useState(0);
   const [retryKey, setRetryKey] = useState(0);
   const [rowLimit, setRowLimit] = useState(10);
   const [allCategoryLimit, setAllCategoryLimit] = useState(5);
@@ -103,14 +105,15 @@ export default function SearchResultsPage() {
       setQuery(currentQuery);
       setCategory(currentCategory);
       setSearchIssue("");
+      setSearchStartedAt(Date.now());
       setIntentPackets([]);
       setPacket(cached);
       setEntityPackets([]);
       setTransactionPacket(null);
-      setPeoplePacket(null);
+      setPeoplePackets([]);
       setOpportunityPackets([]);
-      setNewsPacket(null);
-      setLoading(queryReady && !cached);
+      setNewsPackets([]);
+      setLoading(queryReady);
     }, 0);
     if (!queryReady) {
       return () => {
@@ -119,11 +122,13 @@ export default function SearchResultsPage() {
         controller.abort();
       };
     }
+    // One transport retry fits inside the 30s page deadline. Persistent failure
+    // becomes an explicit partial state and the visible Retry starts a new generation.
     const shouldSearchPublic = !currentIntent
       && !lifecycleIntent.explicitDefunctRequest
       && (currentCategory === "all" || currentCategory === "entities" || currentCategory === "transactions");
     const publicSearch: Promise<Packet | null> = shouldSearchPublic
-      ? fetchPacket(`/api/v1/public/search?q=${encodeURIComponent(currentQuery)}&limit=100`, 20_000, {
+      ? fetchPacket(`/api/v1/public/search?q=${encodeURIComponent(currentQuery)}&limit=100`, 14_000, {
         signal: controller.signal,
         attempts: 2,
       }).then((nextPacket) => {
@@ -134,10 +139,6 @@ export default function SearchResultsPage() {
               ? nextPacket
               : currentPacket
           ));
-          const hasVisibleCategory = currentCategory === "all"
-            || currentCategory === "entities"
-            || packetRows(nextPacket).some((row) => inferSearchCategory(row) === currentCategory);
-          if (hasVisibleCategory) setLoading(false);
         }
         return nextPacket;
       })
@@ -148,7 +149,7 @@ export default function SearchResultsPage() {
       && (lifecycleIntent.explicitDefunctRequest || currentCategory === "all" || currentCategory === "entities" || currentCategory === "transactions");
     const entitySearch = shouldSearchEntities
       ? Promise.all(sourceVariants.map((variant) => (
-        fetchPacket(`/api/source-data/search/v1?collection=entities${variant ? `&q=${encodeURIComponent(variant)}` : ""}${lifecycleQuery}&limit=100`, 25_000, {
+        fetchPacket(`/api/source-data/search/v1?collection=entities${variant ? `&q=${encodeURIComponent(variant)}` : ""}${lifecycleQuery}&limit=100`, 14_000, {
           signal: controller.signal,
           attempts: 2,
         })
@@ -156,7 +157,6 @@ export default function SearchResultsPage() {
       const factPackets = nextPackets.filter(isFact);
       if (active) {
         setEntityPackets(factPackets);
-        if (lifecycleIntent.explicitDefunctRequest && factPackets.length) setLoading(false);
       }
       return factPackets;
     }).catch(() => {
@@ -165,26 +165,35 @@ export default function SearchResultsPage() {
     })
       : Promise.resolve([] as Packet[]);
 
-    const peopleSearch = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "people")
-      ? fetchPacket(`/api/people/search/v1?q=${encodeURIComponent(currentQuery)}&limit=100`, 25_000, {
-          signal: controller.signal,
-          attempts: 2,
-        }).then((nextPacket) => {
-          if (active && isFact(nextPacket)) {
-            setPeoplePacket(nextPacket);
-            setLoading(false);
+    const canonicalInstitution = canonicalSearchName(currentQuery);
+    const peopleVariants = canonicalInstitution ? [canonicalInstitution] : sourceVariants;
+    const shouldSearchPeople = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "people");
+    const peopleSearch = shouldSearchPeople
+      ? Promise.all(peopleVariants.map((variant) => (
+          fetchPacket(`/api/people/search/v1?q=${encodeURIComponent(variant)}&limit=100`, 14_000, {
+            signal: controller.signal,
+            attempts: 2,
+          })
+        ))).then((nextPackets) => {
+          const factPackets = nextPackets.filter(isFact);
+          if (active) {
+            setPeoplePackets(factPackets);
           }
-          return nextPacket;
-        }).catch(() => null)
-      : Promise.resolve(null);
+          return factPackets;
+        }).catch(() => {
+          if (active) setPeoplePackets([]);
+          return [] as Packet[];
+        })
+      : Promise.resolve([] as Packet[]);
 
-    const opportunitySearch = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "opportunities")
+    const shouldSearchOpportunities = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "opportunities");
+    const opportunitySearch = shouldSearchOpportunities
       ? Promise.all([
-          fetchPacket("/api/live-opportunities/v1?limit=100&page=1", 25_000, {
+          fetchPacket("/api/live-opportunities/v1?limit=100&page=1", 14_000, {
             signal: controller.signal,
             attempts: 2,
           }),
-          fetchPacket("/api/live-mandates/v1?limit=100&page=1", 25_000, {
+          fetchPacket("/api/live-mandates/v1?limit=100&page=1", 14_000, {
             signal: controller.signal,
             attempts: 2,
           }),
@@ -192,7 +201,6 @@ export default function SearchResultsPage() {
           const factPackets = nextPackets.filter(isFact);
           if (active) {
             setOpportunityPackets(factPackets);
-            if (factPackets.length) setLoading(false);
           }
           return factPackets;
         }).catch(() => {
@@ -201,31 +209,32 @@ export default function SearchResultsPage() {
         })
       : Promise.resolve([] as Packet[]);
 
-    const newsSearch = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "news")
-      ? fetchPacket("/api/source-intelligence/news/v1?limit=100", 25_000, {
-          signal: controller.signal,
-          attempts: 2,
-        }).then((nextPacket) => {
-          if (active && isFact(nextPacket)) {
-            setNewsPacket(nextPacket);
-            setLoading(false);
-          }
-          return nextPacket;
-        }).catch(() => null)
-      : Promise.resolve(null);
+    const shouldSearchNews = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "news");
+    const progressiveNewsPackets: Array<Packet | undefined> = Array.from({ length: sourceVariants.length });
+    const newsSearch = shouldSearchNews
+      ? collectFactPacketsProgressively(sourceVariants.map((variant) => (
+          fetchPacket(`/api/source-intelligence/news/v1?q=${encodeURIComponent(variant)}&limit=25&count_mode=bounded`, SEARCH_NEWS_TRANSPORT_TIMEOUT_MS, {
+            signal: controller.signal,
+            attempts: 1,
+          })
+        )), (nextPacket, index) => {
+          progressiveNewsPackets[index] = nextPacket;
+          if (active) setNewsPackets(progressiveNewsPackets.filter((packet): packet is Packet => Boolean(packet)));
+        })
+      : Promise.resolve([] as Packet[]);
 
-    const transactionSearch = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "transactions")
+    const shouldSearchTransactions = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "transactions");
+    const transactionSearch = shouldSearchTransactions
       ? Promise.all([publicSearch, entitySearch]).then(async ([publicPacket, nextEntityPackets]) => {
           if (!active) return null;
           const entityName = resolvedEntityName(currentQuery, publicPacket, nextEntityPackets);
           if (!entityName) return null;
-          const nextPacket = await fetchPacket(`/api/entity-transactions/v1?name=${encodeURIComponent(entityName)}&limit=100`, 25_000, {
+          const nextPacket = await fetchPacket(`/api/entity-transactions/v1?name=${encodeURIComponent(entityName)}&limit=100`, 14_000, {
             signal: controller.signal,
             attempts: 2,
           }).catch(() => null);
           if (active && nextPacket && isFact(nextPacket)) {
             setTransactionPacket(nextPacket);
-            setLoading(false);
           }
           return nextPacket;
         })
@@ -243,7 +252,6 @@ export default function SearchResultsPage() {
           const factPackets = nextPackets.filter(isFact);
           if (active) {
             setIntentPackets(factPackets);
-            if (factPackets.length) setLoading(false);
             const transportFailures = nextPackets
               .map(packetReason)
               .filter((reason) => /^(?:backend_fetch_|backend_http_5|frontend_fetch_)/.test(reason));
@@ -263,9 +271,34 @@ export default function SearchResultsPage() {
         })
       : Promise.resolve([] as Packet[]);
 
-    void Promise.allSettled([publicSearch, entitySearch, peopleSearch, opportunitySearch, newsSearch, transactionSearch, intentSearch]).then(() => {
-      if (active) setLoading(false);
-    });
+    void Promise.all([publicSearch, entitySearch, peopleSearch, opportunitySearch, newsSearch, transactionSearch, intentSearch])
+      .then(([publicPacket, nextEntityPackets, nextPeoplePackets, nextOpportunityPackets, nextNewsPackets, nextTransactionPacket, nextIntentPackets]) => {
+        if (!active) return;
+        const missingLanes: string[] = [];
+        const canonicalEntityVerified = hasVerifiedCanonicalSearchIdentity(
+          currentQuery,
+          nextEntityPackets.flatMap((entityPacket) => packetRows(entityPacket)),
+        );
+        if (shouldSearchPublic && (!publicPacket || !isFact(publicPacket)) && !canonicalEntityVerified) missingLanes.push("primary search");
+        if (shouldSearchEntities && nextEntityPackets.length < sourceVariants.length) missingLanes.push("entities");
+        if (shouldSearchPeople && nextPeoplePackets.length < peopleVariants.length) missingLanes.push("people");
+        if (shouldSearchOpportunities && nextOpportunityPackets.length < 2) missingLanes.push("opportunities");
+        if (shouldSearchNews && nextNewsPackets.length < sourceVariants.length) missingLanes.push("news");
+        const entityName = resolvedEntityName(currentQuery, publicPacket, nextEntityPackets);
+        if (shouldSearchTransactions && entityName && (!nextTransactionPacket || !isFact(nextTransactionPacket))) {
+          missingLanes.push("transactions");
+        }
+        if (currentIntent && nextIntentPackets.length < currentIntent.requests.length) missingLanes.push("interpreted search");
+        setSearchIssue(missingLanes.length
+          ? `Current source verification is incomplete (${[...new Set(missingLanes)].join(", ")}); results are partial.`
+          : "");
+        setLoading(false);
+      })
+      .catch(() => {
+        if (!active) return;
+        setSearchIssue("Current source verification did not complete; results are partial.");
+        setLoading(false);
+      });
     return () => {
       active = false;
       window.clearTimeout(resetTimer);
@@ -295,7 +328,7 @@ export default function SearchResultsPage() {
       .map((row) => categorizedSearchRow(row, "entities"));
     const entities = dedupeSearchRecords([
       ...intentEntities,
-      ...mergeSearchRecordsPreferPrimary(publicEntities, entityRows, relevanceQuery, "entity"),
+      ...mergeSearchRecordsPreferEnriched(publicEntities, entityRows, relevanceQuery, "entity"),
     ]);
     const matchedEntityName = transactionPacketEntityName(transactionPacket);
     const joinedTransactions = packetRows(transactionPacket).map((row) => ({
@@ -311,22 +344,22 @@ export default function SearchResultsPage() {
     // returns newest-first rows. Do not text-filter those records by the acronym again:
     // many rows carry the entity only as a backend reference plus `role=Buyer`.
     const transactions = dedupeSearchRecords([...intentTransactions, ...joinedTransactions, ...publicTransactions]);
-    const people = rankSearchRecords(dedupeSearchRecords([
-      ...packetRows(peoplePacket).map((row) => categorizedSearchRow(row, "people")),
+    const people = rankSearchRecordsAcrossVariants(dedupeSearchRecords([
+      ...peoplePackets.flatMap((peoplePacket) => packetRows(peoplePacket)).map((row) => categorizedSearchRow(row, "people")),
       ...publicRows.filter((row) => row.__searchCategory === "people"),
-    ]), query, "person");
+    ]), relevanceQuery, "person");
     const keywordOpportunities = rankSearchRecords(dedupeSearchRecords([
       ...opportunityPackets.flatMap((opportunityPacket) => packetRows(opportunityPacket)).map((row) => categorizedSearchRow(row, "opportunities")),
       ...publicRows.filter((row) => row.__searchCategory === "opportunities"),
     ]), query, "rfp");
     const opportunities = dedupeSearchRecords([...intentOpportunities, ...keywordOpportunities]);
-    const news = rankSearchRecords(dedupeSearchRecords([
-      ...packetRows(newsPacket).map((row) => categorizedSearchRow(row, "news")),
+    const news = rankSearchRecordsAcrossVariants(dedupeSearchRecords([
+      ...newsPackets.flatMap((newsPacket) => packetRows(newsPacket)).map((row) => categorizedSearchRow(row, "news")),
       ...publicRows.filter((row) => row.__searchCategory === "news"),
-    ]), query, "news");
+    ]), relevanceQuery, "news");
 
     return dedupeSearchRecords([...entities, ...transactions, ...opportunities, ...news, ...people]);
-  }, [category, entityPackets, intentPackets, newsPacket, opportunityPackets, packet, peoplePacket, query, transactionPacket]);
+  }, [category, entityPackets, intentPackets, newsPackets, opportunityPackets, packet, peoplePackets, query, transactionPacket]);
   const resultRows = useMemo(() => (
     category === "all"
       ? allResultRows
@@ -366,6 +399,19 @@ export default function SearchResultsPage() {
   const unfilteredCount = resultRows.length;
   const lifecycleIntent = entityLifecycleIntent(query);
   const queryShort = isShortTextQuery(query);
+  const sourceFreshness = packetFreshness([
+    packet,
+    transactionPacket,
+    ...entityPackets,
+    ...peoplePackets,
+    ...opportunityPackets,
+    ...newsPackets,
+    ...intentPackets,
+  ]);
+  const sourceFreshnessBudgetMs = interpretedIntent?.id === "active-investors" ? 90_000 : 30_000;
+  const sourceFreshnessCurrent = sourceFreshness.count > 0
+    && sourceFreshness.spanMs <= sourceFreshnessBudgetMs
+    && Date.parse(sourceFreshness.newest) >= searchStartedAt - 5_000;
   const showingText = isTextQueryReady(query)
     ? `Showing ${visibleRows.length.toLocaleString("en-US")} of ${count.toLocaleString("en-US")}${activeFilterCount ? ` (${unfilteredCount.toLocaleString("en-US")} before filters)` : ""}`
     : queryShort ? `Enter at least ${MIN_TEXT_QUERY_CHARACTERS} characters` : "Awaiting search";
@@ -386,9 +432,9 @@ export default function SearchResultsPage() {
     setPacket(null);
     setEntityPackets([]);
     setTransactionPacket(null);
-    setPeoplePacket(null);
+    setPeoplePackets([]);
     setOpportunityPackets([]);
-    setNewsPacket(null);
+    setNewsPackets([]);
     setIntentPackets([]);
     setSearchFilters({ ...EMPTY_SEARCH_FILTERS });
     setLoading(isTextQueryReady(query));
@@ -406,7 +452,9 @@ export default function SearchResultsPage() {
       <main
         className="mx-auto grid w-full max-w-[1188px] gap-4 p-4 sm:p-[20px_22px_30px]"
         data-search-results-query={query.trim().toLowerCase()}
-        data-search-results-ready={isTextQueryReady(query) && !loading ? "true" : "false"}
+        data-search-results-ready={isTextQueryReady(query) && !loading && !searchIssue && sourceFreshnessCurrent ? "true" : "false"}
+        data-search-results-state={!isTextQueryReady(query) ? "idle" : loading ? "loading" : searchIssue ? "partial" : sourceFreshnessCurrent ? "ready" : "stale"}
+        data-search-results-issue={searchIssue || undefined}
       >
         <section className="rounded border border-[#DCE3EA] bg-white p-4" data-search-category={category}>
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -418,9 +466,22 @@ export default function SearchResultsPage() {
                   <span className="font-semibold">Interpreted as:</span> {interpretedIntent.explanation}
                 </p>
               ) : null}
+              {sourceFreshness.newest ? (
+                <p
+                  className="m-0 mt-2 text-[11px] text-[#52687D]"
+                  data-testid="search-source-freshness"
+                  data-source-generated-at={sourceFreshness.newest}
+                  data-source-oldest-generated-at={sourceFreshness.oldest}
+                  data-source-packet-count={sourceFreshness.count}
+                  data-source-freshness-current={sourceFreshnessCurrent ? "true" : "false"}
+                  data-source-freshness-span-ms={sourceFreshness.spanMs}
+                >
+                  Sources checked {formatSourceCheckTime(sourceFreshness.oldest)}{sourceFreshness.oldest !== sourceFreshness.newest ? ` through ${formatSourceCheckTime(sourceFreshness.newest)}` : ""}. Results remain bound to the current query.
+                </p>
+              ) : null}
             </div>
             <div className="rounded border border-[#DCE3EA] px-3 py-2 text-[12px] text-[#41566B]" data-testid="search-result-status">
-              <span className="font-semibold">{searchCategoryLabel(category)}</span> · {loading ? "Loading" : showingText}
+              <span className="font-semibold">{searchCategoryLabel(category)}</span> · {loading ? (allResultRows.length ? `Refreshing sources · ${showingText}` : "Loading") : showingText}
             </div>
           </div>
         </section>
@@ -573,6 +634,48 @@ function packetRows(packet: Packet | null | undefined): Record<string, unknown>[
   if (results.length) return results;
   const dataRows = rows(packet, "rows");
   return dataRows.length ? dataRows : rows(packet);
+}
+
+function rankSearchRecordsAcrossVariants<T extends Record<string, unknown>>(
+  sourceRows: T[],
+  query: string,
+  kind: "person" | "news",
+): T[] {
+  const variants = businessSearchQueryVariants(query);
+  return dedupeSearchRecords(variants.flatMap((variant) => rankSearchRecords(sourceRows, variant, kind)));
+}
+
+function packetFreshness(packets: Array<Packet | null | undefined>): { oldest: string; newest: string; count: number; spanMs: number } {
+  const timestamps = new Set<string>();
+  for (const packet of packets) {
+    if (!packet || !isFact(packet)) continue;
+    addPacketTimestamp(timestamps, packet.generated_at);
+    if (!packet.data || typeof packet.data !== "object" || Array.isArray(packet.data)) continue;
+    const sourceFreshness = (packet.data as Record<string, unknown>).source_freshness;
+    if (!sourceFreshness || typeof sourceFreshness !== "object" || Array.isArray(sourceFreshness)) continue;
+    const generatedByLane = (sourceFreshness as Record<string, unknown>).packet_generated_at;
+    if (!generatedByLane || typeof generatedByLane !== "object" || Array.isArray(generatedByLane)) continue;
+    for (const laneTimestamps of Object.values(generatedByLane as Record<string, unknown>)) {
+      if (!Array.isArray(laneTimestamps)) continue;
+      for (const generatedAt of laneTimestamps) addPacketTimestamp(timestamps, generatedAt);
+    }
+  }
+  const ordered = [...timestamps].sort((left, right) => Date.parse(left) - Date.parse(right));
+  const oldest = ordered[0] || "";
+  const newest = ordered.at(-1) || "";
+  const spanMs = oldest && newest ? Math.max(0, Date.parse(newest) - Date.parse(oldest)) : Number.POSITIVE_INFINITY;
+  return { oldest, newest, count: ordered.length, spanMs };
+}
+
+function addPacketTimestamp(timestamps: Set<string>, value: unknown): void {
+  const generatedAt = text(value, "").trim();
+  if (generatedAt && Number.isFinite(Date.parse(generatedAt))) timestamps.add(generatedAt);
+}
+
+function formatSourceCheckTime(generatedAt: string): string {
+  const stamp = Date.parse(generatedAt);
+  if (!Number.isFinite(stamp)) return generatedAt;
+  return new Date(stamp).toISOString().replace("T", " ").replace(/\.\d{3}Z$/, " UTC");
 }
 
 function resolvedEntityName(query: string, publicPacket: Packet | null, entityPackets: Packet[]): string {

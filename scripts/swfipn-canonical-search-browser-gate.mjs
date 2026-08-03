@@ -12,8 +12,34 @@ const receiptPath = path.join(outputDir, "swfipn-canonical-search-browser-gate-l
 const entityBudgetMs = 5_000;
 const liveEntityBudgetMs = 8_000;
 const newsBudgetMs = 8_000;
+const includeMobile = /^(1|true|yes)$/i.test(String(process.env.SWFIPN_INCLUDE_MOBILE || ""));
 const resultCategories = ["Entities", "RFPs & Opportunities", "Transactions", "News & Articles", "People"];
 const requiredPopulatedCategories = ["Entities", "Transactions", "News & Articles", "People"];
+const requiredSearchPaths = [
+  "/api/v1/public/search",
+  "/api/source-data/search/v1",
+  "/api/source-intelligence/news/v1",
+  "/api/people/search/v1",
+  "/api/entity-transactions/v1",
+  "/api/live-opportunities/v1",
+  "/api/live-mandates/v1",
+];
+const modalForegroundSearchPaths = [
+  "/api/v1/public/search",
+  "/api/source-data/search/v1",
+  "/api/source-intelligence/news/v1",
+  "/api/people/search/v1",
+  "/api/entity-transactions/v1",
+];
+const fullPageRequiredLimits = {
+  "/api/v1/public/search": 100,
+  "/api/source-data/search/v1": 100,
+  "/api/source-intelligence/news/v1": 25,
+  "/api/people/search/v1": 100,
+  "/api/entity-transactions/v1": 100,
+  "/api/live-opportunities/v1": 100,
+  "/api/live-mandates/v1": 100,
+};
 
 function candidateIdentity() {
   let gitSha = String(process.env.SWFIPN_CANDIDATE_GIT_SHA || "").trim();
@@ -133,23 +159,29 @@ async function orderedResultSet(page) {
   };
 }
 
-async function waitForSearchLanes(page, networkTrace, timeout = 30_000) {
-  const requiredPaths = [
-    "/api/v1/public/search",
-    "/api/source-data/search/v1",
-    "/api/source-intelligence/news/v1",
-    "/api/people/search/v1",
-    "/api/entity-transactions/v1",
-  ];
+function matchesRequiredRequest(observed, required, requiredLimit) {
+  if (!observed.startsWith(required)) return false;
+  const expectedLimit = requiredLimit && typeof requiredLimit === "object"
+    ? requiredLimit[required]
+    : requiredLimit;
+  if (!expectedLimit) return true;
+  try {
+    return new URL(observed, "https://candidate.invalid").searchParams.get("limit") === String(expectedLimit);
+  } catch {
+    return false;
+  }
+}
+
+async function waitForSearchLanes(page, networkTrace, timeout = 30_000, requiredPaths = requiredSearchPaths, requiredLimit = null) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     const responsePaths = networkTrace
       .filter((event) => event.event === "response" && event.status >= 200 && event.status < 300)
       .map((event) => event.path);
-    const missing = requiredPaths.filter((required) => !responsePaths.some((observed) => observed.startsWith(required)));
+    const missing = requiredPaths.filter((required) => !responsePaths.some((observed) => matchesRequiredRequest(observed, required, requiredLimit)));
     const searching = await page.getByText("Searching this category…", { exact: true }).count();
     if (!missing.length && searching === 0) {
-      return { settled: true, required_paths: requiredPaths, missing_paths: [] };
+      return { settled: true, required_paths: requiredPaths, required_limit: requiredLimit, missing_paths: [] };
     }
     await page.waitForTimeout(100);
   }
@@ -159,15 +191,23 @@ async function waitForSearchLanes(page, networkTrace, timeout = 30_000) {
   return {
     settled: false,
     required_paths: requiredPaths,
-    missing_paths: requiredPaths.filter((required) => !responsePaths.some((observed) => observed.startsWith(required))),
+    required_limit: requiredLimit,
+    missing_paths: requiredPaths.filter((required) => !responsePaths.some((observed) => matchesRequiredRequest(observed, required, requiredLimit))),
   };
 }
 
-async function runQuery(browser, origin, testCase) {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+async function runQuery(browser, origin, testCase, options = {}) {
+  const mobile = options.mobile === true;
+  const checkId = String(options.id || testCase.id);
+  const page = await browser.newPage({
+    viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1000 },
+    deviceScaleFactor: mobile ? 2 : 1,
+    hasTouch: mobile,
+    isMobile: mobile,
+  });
   const startedAt = Date.now();
   const networkTrace = [];
-  const relevantPath = (value) => /\/api\/(?:v1\/public\/search|source-data\/search\/v1|source-intelligence\/news\/v1|people\/search\/v1|entity-transactions\/v1)/.test(value);
+  const relevantPath = (value) => /\/api\/(?:v1\/public\/search|source-data\/search\/v1|source-intelligence\/news\/v1|people\/search\/v1|entity-transactions\/v1|live-opportunities\/v1|live-mandates\/v1)/.test(value);
   page.on("response", (response) => {
     const url = new URL(response.url());
     if (!relevantPath(url.pathname)) return;
@@ -177,6 +217,7 @@ async function runQuery(browser, origin, testCase) {
       at_ms: Date.now() - startedAt,
       path: `${url.pathname}${url.search}`,
       status: response.status(),
+      cache_control: headers["cache-control"] || null,
       proxy_cache: headers["x-swfipn-proxy-cache"] || null,
       search_render: headers["x-swfipn-search-render"] || null,
     });
@@ -228,7 +269,9 @@ async function runQuery(browser, origin, testCase) {
       : "";
     const sourceLinkMatchesLiveResult = Boolean(canonicalSourceHref)
       && normalizeComparableUrl(canonicalSourceHref) === normalizeComparableUrl(liveEntityHref);
-    const laneSettlement = await waitForSearchLanes(page, networkTrace);
+    // The modal proves only request lanes owned by the active query. Requiring
+    // dashboard opportunity feeds here would reward background contention.
+    const laneSettlement = await waitForSearchLanes(page, networkTrace, 30_000, modalForegroundSearchPaths);
     const resultSet = await orderedResultSet(page);
     const resultSetComplete = requiredPopulatedCategories.every((category) => resultSet.counts[category] > 0);
     const resultSourcesComplete = Object.values(resultSet.categories)
@@ -236,10 +279,112 @@ async function runQuery(browser, origin, testCase) {
       .every((row) => Boolean(row.source_identity));
     const body = await page.locator("body").innerText();
     const peopleSectionText = await peopleSection.innerText().catch(() => "");
-    const screenshotPath = path.join(outputDir, `swfipn-canonical-search-${testCase.id}-latest.png`);
+    const modalLayout = await page.evaluate(() => ({
+      viewport_width: document.documentElement.clientWidth,
+      document_width: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth),
+    }));
+    const screenshotPath = path.join(outputDir, `swfipn-canonical-search-${checkId}-latest.png`);
     await page.screenshot({ path: screenshotPath, fullPage: true });
+    const modalNetworkTrace = [...networkTrace];
+    const modalPublicSearchNotSharedCacheable = modalNetworkTrace
+      .filter((event) => event.path?.startsWith("/api/v1/public/search"))
+      .every((event) => String(event.cache_control || "").startsWith("no-store"));
+    networkTrace.length = 0;
+    const fullPageStartedAt = Date.now();
+    await Promise.all([
+      page.waitForURL(/\/search\/?(?:\?|$)/, { timeout: 10_000 }),
+      page.getByRole("link", { name: "View all results", exact: true }).click(),
+    ]);
+    const searchResultsRoot = page.locator("main[data-search-results-state]");
+    const fullPageSettlement = await waitForSearchLanes(
+      page,
+      networkTrace,
+      30_000,
+      requiredSearchPaths,
+      fullPageRequiredLimits,
+    );
+    // Waiting concurrently can match the initial idle render before the query
+    // effect starts. First prove every required response, then observe the
+    // terminal UI state produced by those responses.
+    await page.locator('main[data-search-results-state]:not([data-search-results-state="loading"])')
+      .waitFor({ state: "attached", timeout: 5_000 });
+    const searchResultsState = await searchResultsRoot.getAttribute("data-search-results-state");
+    const searchIssue = await searchResultsRoot.getAttribute("data-search-results-issue");
+    const freshnessReceipt = page.getByTestId("search-source-freshness");
+    const freshnessVisible = await freshnessReceipt.isVisible().catch(() => false);
+    const sourceGeneratedAt = freshnessVisible
+      ? await freshnessReceipt.getAttribute("data-source-generated-at")
+      : null;
+    const sourceOldestGeneratedAt = freshnessVisible
+      ? await freshnessReceipt.getAttribute("data-source-oldest-generated-at")
+      : null;
+    const sourcePacketCount = freshnessVisible
+      ? Number(await freshnessReceipt.getAttribute("data-source-packet-count") || 0)
+      : 0;
+    const sourceFreshnessCurrent = freshnessVisible
+      ? await freshnessReceipt.getAttribute("data-source-freshness-current") === "true"
+      : false;
+    const sourceFreshnessSpanMs = freshnessVisible
+      ? Number(await freshnessReceipt.getAttribute("data-source-freshness-span-ms") || Number.NaN)
+      : Number.NaN;
+    const expectedPerson = peopleSectionText.split("\n").filter(Boolean)[1] || "__missing_person__";
+    const detailedPeopleResult = await timedVisibility(
+      page.getByText(expectedPerson, { exact: true }).first(),
+      fullPageStartedAt,
+      5_000,
+    );
+    const detailedBody = await page.locator("body").innerText();
+    const detailedEntityLink = page.getByRole("link", { name: testCase.entity, exact: true }).first();
+    const detailedEntityPresent = await detailedEntityLink.isVisible().catch(() => false);
+    const detailedEntityRow = detailedEntityPresent
+      ? await detailedEntityLink.locator("xpath=ancestor::tr[1]").innerText().catch(() => "")
+      : "";
+    const detailedNewsPresent = detailedBody.includes(testCase.news);
+    const detailedPeoplePresent = detailedPeopleResult.present;
+    const detailedAumPass = !testCase.aumDisplay || detailedEntityRow.includes(testCase.aumDisplay);
+    const detailedForbiddenAbsent = testCase.forbidden.every((value) => !detailedBody.includes(value));
+    const detailedNewsSearchRequests = networkTrace.filter((event) => {
+      if (!event.path?.startsWith("/api/source-intelligence/news/v1")) return false;
+      return new URL(event.path, "https://candidate.invalid").searchParams.has("q");
+    });
+    const detailedNewsQueryBound = detailedNewsSearchRequests.length > 0
+      && detailedNewsSearchRequests.every((event) => {
+        const params = new URL(event.path, "https://candidate.invalid").searchParams;
+        return Boolean(params.get("q"))
+          && params.get("limit") === "25"
+          && params.get("count_mode") === "bounded";
+      });
+    const detailedPublicSearchNotSharedCacheable = networkTrace
+      .filter((event) => event.path?.startsWith("/api/v1/public/search"))
+      .every((event) => String(event.cache_control || "").startsWith("no-store"));
+    const detailedLayout = await page.evaluate(() => {
+      const root = document.querySelector("main[data-search-results-state]");
+      const table = root?.querySelector("table");
+      const tableScroller = table?.parentElement;
+      const rootRect = root?.getBoundingClientRect();
+      return {
+        viewport_width: document.documentElement.clientWidth,
+        document_width: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth),
+        root_within_viewport: Boolean(rootRect)
+          && (rootRect?.left || 0) >= -1
+          && (rootRect?.right || 0) <= document.documentElement.clientWidth + 1,
+        table_scroller_overflow_x: tableScroller ? getComputedStyle(tableScroller).overflowX : null,
+        table_scroll_contained: Boolean(table && tableScroller)
+          && (table?.scrollWidth || 0) >= (tableScroller?.clientWidth || 0)
+          && (tableScroller?.scrollWidth || 0) >= (tableScroller?.clientWidth || 0),
+      };
+    });
+    const mobileLayoutPass = !mobile || (
+      modalLayout.document_width <= modalLayout.viewport_width + 2
+      && detailedLayout.document_width <= detailedLayout.viewport_width + 2
+      && detailedLayout.root_within_viewport
+      && detailedLayout.table_scroller_overflow_x === "auto"
+      && detailedLayout.table_scroll_contained
+    );
+    const detailedScreenshotPath = path.join(outputDir, `swfipn-canonical-search-${checkId}-view-all-latest.png`);
+    await page.screenshot({ path: detailedScreenshotPath, fullPage: true });
     return {
-      id: testCase.id,
+      id: checkId,
       pass: canonicalIdentity.present
         && liveEntityPresent
         && newsResult.present
@@ -252,9 +397,28 @@ async function runQuery(browser, origin, testCase) {
         && liveEntityMs <= liveEntityBudgetMs
         && newsMs <= newsBudgetMs
         && sourceLinkMatchesLiveResult
+        && modalPublicSearchNotSharedCacheable
         && laneSettlement.settled
         && resultSetComplete
-        && resultSourcesComplete,
+        && resultSourcesComplete
+        && fullPageSettlement.settled
+        && searchResultsState === "ready"
+        && freshnessVisible
+        && Boolean(sourceGeneratedAt)
+        && Boolean(sourceOldestGeneratedAt)
+        && sourcePacketCount > 0
+        && sourceFreshnessCurrent
+        && Number.isFinite(sourceFreshnessSpanMs)
+        && detailedEntityPresent
+        && detailedNewsPresent
+        && detailedPeoplePresent
+        && detailedAumPass
+        && detailedForbiddenAbsent
+        && detailedNewsQueryBound
+        && detailedPublicSearchNotSharedCacheable
+        && mobileLayoutPass,
+      viewport_mode: mobile ? "mobile_emulation" : "desktop",
+      modal_layout: modalLayout,
       entity_ms: entityMs,
       live_entity_ms: liveEntityMs,
       news_ms: newsMs,
@@ -268,6 +432,7 @@ async function runQuery(browser, origin, testCase) {
       people_result_present: peopleResult.present,
       people_section_text: peopleSectionText,
       source_link_matches_live_result: sourceLinkMatchesLiveResult,
+      public_search_not_shared_cacheable: modalPublicSearchNotSharedCacheable,
       search_lanes_settled: laneSettlement.settled,
       search_lane_settlement: laneSettlement,
       deterministic_result_set: resultSet.categories,
@@ -275,12 +440,55 @@ async function runQuery(browser, origin, testCase) {
       deterministic_result_fingerprint_sha256: resultSet.fingerprint_sha256,
       deterministic_result_set_complete: resultSetComplete,
       deterministic_result_sources_complete: resultSourcesComplete,
-      network_trace: networkTrace.sort((left, right) => left.at_ms - right.at_ms),
+      network_trace: modalNetworkTrace.sort((left, right) => left.at_ms - right.at_ms),
+      detailed_results: {
+        elapsed_ms: Date.now() - fullPageStartedAt,
+        state: searchResultsState,
+        issue: searchIssue || null,
+        search_lanes_settled: fullPageSettlement.settled,
+        search_lane_settlement: fullPageSettlement,
+        source_freshness_visible: freshnessVisible,
+        source_generated_at: sourceGeneratedAt,
+        source_oldest_generated_at: sourceOldestGeneratedAt,
+        source_packet_count: sourcePacketCount,
+        source_freshness_current: sourceFreshnessCurrent,
+        source_freshness_span_ms: sourceFreshnessSpanMs,
+        entity_present: detailedEntityPresent,
+        entity_row: detailedEntityRow,
+        news_present: detailedNewsPresent,
+        people_present: detailedPeoplePresent,
+        expected_aum: testCase.aumDisplay || null,
+        aum_pass: detailedAumPass,
+        forbidden_absent: detailedForbiddenAbsent,
+        news_requests_query_bound: detailedNewsQueryBound,
+        news_search_request_paths: detailedNewsSearchRequests.map((event) => event.path),
+        public_search_not_shared_cacheable: detailedPublicSearchNotSharedCacheable,
+        layout: detailedLayout,
+        mobile_layout_pass: mobileLayoutPass,
+        network_trace: networkTrace.sort((left, right) => left.at_ms - right.at_ms),
+        screenshot: detailedScreenshotPath,
+        screenshot_sha256: fileSha256(detailedScreenshotPath),
+      },
       entity: testCase.entity,
       news: testCase.news,
       forbidden_absent: testCase.forbidden.filter((value) => !body.includes(value)),
       screenshot: screenshotPath,
       screenshot_sha256: fileSha256(screenshotPath),
+    };
+  } catch (error) {
+    const screenshotPath = path.join(outputDir, `swfipn-canonical-search-${checkId}-failure-latest.png`);
+    await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {});
+    const searchResultsRoot = page.locator("main[data-search-results-state]");
+    return {
+      id: checkId,
+      viewport_mode: mobile ? "mobile_emulation" : "desktop",
+      pass: false,
+      error: error instanceof Error ? error.message : String(error),
+      search_results_state: await searchResultsRoot.getAttribute("data-search-results-state").catch(() => null),
+      search_issue: await searchResultsRoot.getAttribute("data-search-results-issue").catch(() => null),
+      network_trace: networkTrace.sort((left, right) => left.at_ms - right.at_ms),
+      screenshot: fs.existsSync(screenshotPath) ? screenshotPath : null,
+      screenshot_sha256: fs.existsSync(screenshotPath) ? fileSha256(screenshotPath) : null,
     };
   } finally {
     await page.close();
@@ -335,6 +543,10 @@ async function main() {
   const sourceBackendOrigin = new URL(
     String(process.env.SWFIPN_BACKEND_ORIGIN || (liveTarget ? configuredOrigin : "https://dashboard.swfi.com")),
   ).origin;
+  const sourceBackendCandidateGitSha = String(process.env.SWFIPN_SOURCE_BACKEND_GIT_SHA || "").trim();
+  const sourceBackendCandidateGitDirty = /^(1|true|yes)$/i.test(
+    String(process.env.SWFIPN_SOURCE_BACKEND_GIT_DIRTY || ""),
+  );
   let child = null;
   let origin;
   if (configuredOrigin) {
@@ -374,11 +586,19 @@ async function main() {
     await firstPaintPage.close();
 
     const cases = [
-      { id: "adia", query: "ADIA", entity: "Abu Dhabi Investment Authority", news: "ADIA and Mubadala Back EQT", forbidden: ["Kapadia", "Nadia"] },
+      { id: "adia", query: "ADIA", entity: "Abu Dhabi Investment Authority", news: "ADIA and Mubadala Back EQT", aumDisplay: "$1.13T", forbidden: ["Kapadia", "Nadia"] },
       { id: "hkic", query: "Hong Kong Investment Corporation", entity: "Hong Kong Investment Corporation", news: "HKIC Supports Government Budget", forbidden: ["HealthKick", "MaRS HealthKick"] },
     ];
     const checks = [];
     for (const testCase of cases) checks.push(await runQuery(browser, origin, testCase));
+    if (includeMobile) {
+      for (const testCase of cases) {
+        checks.push(await runQuery(browser, origin, testCase, {
+          id: `${testCase.id}_mobile`,
+          mobile: true,
+        }));
+      }
+    }
     checks.push(await runRapidReplacement(browser, origin));
     checks.unshift({ id: "top_aum_first_paint", pass: topAumFirstPaint, assertions: firstPaintAssertions });
     const testedReleaseGitSha = liveTarget ? String(process.env.SWFIPN_RELEASE_GIT_SHA || "").trim() : "";
@@ -386,8 +606,20 @@ async function main() {
     const releaseIdentityPinned = !liveTarget
       || (/^[a-f0-9]{40}$/i.test(testedReleaseGitSha) && Boolean(testedReleaseAssetVersion));
     const candidate = liveTarget ? null : candidateIdentity();
+    const sourceBackendCandidate = liveTarget ? null : {
+      git_sha: sourceBackendCandidateGitSha || null,
+      git_dirty: sourceBackendCandidateGitDirty,
+    };
+    const candidateIdentityPinned = liveTarget || Boolean(
+      candidate
+      && /^[a-f0-9]{40}$/i.test(candidate.git_sha)
+      && !candidate.git_dirty
+      && candidate.asset_version
+      && /^[a-f0-9]{40}$/i.test(sourceBackendCandidateGitSha)
+      && !sourceBackendCandidateGitDirty
+    );
     const receipt = {
-      schema_version: "swfipn.canonical_search_browser_gate.v1",
+      schema_version: "swfipn.canonical_search_browser_gate.v2",
       generated_at: new Date().toISOString(),
       evidence_class: liveTarget
         ? "LIVE_TARGET_SURFACE_BEHAVIOR_NOT_GLOBAL_ACCEPTANCE"
@@ -399,17 +631,27 @@ async function main() {
       tested_release_asset_version: testedReleaseAssetVersion || null,
       release_identity_pinned: releaseIdentityPinned,
       candidate_identity: candidate,
-      status: checks.every((check) => check.pass) && releaseIdentityPinned ? "pass" : "fail",
+      source_backend_candidate_identity: sourceBackendCandidate,
+      candidate_identity_pinned: candidateIdentityPinned,
+      status: checks.every((check) => check.pass) && releaseIdentityPinned && candidateIdentityPinned ? "pass" : "fail",
       checked_scope: [
         "top_aum_first_paint",
         "adia_entity_news_people_semantics",
         "hkic_entity_news_people_semantics",
+        "adia_view_all_enriched_aum_and_query_bound_news",
+        "hkic_view_all_query_bound_news_and_people",
+        "detailed_search_source_freshness_receipt",
+        "public_search_no_shared_stale_cache",
+        ...(includeMobile ? ["mobile_emulated_adia_hkic_search_semantics_and_layout"] : []),
         ...(liveTarget ? ["live_target_browser_behavior"] : []),
       ],
       unchecked_scope: liveTarget
-        ? ["stakeholder_acceptance", "Mongo_record_parity", "global_release_acceptance"]
-        : ["deployed_production", "stakeholder_acceptance", "Mongo_record_parity"],
-      bad_news: releaseIdentityPinned ? [] : ["live_target_release_identity_unpinned"],
+        ? ["stakeholder_acceptance", "Mongo_record_parity", "global_release_acceptance", ...(includeMobile ? ["physical_mobile_device"] : [])]
+        : ["deployed_production", "stakeholder_acceptance", "Mongo_record_parity", ...(includeMobile ? ["physical_mobile_device"] : [])],
+      bad_news: [
+        ...(!releaseIdentityPinned ? ["live_target_release_identity_unpinned"] : []),
+        ...(!candidateIdentityPinned ? ["candidate_or_source_backend_identity_unpinned"] : []),
+      ],
       checks,
     };
     fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);

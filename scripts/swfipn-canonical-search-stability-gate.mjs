@@ -17,6 +17,8 @@ function sameJson(left, right) {
 }
 
 function runSample(index) {
+  const startedAt = new Date();
+  const startedAtMs = startedAt.getTime();
   const result = spawnSync(process.execPath, [path.join(root, "scripts", "swfipn-canonical-search-browser-gate.mjs")], {
     cwd: root,
     env: process.env,
@@ -29,6 +31,12 @@ function runSample(index) {
   try {
     raw = fs.readFileSync(sampleReceipt, "utf8");
     receipt = JSON.parse(raw);
+    const generatedAtMs = Date.parse(String(receipt?.generated_at || ""));
+    const receiptMtimeMs = fs.statSync(sampleReceipt).mtimeMs;
+    if (!Number.isFinite(generatedAtMs) || generatedAtMs < startedAtMs || receiptMtimeMs < startedAtMs) {
+      receipt = null;
+      raw = "";
+    }
   } catch {
     // Missing or malformed sample evidence is an explicit failed sample.
   }
@@ -40,6 +48,7 @@ function runSample(index) {
     process_exit_code: result.status,
     process_signal: result.signal || null,
     process_error: result.error?.message || null,
+    started_at: startedAt.toISOString(),
     process_stdout: String(result.stdout || "").slice(-4_000),
     process_stderr: String(result.stderr || "").slice(-4_000),
     generated_at: receipt?.generated_at || null,

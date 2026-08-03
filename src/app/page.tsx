@@ -6,6 +6,7 @@ import Image from "next/image";
 import Link from "next/link";
 import type { Packet } from "@/lib/sourcePackets";
 import {
+  collectFactPacketsProgressively,
   count,
   fetchPacket,
   isFact,
@@ -57,7 +58,7 @@ function worldFlowPairs(transactionRows: Record<string, unknown>[]): WorldFlowPa
   return [...pairs.values()].sort((a, b) => b.deals - a.deals);
 }
 import { useDashboardSessionDisplayName } from "@/lib/dashboardAuth";
-import { businessSearchQueryVariants, canonicalSearchName, canonicalSearchSourceUrl, dedupeSearchRecords, rankSearchRecords, searchRelevanceScore as businessSearchRelevanceScore, type SearchKind } from "@/lib/searchRelevance";
+import { businessSearchQueryVariants, canonicalSearchIdentity, canonicalSearchName, canonicalSearchSourceUrl, dedupeSearchRecords, rankSearchRecords, searchRelevanceScore as businessSearchRelevanceScore, type SearchKind } from "@/lib/searchRelevance";
 import { filterSmartSearchIntentRows, smartSearchIntentForQuery, type SmartSearchIntent } from "@/lib/smartSearchIntent";
 import { isShortTextQuery, isTextQueryReady, MIN_TEXT_QUERY_CHARACTERS } from "@/lib/textQueryPolicy";
 
@@ -82,6 +83,7 @@ const NEWS_REFRESH_INTERVAL_MS = 5 * 60_000;
 const NEWS_REFRESH_MIN_GAP_MS = 60_000;
 const NEWS_REFRESH_EVENT = "swfi:refresh-news";
 const SEARCH_PREFETCH_CACHE_PREFIX = "swfipn.search.prefetch.v1:";
+const SEARCH_NEWS_TRANSPORT_TIMEOUT_MS = 15_000;
 const HOME_SNAPSHOT_FRESH_AGE_MS = 6 * 60 * 60_000;
 // The snapshot is a visibly dated first-paint fallback only. Live fact packets
 // immediately revalidate it after hydration, so a source outage does not turn
@@ -204,6 +206,13 @@ export default function DashboardPage() {
 
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
+    if (searchOpen) {
+      return () => {
+        active = false;
+        controller.abort();
+      };
+    }
     const snapshot = freshHomeSnapshot();
     const snapshotTimer = window.setTimeout(() => {
       if (active && Object.keys(snapshot).length) {
@@ -217,24 +226,35 @@ export default function DashboardPage() {
           ...current,
           [key]: shouldReplacePacket(current[key], packet) ? packet : current[key],
         }));
-      });
+      }, controller.signal);
     }, Object.keys(snapshot).length ? 8_000 : 0);
     return () => {
       active = false;
+      controller.abort();
       window.clearTimeout(snapshotTimer);
       window.clearTimeout(refreshTimer);
     };
-  }, []);
+  }, [searchOpen]);
 
   useEffect(() => {
     let active = true;
     let refreshing = false;
     let lastRefreshAt = Date.now();
+    const controller = new AbortController();
+    if (searchOpen) {
+      return () => {
+        active = false;
+        controller.abort();
+      };
+    }
     const refreshNews = async (force = false) => {
       if (refreshing || (!force && Date.now() - lastRefreshAt < NEWS_REFRESH_MIN_GAP_MS)) return;
       refreshing = true;
       try {
-        const packet = await fetchPacket(ENDPOINTS.news, 30_000, { attempts: 2 });
+        const packet = await fetchPacket(ENDPOINTS.news, 30_000, {
+          attempts: 2,
+          signal: controller.signal,
+        });
         if (!active) return;
         setPackets((current) => ({
           ...current,
@@ -254,11 +274,12 @@ export default function DashboardPage() {
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       active = false;
+      controller.abort();
       window.clearInterval(interval);
       window.removeEventListener(NEWS_REFRESH_EVENT, onRefreshNews);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, []);
+  }, [searchOpen]);
 
   useEffect(() => {
     function onKeyDown(event: globalThis.KeyboardEvent) {
@@ -297,11 +318,13 @@ export default function DashboardPage() {
   // Two-layer truth (2026-07-06): the backend serves swfi.com-parity order
   // (source-of-truth mirror, gate-verified row-for-row); the DASHBOARD
   // re-ranks on the verified-USD value so cross-currency magnitudes never
-  // masquerade as a ranking (doctrine 2026-07-05). Rows without a USD value
-  // keep their relative order at the tail.
+  // masquerade as a ranking (doctrine 2026-07-05). Rows without complete USD
+  // lineage are excluded from this ranked surface.
   const topAumRows = useMemo(() => {
     const served = factRows(packets.top20).slice(0, 25);
-    return [...served].sort((a, b) => (numberValue(b.aum_usd) || 0) - (numberValue(a.aum_usd) || 0));
+    return served
+      .filter((row) => hasProvenUsdAum(row))
+      .sort((a, b) => (numberValue(b.aum_usd) || 0) - (numberValue(a.aum_usd) || 0));
   }, [packets.top20]);
   const dashboardEntitySearchRows = useMemo(() => dedupeSearchRecords([...topAumRows, ...entityRows]), [entityRows, topAumRows]);
   const dashboardReady = useMemo(() => {
@@ -331,6 +354,7 @@ export default function DashboardPage() {
   ]), [dashboardEntitySearchRows, searchEntityPackets]);
   const liveSearchGroups = useMemo(() => brdPublicSearchGroups(searchQuery, searchPacket, searchEntityPackets), [searchQuery, searchPacket, searchEntityPackets]);
   const liveNewsSearchGroups = useMemo(() => newsSearchGroups(searchNewsPackets, searchQuery), [searchNewsPackets, searchQuery]);
+  const canonicalIdentityGroups = useMemo(() => canonicalIdentitySearchGroups(searchQuery), [searchQuery]);
   const searchIntent = useMemo(
     () => isTextQueryReady(searchQuery) ? smartSearchIntentForQuery(searchQuery) : null,
     [searchQuery],
@@ -340,8 +364,8 @@ export default function DashboardPage() {
     [searchIntent, searchIntentPackets],
   );
   const baseSearchGroups = useMemo(
-    () => mergeSearchGroups(intentSearchGroups, mergeSearchGroups(liveSearchGroups, dashboardSearchGroups)),
-    [intentSearchGroups, liveSearchGroups, dashboardSearchGroups],
+    () => mergeSearchGroups(intentSearchGroups, mergeSearchGroups(liveSearchGroups, mergeSearchGroups(canonicalIdentityGroups, dashboardSearchGroups))),
+    [intentSearchGroups, liveSearchGroups, canonicalIdentityGroups, dashboardSearchGroups],
   );
   // Resolve the top-ranked entity candidates for the query; their names drive the
   // entity->transactions fetch. We keep the top few (not just #1) so the join can fall
@@ -366,7 +390,7 @@ export default function DashboardPage() {
     const clean = searchQuery.trim();
     if (isShortTextQuery(clean)) return completeSearchGroups([]);
     if (isTextQueryReady(clean)) {
-      if (isShortBusinessQuery(clean) && (searchLoading || searchIntentLoading) && !hasAnySearchItems(liveSearchGroups) && !hasAnySearchItems(dashboardSearchGroups)) return completeSearchGroups([]);
+      if (isShortBusinessQuery(clean) && (searchLoading || searchIntentLoading) && !hasAnySearchItems(liveSearchGroups) && !hasAnySearchItems(canonicalIdentityGroups) && !hasAnySearchItems(dashboardSearchGroups)) return completeSearchGroups([]);
       // Live groups are PRIMARY so a resolved entity's real transactions lead the
       // Transactions category (fills the "No matches" gap) and the live /api/people/search
       // matches lead the People category instead of the 25-row pre-loaded slice.
@@ -378,7 +402,7 @@ export default function DashboardPage() {
       return completeSearchGroups(mergeSearchGroups(primaryLiveGroups, baseSearchGroups));
     }
     return dashboardSearchGroups;
-  }, [baseSearchGroups, dashboardSearchGroups, liveSearchGroups, liveNewsSearchGroups, searchLoading, searchIntentLoading, searchQuery, searchTransactionPacket, searchPeoplePackets]);
+  }, [baseSearchGroups, canonicalIdentityGroups, dashboardSearchGroups, liveSearchGroups, liveNewsSearchGroups, searchLoading, searchIntentLoading, searchQuery, searchTransactionPacket, searchPeoplePackets]);
   const searchItems = useMemo(() => searchGroups.flatMap((group) => group.items), [searchGroups]);
 
   useEffect(() => {
@@ -456,16 +480,17 @@ export default function DashboardPage() {
         setSearchEntityPackets([]);
         setSearchCoreLoading(false);
       });
-      const newsSearch = Promise.allSettled(queryVariants.map((variant) => (
-        fetchPacket(`/api/source-intelligence/news/v1?q=${encodeURIComponent(variant)}&limit=25`, 8_000, {
+      const progressiveNewsPackets: Array<Packet | undefined> = Array.from({ length: queryVariants.length });
+      const newsSearch = collectFactPacketsProgressively(queryVariants.map((variant) => (
+        fetchPacket(`/api/source-intelligence/news/v1?q=${encodeURIComponent(variant)}&limit=25&count_mode=bounded`, SEARCH_NEWS_TRANSPORT_TIMEOUT_MS, {
           signal: controller.signal,
           attempts: 1,
-        }).then((packet) => {
-          if (controller.signal.aborted || !isFact(packet)) return;
-          setSearchNewsPackets((current) => [...current, packet]);
         })
-      ))).catch(() => {
-        if (!controller.signal.aborted) setSearchNewsPackets([]);
+      )), (packet, index) => {
+        progressiveNewsPackets[index] = packet;
+        if (!controller.signal.aborted) {
+          setSearchNewsPackets(progressiveNewsPackets.filter((item): item is Packet => Boolean(item)));
+        }
       }).finally(() => {
         if (!controller.signal.aborted) setSearchNewsLoading(false);
       });
@@ -702,12 +727,12 @@ function BrdCommandCenterSidebar({ topRows, pending = false }: { topRows: Record
           ))}
         </nav>
       </div>
-      <div className="mx-4 border-t border-[#E8ECF1] py-4">
+      <div data-testid="top-aum-ranking" data-aum-basis="proven-usd" className="mx-4 border-t border-[#E8ECF1] py-4">
         <div className="mb-2 flex items-center justify-between text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#4A5665]">
           {/* Honest label 2026-07-06: these are the top-AUM ranked rows, not a
               user-curated watchlist (this preview has no accounts). */}
           <span>Top by AUM</span>
-          <span className="text-[#7B8996]">AUM</span>
+          <span className="text-[#7B8996]">Verified USD</span>
         </div>
         <div className="grid gap-2">
           {watched.length ? watched.map((row, index) => (
@@ -1465,6 +1490,22 @@ function completeSearchGroups(groups: BrdSearchGroup[]): BrdSearchGroup[] {
   return SEARCH_CATEGORY_LABELS
     .filter((label) => label !== "All")
     .map((label) => ({ label, items: byLabel.get(label) || [] }));
+}
+
+function canonicalIdentitySearchGroups(query: string): BrdSearchGroup[] {
+  if (!isTextQueryReady(query)) return [];
+  const identity = canonicalSearchIdentity(query);
+  if (!identity) return [];
+  return [{
+    label: "Entities",
+    items: [{
+      label: identity.name,
+      detail: "Verified SWFI identity · live profile facts loading",
+      href: dashboardProfileHref(identity),
+      sourceHref: identity.source_url,
+      prefetchRow: identity,
+    }],
+  }];
 }
 
 function smartSearchGroups(intent: SmartSearchIntent | null, packets: Packet[]): BrdSearchGroup[] {
@@ -3467,6 +3508,10 @@ function compactNumber(value: number) {
   return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: value >= 1000 ? 1 : 0 }).format(value);
 }
 
+function compactRankedUsd(value: number) {
+  return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 2 }).format(value);
+}
+
 function compactMoney(value: number) {
   if (!Number.isFinite(value)) return "Not disclosed";
   if (value === 0) return "$0";
@@ -3520,14 +3565,21 @@ function researchRecordHref(row: Record<string, unknown>) {
   return dashboardSearchFallback(row, "/intelligence");
 }
 
-async function loadDashboardPackets(onPacket: (key: PacketKey, packet: Packet) => void) {
+async function loadDashboardPackets(
+  onPacket: (key: PacketKey, packet: Packet) => void,
+  signal?: AbortSignal,
+) {
   const entries = DASHBOARD_LOAD_ORDER.map((key) => [key, ENDPOINTS[key]] as [PacketKey, string]);
   const workers = Array.from({ length: Math.min(3, entries.length) }, async () => {
-    while (entries.length) {
+    while (entries.length && !signal?.aborted) {
       const entry = entries.shift();
       if (!entry) return;
       const [key, path] = entry;
-      const packet = await fetchPacket(path, dashboardTimeout(key), { attempts: dashboardAttempts(key) });
+      const packet = await fetchPacket(path, dashboardTimeout(key), {
+        attempts: dashboardAttempts(key),
+        signal,
+      });
+      if (signal?.aborted) return;
       onPacket(key, packet);
     }
   });
@@ -3736,12 +3788,18 @@ function publishedRecencyScore(row: Record<string, unknown>) {
 }
 
 function aumDisplay(row: Record<string, unknown>) {
-  const numeric = numericSortValue(text(row.aum, ""));
-  const currency = text(row.aum_currency, "").trim();
-  if (numeric == null || !currency) return "Not disclosed";
-  // Sidebar/watchlist columns are ~76px: raw integers (NOK 2,048,995,080,000)
-  // overflow and read as noise — compact to the native currency + magnitude.
-  return `${currency} ${compactNumber(numeric)}`;
+  if (!hasProvenUsdAum(row)) return "Not disclosed";
+  const numeric = numberValue(row.aum_usd) || 0;
+  // Sidebar/watchlist columns are ~76px: raw integers (USD 2,048,995,080,000)
+  // overflow and read as noise, so compact the provenance-backed USD value.
+  return `USD ${compactRankedUsd(numeric)}`;
+}
+
+function hasProvenUsdAum(row: Record<string, unknown>) {
+  return (numberValue(row.aum_usd) || 0) > 0
+    && text(row.aum_currency, "").trim().toUpperCase() === "USD"
+    && Boolean(text(row.aum_usd_basis, "").trim())
+    && Boolean(text(row.aum_usd_source, "").trim());
 }
 
 function sourceHref(row: Record<string, unknown>): string | undefined {

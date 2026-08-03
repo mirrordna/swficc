@@ -22,8 +22,8 @@ const SOURCE_ALIAS_FIELDS = [
 ] as const;
 
 // Verified query-routing aliases for names the SWFI search APIs do not derive from the
-// stored display name. These values choose which canonical name to query; they never
-// populate or replace a displayed business fact.
+// stored display name. These values may establish identity only; they never populate
+// or replace mutable business facts such as AUM, type, country, people, or activity.
 const VERIFIED_QUERY_ALIASES: Readonly<Record<string, readonly string[]>> = {
   adia: ["Abu Dhabi Investment Authority"],
   adq: ["Abu Dhabi Developmental Holding Company"],
@@ -54,6 +54,11 @@ const VERIFIED_CANONICAL_SOURCE_URLS: Readonly<Record<string, string>> = {
   "Hong Kong Investment Corporation": "https://www.swfi.com/v1/entities/63502488d68aa29d9a0da8a5",
 };
 
+export type CanonicalSearchIdentity = Readonly<{
+  name: string;
+  source_url: string;
+}>;
+
 export function businessSearchQueryVariants(query: string, sourceRows: Record<string, unknown>[] = []): string[] {
   const clean = searchSubjectQuery(query);
   if (!clean) return [];
@@ -81,6 +86,32 @@ export function canonicalSearchName(query: string): string {
 export function canonicalSearchSourceUrl(query: string): string {
   const canonicalName = canonicalSearchName(query);
   return canonicalName ? VERIFIED_CANONICAL_SOURCE_URLS[canonicalName] || "" : "";
+}
+
+// Identity is safe to render before live fact lanes settle because it contains only
+// a manually verified stable SWFI record id and its canonical name. Callers must not
+// infer any mutable entity attributes from this row.
+export function canonicalSearchIdentity(query: string): CanonicalSearchIdentity | null {
+  const name = canonicalSearchName(query);
+  const sourceUrl = name ? VERIFIED_CANONICAL_SOURCE_URLS[name] || "" : "";
+  return name && sourceUrl ? { name, source_url: sourceUrl } : null;
+}
+
+export function hasVerifiedCanonicalSearchIdentity(
+  query: string,
+  sourceRows: Record<string, unknown>[],
+): boolean {
+  const identity = canonicalSearchIdentity(query);
+  if (!identity) return false;
+  const expectedName = normalizeSearchText(identity.name);
+  const expectedSource = identity.source_url.replace(/\/+$/, "").toLowerCase();
+  return sourceRows.some((row) => {
+    const name = normalizeSearchText(primarySearchName(row));
+    const source = text(row.source_url || row.swfi_url || row.url || row.profile_url, "")
+      .replace(/\/+$/, "")
+      .toLowerCase();
+    return name === expectedName && source === expectedSource;
+  });
 }
 
 export function dedupeSearchRecords<T extends Record<string, unknown>>(sourceRows: T[]): T[] {
@@ -199,6 +230,26 @@ export function mergeSearchRecordsPreferPrimary<T extends Record<string, unknown
   });
   const suppressed = ordered.filter((item) => !(item.weak && strongCount > 0));
   return (suppressed.length ? suppressed : ordered).map((item) => item.row);
+}
+
+// Preserve the primary endpoint's ordering while filling duplicate rows from a
+// richer source endpoint. Empty enrichment values never erase an existing fact.
+export function mergeSearchRecordsPreferEnriched<T extends Record<string, unknown>>(
+  primaryRows: T[],
+  enrichedRows: T[],
+  query: string,
+  kind: SearchKind = "entity",
+): T[] {
+  const enrichedByKey = new Map<string, T>();
+  for (const row of dedupeSearchRecords(enrichedRows)) {
+    enrichedByKey.set(searchRecordKey(row), row);
+  }
+  const enrichedPrimary = dedupeSearchRecords(primaryRows).map((row) => {
+    const enrichment = enrichedByKey.get(searchRecordKey(row));
+    if (!enrichment) return row;
+    return mergeMeaningfulSearchValues(row, enrichment);
+  });
+  return mergeSearchRecordsPreferPrimary(enrichedPrimary, enrichedRows, query, kind);
 }
 
 export function searchSubjectQuery(query: string): string {
@@ -429,6 +480,22 @@ function uniqueStrings(values: string[]): string[] {
     next.push(clean);
   }
   return next;
+}
+
+function mergeMeaningfulSearchValues<T extends Record<string, unknown>>(primary: T, enrichment: T): T {
+  const merged: Record<string, unknown> = { ...primary };
+  for (const [key, value] of Object.entries(enrichment)) {
+    if (!isMeaningfulSearchValue(value)) continue;
+    merged[key] = value;
+  }
+  return merged as T;
+}
+
+function isMeaningfulSearchValue(value: unknown): boolean {
+  if (value == null) return false;
+  if (typeof value === "string") return value.trim() !== "" && !/^(not disclosed|unavailable)$/i.test(value.trim());
+  if (Array.isArray(value)) return value.length > 0;
+  return true;
 }
 
 function text(value: unknown, fallback = ""): string {

@@ -1,8 +1,8 @@
 // Record / data-view table sort defaults for SourceListPage.
 //
-// Extracted from the component so the "Top Ranked AUM" default (profiles
-// tables lead with AUM descending — KP/Jaykesh feedback 2026-07-07/13) is
-// unit-testable and cannot silently regress to Entity-Name-ascending.
+// Directory AUM is source-reported and may use different currencies. It must
+// not be presented as one cross-currency ranking; the dashboard's dedicated
+// top-AUM feed is the only USD-ranked surface.
 // Regression test: scripts/swfipn-record-sort-defaults-test.mjs.
 
 export type Kind =
@@ -23,11 +23,6 @@ export function defaultSortColumn(kind: Kind): number {
   // Allocators default to "Most Recent Activity Date" (column index 6) so the
   // reverse-chronological server sort and the header indicator agree.
   if (kind === "allocators") return 6;
-  // Institutions ("profiles") lead with AUM (column index 3 of
-  // ["Entity Name", "Type", "Country", "AUM"]) so a "Top Ranked AUM" table
-  // shows the largest asset owners first instead of an A–Z name list. "Not
-  // disclosed" AUM sinks to the bottom via compareCells regardless of direction.
-  if (kind === "profiles") return 3;
   // News and intelligence tables expose Published as column 1 and must lead
   // with the newest sourced date rather than alphabetizing the current page.
   if (kind === "research" || kind === "intelligence") return 1;
@@ -36,5 +31,13 @@ export function defaultSortColumn(kind: Kind): number {
 
 // Direction the table sorts by on first render.
 export function defaultSortDir(kind: Kind): "asc" | "desc" {
-  return kind === "allocators" || kind === "profiles" || kind === "research" || kind === "intelligence" ? "desc" : "asc";
+  return kind === "allocators" || kind === "research" || kind === "intelligence" ? "desc" : "asc";
+}
+
+export function isSortableRecordColumn(kind: Kind, column: string): boolean {
+  const normalized = column.trim().toLowerCase();
+  if ((kind === "profiles" || kind === "comparisons" || kind === "allocators") && normalized.includes("aum")) {
+    return false;
+  }
+  return true;
 }

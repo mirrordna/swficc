@@ -47,7 +47,7 @@ HOP_BY_HOP = {
 SESSION_COOKIE_NAME = "__swfipn_session"
 SESSION_TTL_SECONDS = int(os.environ.get("SWFIPN_AUTH_SESSION_TTL_SECONDS", str(12 * 60 * 60)))
 PUBLIC_JSON_PATH_PREFIXES = ("/api/", "/v1/")
-PUBLIC_SEARCH_CACHE_TTL_SECONDS = int(os.environ.get("SWFIPN_PUBLIC_SEARCH_CACHE_TTL_SECONDS", "300"))
+PUBLIC_SEARCH_CACHE_TTL_SECONDS = int(os.environ.get("SWFIPN_PUBLIC_SEARCH_CACHE_TTL_SECONDS", "15"))
 PUBLIC_SEARCH_PRIMARY_CACHE_TTL_SECONDS = float(os.environ.get("SWFIPN_PUBLIC_SEARCH_PRIMARY_CACHE_TTL_SECONDS", "10"))
 PUBLIC_SEARCH_CACHE_MAX_ENTRIES = int(os.environ.get("SWFIPN_PUBLIC_SEARCH_CACHE_MAX_ENTRIES", "512"))
 PUBLIC_SEARCH_MAX_UPSTREAM_REQUESTS = int(os.environ.get("SWFIPN_PUBLIC_SEARCH_MAX_UPSTREAM_REQUESTS", "8"))
@@ -152,6 +152,15 @@ def sanitized_display_name(value):
 
 def search_text(value):
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", str(value or "").lower().replace("&", " and "))).strip()
+
+
+def backend_fetch_failure_body():
+    return json.dumps({
+        "status": "unavailable",
+        "fact": False,
+        "unavailable_reason": "backend_fetch_failed",
+        "data": {"rows": [], "count": 0},
+    }, separators=(",", ":")).encode("utf-8")
 
 
 def search_query_variants(query):
@@ -1456,11 +1465,7 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
             if not head:
                 self.write_body(body)
         except Exception:
-            body = json.dumps({
-                "status": "unavailable",
-                "fact": False,
-                "data": {"rows": [], "count": 0},
-            }, separators=(",", ":")).encode("utf-8")
+            body = backend_fetch_failure_body()
             self.send_response(HTTPStatus.OK)
             self.send_security_headers()
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -1511,7 +1516,10 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.OK)
         self.send_security_headers()
         self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Cache-Control", "public, max-age=60, s-maxage=300, stale-while-revalidate=300" if cacheable else "no-store")
+        # Search packets are mutable source projections. The bounded in-process cache
+        # coalesces load, but browsers and intermediaries must revalidate every request.
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
         self.send_header("X-SWFIPN-Proxy-Cache", cache_state)
         self.send_header("X-SWFIPN-Search-Render", "enhanced")
         self.send_header("Content-Length", str(len(body)))
@@ -1552,15 +1560,18 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
             source_futures = [(kind, future) for kind, future in futures if kind == "source"]
             if has_exact_canonical_search_result(query, public_rows) and any(not future.done() for _kind, future in source_futures):
                 body, _upstream_fact, _complete = self.render_enhanced_public_search(public_packets, query, safe_limit, "stable_primary")
+                generation_id = time.monotonic_ns()
                 self.server.public_search_cache[cache_key] = {
                     "stored_at": time.time(),
                     "body": body,
-                    "cacheable": True,
-                    "cache_state": "HIT",
+                    "ttl_seconds": PUBLIC_SEARCH_PRIMARY_CACHE_TTL_SECONDS,
+                    "cacheable": False,
+                    "cache_state": "PRIMARY_PENDING",
+                    "generation_id": generation_id,
                 }
                 enrichment_thread = Thread(
-                    target=self.finish_stable_primary_cleanup,
-                    args=(executor, futures),
+                    target=self.finish_stable_primary_enrichment,
+                    args=(executor, futures, query, safe_limit, cache_key, generation_id),
                     daemon=True,
                     name="swfipn-search-primary-cleanup",
                 )
@@ -1570,12 +1581,12 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
                 except Exception:
                     cleanup_deferred = False
                     raise
-                return body, True, "MISS_PRIMARY_STABLE"
+                return body, False, "MISS_PRIMARY_STABLE"
 
             packets = [self.search_future_packet(kind, future) for kind, future in futures]
             body, upstream_fact, complete = self.render_enhanced_public_search(packets, query, safe_limit, "complete")
             if upstream_fact:
-                self.cache_enhanced_public_search(cache_key, body, complete)
+                self.cache_enhanced_public_search(cache_key, body, complete, time.monotonic_ns())
             return body, upstream_fact and complete, "MISS" if complete else "MISS_PARTIAL"
         finally:
             if not cleanup_deferred:
@@ -1589,10 +1600,18 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
             key = "results" if kind == "public" else "rows"
             return kind, {"status": "blocked", "fact": False, "data": {key: []}}
 
-    def finish_stable_primary_cleanup(self, executor, futures):
+    def finish_stable_primary_enrichment(self, executor, futures, query, safe_limit, cache_key, generation_id):
         try:
-            for kind, future in futures:
-                self.search_future_packet(kind, future)
+            packets = [self.search_future_packet(kind, future) for kind, future in futures]
+            body, upstream_fact, complete = self.render_enhanced_public_search(
+                packets, query, safe_limit, "complete"
+            )
+            current = self.server.public_search_cache.get(cache_key)
+            current_generation = current.get("generation_id") if current else None
+            if current_generation not in {None, generation_id}:
+                return
+            if upstream_fact:
+                self.cache_enhanced_public_search(cache_key, body, complete, generation_id)
         finally:
             executor.shutdown(wait=False)
             self.server.public_search_upstream_slots.release()
@@ -1602,8 +1621,13 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
         source_rows = []
         upstream_fact = False
         evidence_lanes = {"public": False, "source_entity": False}
+        source_receipts = {"public": [], "source_entity": []}
         for kind, packet in packets:
             upstream_fact = upstream_fact or packet.get("fact") is True
+            generated_at = str(packet.get("generated_at") or "").strip()
+            receipt_lane = "public" if kind == "public" else "source_entity"
+            if generated_at:
+                source_receipts[receipt_lane].append(generated_at)
             if kind == "public":
                 evidence_lanes["public"] = evidence_lanes["public"] or packet.get("fact") is True
                 public_rows.extend(self.rows_from_public_search_packet(packet))
@@ -1631,12 +1655,18 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
                 "count_basis": "ranked_public_plus_entity_variants",
                 "enrichment": effective_enrichment,
                 "evidence_lanes": evidence_lanes,
+                "source_freshness": {
+                    "consistency": "best_effort_multi_lane",
+                    "atomic_snapshot": False,
+                    "complete": complete,
+                    "packet_generated_at": source_receipts,
+                },
             },
         }, separators=(",", ":")).encode("utf-8")
         return body, upstream_fact, complete
 
-    def cache_enhanced_public_search(self, cache_key, body, complete):
-        entry = {"stored_at": time.time(), "body": body}
+    def cache_enhanced_public_search(self, cache_key, body, complete, generation_id=None):
+        entry = {"stored_at": time.time(), "body": body, "generation_id": generation_id}
         if not complete:
             entry.update({
                 "ttl_seconds": PUBLIC_SEARCH_PRIMARY_CACHE_TTL_SECONDS,
@@ -1715,6 +1745,8 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
         request = urllib.request.Request(target, method="GET")
         request.add_header("Accept", "application/json")
         request.add_header("X-SWFIPN-Public", "1")
+        request.add_header("X-SWFIPN-Internal", "1")
+        request.add_header("Cache-Control", "no-cache")
         request.add_header("Connection", "close")
         if self.server.backend_token:
             request.add_header("Authorization", f"Bearer {self.server.backend_token}")
@@ -1741,6 +1773,7 @@ class StaticProxyHandler(BaseHTTPRequestHandler):
         request = urllib.request.Request(target, method="GET")
         request.add_header("Accept", "application/json")
         request.add_header("X-SWFIPN-Public", "1")
+        request.add_header("Cache-Control", "no-cache")
         request.add_header("Connection", "close")
         if self.server.backend_token:
             request.add_header("Authorization", f"Bearer {self.server.backend_token}")

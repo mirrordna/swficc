@@ -11,6 +11,7 @@ const maxAgeMs = 6 * 60 * 60 * 1000;
 
 const receiptFiles = {
   search: "swfipn-canonical-search-stability-gate-latest.json",
+  kpFeedback: "swfipn-kp-feedback-browser-latest.json",
   visualization: "swfipn-section-visualization-brd-gate-latest.json",
   numeric: "swfipn-numeric-truth-adversarial-latest.json",
   paritySample: "swfipn-record-level-parity-gate-latest.json",
@@ -47,10 +48,22 @@ function normalizedSourceOrigin(value) {
   }
 }
 
+function writeJsonAtomic(filePath, value) {
+  const temporaryPath = `${filePath}.tmp-${process.pid}`;
+  const descriptor = fs.openSync(temporaryPath, "w", 0o600);
+  try {
+    fs.writeFileSync(descriptor, `${JSON.stringify(value, null, 2)}\n`);
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  fs.renameSync(temporaryPath, filePath);
+}
+
 function evaluate({ mode, receipts, identity, expectedRelease, sourceOrigin, stakeholderApprovalSha, now = Date.now() }) {
   const checks = [];
   const add = (id, ok, detail = null) => checks.push({ id, status: ok ? "PASS" : "BLOCKED", detail });
-  const { search, visualization, numeric, paritySample, parityFull, stakeholder } = receipts;
+  const { search, kpFeedback, visualization, numeric, paritySample, parityFull, stakeholder } = receipts;
   const acceptanceIdentity = mode === "production" ? expectedRelease : identity;
 
   add("search_receipt_current_pass", search?.status === "pass" && fresh(search, now), search?.status || "missing");
@@ -62,6 +75,13 @@ function evaluate({ mode, receipts, identity, expectedRelease, sourceOrigin, sta
     passed: search.passed_cold_start_samples,
     identity_consistent: search.identity_consistent,
   } : "missing");
+  add("kp_feedback_receipt_current_pass", kpFeedback?.status === "pass"
+    && kpFeedback?.pass === true
+    && Array.isArray(kpFeedback?.checks)
+    && kpFeedback.checks.length >= 15
+    && kpFeedback.checks.every((check) => check?.status === "PASS")
+    && fresh(kpFeedback, now),
+  kpFeedback ? { status: kpFeedback.status, checks: kpFeedback.checks?.length || 0 } : "missing");
   add("visualization_receipt_current_pass", visualization?.status === "pass" && fresh(visualization, now), visualization?.status || "missing");
   add("numeric_truth_promotion_eligible", numeric?.status === "pass" && numeric?.promotion_eligible === true && fresh(numeric, now), numeric?.source_truth_verdict || numeric?.status || "missing");
   add("fresh_sampled_mongo_parity", paritySample?.status === "pass"
@@ -70,17 +90,53 @@ function evaluate({ mode, receipts, identity, expectedRelease, sourceOrigin, sta
   const fullParityComplete = Number(parityFull?.totals?.count) > 0
     && Number(parityFull?.totals?.checked) === Number(parityFull?.totals?.count)
     && Number(parityFull?.totals?.failed) === 0;
+  const parityContinuityMode = String(parityFull?.continuity?.mode || "");
+  const mutationCoverageComplete = parityContinuityMode === "full_scan"
+    || (parityContinuityMode === "anchored_incremental"
+      && parityFull?.continuity?.mutation_witness_complete === true
+      && parityFull?.continuity?.mutation_witness_unchanged === true);
+  add("full_parity_mutation_coverage", mutationCoverageComplete, {
+    mode: parityContinuityMode || "missing",
+    mutation_witness_complete: parityFull?.continuity?.mutation_witness_complete ?? null,
+    mutation_witness_unchanged: parityFull?.continuity?.mutation_witness_unchanged ?? null,
+  });
   add("fresh_full_mongo_parity", parityFull?.status === "pass"
     && /full required-field parity/i.test(String(parityFull?.scope || ""))
     && parityFull?.partial_run === false
+    && parityFull?.continuity?.high_water_complete === true
+    && mutationCoverageComplete
     && fullParityComplete
     && fresh(parityFull, now), parityFull ? {
     status: parityFull.status,
     partial_run: parityFull.partial_run,
+    continuity: parityFull.continuity || null,
     totals: parityFull.totals || null,
   } : "missing");
+  const visualizationCounts = new Map((visualization?.checks || []).map((check) => [check.id, Number(check.source_total_count)]));
+  const parityCollections = Object.entries(parityFull?.collections || {});
+  const countMismatches = parityCollections
+    .filter(([id]) => ["entities", "people", "transactions", "compass"].includes(id))
+    .map(([id, collection]) => ({
+      id,
+      parity: Number(collection?.count),
+      current: visualizationCounts.get(id),
+    }))
+    .filter((item) => !Number.isFinite(item.current) || item.current !== item.parity);
+  const visualizationGenerated = Date.parse(String(visualization?.generated_at || ""));
+  const parityGenerated = Date.parse(String(parityFull?.generated_at || ""));
+  add("full_parity_source_counts_current", parityCollections.length >= 4
+    && countMismatches.length === 0
+    && Number.isFinite(visualizationGenerated)
+    && Number.isFinite(parityGenerated)
+    && visualizationGenerated >= parityGenerated,
+  {
+    parity_generated_at: parityFull?.generated_at || "missing",
+    current_counts_generated_at: visualization?.generated_at || "missing",
+    mismatches: countMismatches,
+  });
   for (const [id, receipt, receiptOrigin] of [
     ["search", search, search?.source_backend_origin],
+    ["kp_feedback", kpFeedback, kpFeedback?.source_backend_origin],
     ["visualization", visualization, visualization?.source_backend_origin],
     ["numeric", numeric, numeric?.origin],
     ["parity_sample", paritySample, paritySample?.backend_origin],
@@ -103,7 +159,7 @@ function evaluate({ mode, receipts, identity, expectedRelease, sourceOrigin, sta
   if (mode === "production") {
     const expectedPinned = /^[a-f0-9]{40}$/i.test(expectedRelease.git_sha) && Boolean(expectedRelease.asset_version);
     add("expected_production_release_pinned", expectedPinned, expectedRelease);
-    for (const [id, receipt] of [["search", search], ["visualization", visualization]]) {
+    for (const [id, receipt] of [["search", search], ["kp_feedback", kpFeedback], ["visualization", visualization]]) {
       add(`${id}_live_release_identity_matches`, expectedPinned
         && receipt?.target_mode === "live"
         && receipt?.release_identity_pinned === true
@@ -114,7 +170,7 @@ function evaluate({ mode, receipts, identity, expectedRelease, sourceOrigin, sta
   } else {
     add("candidate_worktree_clean", identity.git_dirty === false, identity);
     add("candidate_asset_identity_present", Boolean(identity.asset_version), identity.asset_version);
-    for (const [id, receipt] of [["search", search], ["visualization", visualization]]) {
+    for (const [id, receipt] of [["search", search], ["kp_feedback", kpFeedback], ["visualization", visualization]]) {
       add(`${id}_candidate_identity_matches`, receipt?.target_mode === "local_candidate"
         && receipt?.candidate_identity?.git_sha === identity.git_sha
         && receipt?.candidate_identity?.git_dirty === false
@@ -135,16 +191,44 @@ function selfTest() {
   const sourceOrigin = "https://dashboard.swfi.com";
   const base = {
     search: { status: "pass", generated_at, target_mode: "local_candidate", source_backend_origin: sourceOrigin, candidate_identity: candidateIdentity, required_cold_start_samples: 2, passed_cold_start_samples: 2, identity_consistent: true },
-    visualization: { status: "pass", generated_at, target_mode: "local_candidate", source_backend_origin: sourceOrigin, candidate_identity: candidateIdentity },
+    kpFeedback: { status: "pass", pass: true, generated_at, target_mode: "local_candidate", source_backend_origin: sourceOrigin, candidate_identity: candidateIdentity, checks: Array.from({ length: 15 }, (_, index) => ({ id: `kp_${index + 1}`, status: "PASS" })) },
+    visualization: {
+      status: "pass",
+      generated_at,
+      target_mode: "local_candidate",
+      source_backend_origin: sourceOrigin,
+      candidate_identity: candidateIdentity,
+      checks: [
+        { id: "entities", source_total_count: 40 },
+        { id: "people", source_total_count: 30 },
+        { id: "transactions", source_total_count: 20 },
+        { id: "compass", source_total_count: 10 },
+      ],
+    },
     numeric: { status: "pass", generated_at, origin: sourceOrigin, promotion_eligible: true, source_truth_verdict: "MATCH" },
     paritySample: { status: "pass", generated_at, backend_origin: sourceOrigin, scope: "record-level live API to Mongo parity by _id" },
-    parityFull: { status: "pass", generated_at, backend_origin: sourceOrigin, scope: "full required-field parity from SWFIPN source API to Mongo by source id", partial_run: false, totals: { count: 100, checked: 100, failed: 0 } },
+    parityFull: {
+      status: "pass",
+      generated_at,
+      backend_origin: sourceOrigin,
+      scope: "full required-field parity from SWFIPN source API to Mongo by source id",
+      partial_run: false,
+      continuity: { mode: "full_scan", high_water_complete: true },
+      totals: { count: 100, checked: 100, failed: 0 },
+      collections: {
+        entities: { count: 40 },
+        people: { count: 30 },
+        transactions: { count: 20 },
+        compass: { count: 10 },
+      },
+    },
     stakeholder: { status: "pass", generated_at, release_git_sha: identity.git_sha, asset_version: identity.asset_version, _receipt_sha256: "b".repeat(64) },
   };
   const production = {
     ...base,
     search: { status: "pass", generated_at, target_mode: "live", source_backend_origin: sourceOrigin, required_cold_start_samples: 2, passed_cold_start_samples: 2, identity_consistent: true, release_identity_pinned: true, tested_release_git_sha: identity.git_sha, tested_release_asset_version: identity.asset_version },
-    visualization: { status: "pass", generated_at, target_mode: "live", source_backend_origin: sourceOrigin, release_identity_pinned: true, tested_release_git_sha: identity.git_sha, tested_release_asset_version: identity.asset_version },
+    kpFeedback: { ...base.kpFeedback, target_mode: "live", candidate_identity: null, release_identity_pinned: true, tested_release_git_sha: identity.git_sha, tested_release_asset_version: identity.asset_version },
+    visualization: { ...base.visualization, target_mode: "live", release_identity_pinned: true, tested_release_git_sha: identity.git_sha, tested_release_asset_version: identity.asset_version },
   };
   const cases = [
     evaluate({ mode: "candidate", receipts: base, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).status === "pass",
@@ -160,6 +244,11 @@ function selfTest() {
     evaluate({ mode: "candidate", receipts: { ...base, parityFull: { ...base.parityFull, partial_run: true } }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).blockers.includes("fresh_full_mongo_parity"),
     evaluate({ mode: "candidate", receipts: { ...base, parityFull: { ...base.parityFull, totals: { count: 100, checked: 99, failed: 0 } } }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).blockers.includes("fresh_full_mongo_parity"),
     evaluate({ mode: "candidate", receipts: { ...base, parityFull: null }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).blockers.includes("fresh_full_mongo_parity"),
+    evaluate({ mode: "candidate", receipts: { ...base, parityFull: { ...base.parityFull, continuity: { mode: "anchored_incremental", high_water_complete: true } } }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).blockers.includes("full_parity_mutation_coverage"),
+    evaluate({ mode: "candidate", receipts: { ...base, parityFull: { ...base.parityFull, continuity: { mode: "anchored_incremental", high_water_complete: true, mutation_witness_complete: true, mutation_witness_unchanged: true } } }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).checks.find((check) => check.id === "full_parity_mutation_coverage")?.status === "PASS",
+    evaluate({ mode: "candidate", receipts: { ...base, visualization: { ...base.visualization, checks: base.visualization.checks.map((check) => check.id === "transactions" ? { ...check, source_total_count: 21 } : check) } }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).blockers.includes("full_parity_source_counts_current"),
+    evaluate({ mode: "candidate", receipts: { ...base, kpFeedback: { ...base.kpFeedback, candidate_identity: { ...candidateIdentity, git_sha: "c".repeat(40) } } }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).blockers.includes("kp_feedback_candidate_identity_matches"),
+    evaluate({ mode: "candidate", receipts: { ...base, kpFeedback: { ...base.kpFeedback, checks: base.kpFeedback.checks.slice(0, 14) } }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).blockers.includes("kp_feedback_receipt_current_pass"),
   ];
   const result = { status: cases.every(Boolean) ? "pass" : "fail", checks: cases.length, passed: cases.filter(Boolean).length };
   console.log(JSON.stringify(result, null, 2));
@@ -181,7 +270,7 @@ function main() {
   const stakeholderApprovalSha = String(process.env.SWFIPN_STAKEHOLDER_ACCEPTANCE_SHA256 || "").trim();
   const result = evaluate({ mode, receipts, identity, expectedRelease, sourceOrigin, stakeholderApprovalSha });
   const receipt = {
-    schema_version: "swfipn.july31_release_gate.v1",
+    schema_version: "swfipn.july31_release_gate.v2",
     generated_at: new Date().toISOString(),
     mode,
     ...result,
@@ -189,10 +278,10 @@ function main() {
     release_source_origin: sourceOrigin,
     receipt_paths: Object.fromEntries(Object.entries(receiptFiles).map(([id, file]) => [id, `output/${file}`])),
     bad_news: result.blockers,
-    checked_scope: ["July_31_search", "section_visualizations", "numeric_truth", "sampled_Mongo_parity", "full_universe_Mongo_parity", "stakeholder_acceptance", "artifact_identity"],
+    checked_scope: ["July_31_search", "KP_feedback_browser", "section_visualizations", "numeric_truth", "sampled_Mongo_parity", "full_universe_Mongo_parity", "stakeholder_acceptance", "artifact_identity"],
     unchecked_scope: mode === "production" ? ["global_acceptance_outside_July_31_contract"] : ["deployed_production"],
   };
-  fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  writeJsonAtomic(receiptPath, receipt);
   console.log(JSON.stringify({ status: receipt.status, promotion_eligible: receipt.promotion_eligible, blockers: receipt.blockers, receipt: receiptPath }, null, 2));
   if (receipt.status !== "pass") process.exitCode = 1;
 }

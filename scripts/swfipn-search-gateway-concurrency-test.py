@@ -65,7 +65,12 @@ class MockBackendHandler(BaseHTTPRequestHandler):
         data = {"results": records, "query": query}
         if lane == "source":
             data["rows"] = records
-        body = json.dumps({"status": "ok", "fact": True, "data": data}).encode("utf-8")
+        body = json.dumps({
+            "status": "ok",
+            "fact": True,
+            "generated_at": "2026-08-02T12:00:00Z" if lane == "public" else "2026-08-02T12:00:01Z",
+            "data": data,
+        }).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -144,11 +149,11 @@ try:
             state == "MISS_PRIMARY_STABLE" for state, _payload, _seconds, _cache_control in responses
         ) == 1
         and all(
-            state in {"MISS_PRIMARY_STABLE", "COALESCED", "HIT"}
+            state in {"MISS_PRIMARY_STABLE", "PRIMARY_PENDING"}
             for state, _payload, _seconds, _cache_control in responses
         ),
-        "stable_primary_is_shared_cacheable": all(
-            str(cache_control).startswith("public,") for _state, _payload, _seconds, cache_control in responses
+        "stable_primary_is_never_shared_cacheable": all(
+            str(cache_control).startswith("no-store") for _state, _payload, _seconds, cache_control in responses
         ),
         "stable_primary_payload_is_immutable_public_snapshot": all(
             payload.get("data", {}).get("enrichment") == "stable_primary"
@@ -156,26 +161,26 @@ try:
             for _state, payload, _seconds, _cache_control in responses
         ),
         "warm_request_is_hit": warm_state == "HIT",
-        "warm_response_is_shared_cacheable": str(warm_cache_control).startswith("public,"),
+        "warm_response_is_never_shared_cacheable": str(warm_cache_control).startswith("no-store"),
         "warm_request_avoids_upstream": counts_after_exact == counts_after_cold,
         "warm_payload_source_backed": warm_payload.get("fact") is True,
-        "warm_payload_matches_stable_primary_contract": warm_payload.get("data", {}).get("enrichment") == "stable_primary"
-        and warm_payload.get("data", {}).get("evidence_lanes") == {"public": True, "source_entity": False},
-        "source_cleanup_never_mutates_ranked_top_n": all(
-            [row.get("source_url") for row in payload.get("data", {}).get("results", [])]
-            == [row.get("source_url") for row in warm_payload.get("data", {}).get("results", [])]
-            for _state, payload, _seconds, _cache_control in responses
-        ),
+        "warm_payload_is_completed_enrichment": warm_payload.get("data", {}).get("enrichment") == "complete"
+        and warm_payload.get("data", {}).get("evidence_lanes") == {"public": True, "source_entity": True}
+        and warm_payload.get("data", {}).get("source_freshness", {}).get("complete") is True
+        and warm_payload.get("data", {}).get("source_freshness", {}).get("atomic_snapshot") is False,
+        "cold_responses_remain_immutable": len({
+            json.dumps(payload, sort_keys=True) for _state, payload, _seconds, _cache_control in responses
+        }) == 1,
         "fuzzy_query_waits_for_full_enrichment": fuzzy_state == "MISS"
         and fuzzy_seconds >= 0.7
         and fuzzy_payload.get("data", {}).get("enrichment") == "complete",
         "failed_source_retries_without_duplicate_public": counts_after_partial == {"public": 3, "source": 4},
         "failed_enrichment_is_explicitly_partial": partial_state == "MISS_PARTIAL"
-        and partial_cache_control == "no-store"
+        and str(partial_cache_control).startswith("no-store")
         and partial_payload.get("data", {}).get("enrichment") == "partial"
         and partial_payload.get("data", {}).get("evidence_lanes") == {"public": True, "source_entity": False},
         "partial_result_retries_after_short_ttl": retried_state == "MISS_PARTIAL"
-        and retried_cache_control == "no-store"
+        and str(retried_cache_control).startswith("no-store")
         and upstream_counts == {"public": 3, "source": 5},
     }
     receipt = {

@@ -11,7 +11,7 @@ const outputDir = path.join(cwd, "output");
 const receiptPath = path.join(outputDir, "swfipn-search-relevance-regression-latest.json");
 fs.mkdirSync(outputDir, { recursive: true });
 
-const { businessSearchQueryVariants, canonicalSearchName, rankSearchRecords, searchSubjectQuery } = await import(pathToFileURL(path.join(cwd, "src/lib/searchRelevance.ts")).href);
+const { businessSearchQueryVariants, canonicalSearchIdentity, canonicalSearchName, hasVerifiedCanonicalSearchIdentity, mergeSearchRecordsPreferEnriched, rankSearchRecords, searchSubjectQuery } = await import(pathToFileURL(path.join(cwd, "src/lib/searchRelevance.ts")).href);
 
 const fixtures = {
   abuDhabi: [
@@ -84,6 +84,39 @@ const checks = [
     expected: "Hong Kong Investment Corporation",
   },
   {
+    id: "canonical_identity_hkic_is_stable_id_only",
+    query: "HKIC",
+    actual: canonicalSearchIdentity("HKIC"),
+    expected: {
+      name: "Hong Kong Investment Corporation",
+      source_url: "https://www.swfi.com/v1/entities/63502488d68aa29d9a0da8a5",
+    },
+  },
+  {
+    id: "canonical_identity_unknown_is_not_invented",
+    query: "Unknown Fund",
+    actual: canonicalSearchIdentity("Unknown Fund"),
+    expected: null,
+  },
+  {
+    id: "canonical_identity_independent_source_verification",
+    query: "ADIA",
+    actual: hasVerifiedCanonicalSearchIdentity("ADIA", [{
+      name: "Abu Dhabi Investment Authority",
+      source_url: "https://www.swfi.com/v1/entities/598cdaa50124e9fd2d05a79b",
+    }]),
+    expected: true,
+  },
+  {
+    id: "canonical_identity_wrong_source_is_rejected",
+    query: "ADIA",
+    actual: hasVerifiedCanonicalSearchIdentity("ADIA", [{
+      name: "Abu Dhabi Investment Authority",
+      source_url: "https://www.swfi.com/v1/entities/not-the-verified-record",
+    }]),
+    expected: false,
+  },
+  {
     id: "query_variant_adia_reverse",
     query: "Abu Dhabi Investment Authority",
     actual: businessSearchQueryVariants("Abu Dhabi Investment Authority"),
@@ -124,6 +157,49 @@ const checks = [
     query: "Retrieve information about Zurich Insurance Group",
     actual: rankSearchRecords(fixtures.zurich, "Retrieve information about Zurich Insurance Group", "entity").slice(0, 1).map((row) => row.name),
     expected: ["Zurich Insurance Group"],
+  },
+  {
+    id: "enriched_duplicate_preserves_primary_order_and_adds_aum",
+    query: "ADIA",
+    actual: mergeSearchRecordsPreferEnriched(
+      [{
+        name: "Abu Dhabi Investment Authority",
+        type: "Sovereign Wealth Fund",
+        country: "United Arab Emirates",
+        source_url: "https://www.swfi.com/v1/entities/598cdaa50124e9fd2d05a79b",
+      }],
+      [{
+        name: "Abu Dhabi Investment Authority",
+        type: "Sovereign Wealth Fund",
+        country: "United Arab Emirates",
+        aum: 1_128_750_000_000,
+        aum_currency: "USD",
+        aum_date: "2025-09-01",
+        source_url: "https://www.swfi.com/v1/entities/598cdaa50124e9fd2d05a79b",
+      }],
+      "ADIA",
+      "entity",
+    ).map((row) => [row.name, row.aum, row.aum_currency, row.aum_date]),
+    expected: [["Abu Dhabi Investment Authority", 1_128_750_000_000, "USD", "2025-09-01"]],
+  },
+  {
+    id: "empty_enrichment_does_not_erase_primary_fact",
+    query: "ADIA",
+    actual: mergeSearchRecordsPreferEnriched(
+      [{
+        name: "Abu Dhabi Investment Authority",
+        country: "United Arab Emirates",
+        source_url: "https://www.swfi.com/v1/entities/598cdaa50124e9fd2d05a79b",
+      }],
+      [{
+        name: "Abu Dhabi Investment Authority",
+        country: "",
+        source_url: "https://www.swfi.com/v1/entities/598cdaa50124e9fd2d05a79b",
+      }],
+      "ADIA",
+      "entity",
+    ).map((row) => row.country),
+    expected: ["United Arab Emirates"],
   },
 ];
 

@@ -8,6 +8,7 @@ import {
   searchResultRecordType,
   visibleSearchResultRows,
 } from "../src/lib/searchResultPresentation.ts";
+import { collectFactPacketsProgressively } from "../src/lib/sourcePackets.ts";
 
 const rows = [
   ...Array.from({ length: 20 }, (_, index) => ({ __searchCategory: "entities", name: `Entity ${index}` })),
@@ -66,6 +67,35 @@ assert.match(searchPageSource, /useState\(10\)/, "category detail pages default 
 assert.match(searchPageSource, /Rows per category/, "All results exposes the bounded per-category control");
 assert.match(searchPageSource, /search-result-category-refinements/, "the detailed screen can refine category in place");
 assert.match(searchPageSource, /searchResultRecordType\(categorizedRow\)/, "rows display source-specific record types");
+assert.match(searchPageSource, /source-intelligence\/news\/v1\?q=/, "detailed news retrieval is bound to the active query");
+assert.match(searchPageSource, /source-intelligence\/news\/v1\?q=.*limit=25/, "detailed news retrieval uses the bounded visible-result window");
+assert.doesNotMatch(searchPageSource, /source-intelligence\/news\/v1\?q=.*limit=100/, "detailed news retrieval does not request an unused 100-row window");
+assert.match(searchPageSource, /collectFactPacketsProgressively/, "detailed news retrieval publishes verified variants progressively");
+assert.match(searchPageSource, /mergeSearchRecordsPreferEnriched/, "detailed entity results prefer source-enriched duplicate facts");
+assert.match(searchPageSource, /search-source-freshness/, "detailed results expose the live source response timestamp");
+
+const firstNews = deferred();
+const failedVariant = deferred();
+const progress = [];
+const progressiveCollection = collectFactPacketsProgressively(
+  [firstNews.promise, failedVariant.promise],
+  (packet, index) => progress.push({ index, title: packet.data.rows[0].title }),
+);
+firstNews.resolve({ status: "ok", fact: true, data: { rows: [{ title: "Source-backed first result" }] } });
+await new Promise((resolve) => setTimeout(resolve, 0));
+assert.deepEqual(progress, [{ index: 0, title: "Source-backed first result" }], "a verified response is published before a slower variant settles");
+failedVariant.resolve({ status: "unavailable", fact: false, unavailable_reason: "backend_fetch_aborted", data: { rows: [] } });
+const progressivePackets = await progressiveCollection;
+assert.equal(progressivePackets.length, 1, "a failed variant does not erase a verified response");
+assert.equal(progressivePackets[0].data.rows[0].title, "Source-backed first result");
+await assert.rejects(
+  collectFactPacketsProgressively(
+    [Promise.resolve({ status: "ok", fact: true, data: { rows: [] } })],
+    () => { throw new Error("publisher regression"); },
+  ),
+  /publisher regression/,
+  "publisher defects are not mislabeled as source gaps",
+);
 
 const routeProbe = execFileSync("python3", [
   "-c",
@@ -93,3 +123,11 @@ console.log(JSON.stringify({
   balanced_rows: balanced.length,
   route_cases: 3,
 }));
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
+}
