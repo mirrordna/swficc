@@ -48,6 +48,18 @@ function normalizedSourceOrigin(value) {
   }
 }
 
+function writeJsonAtomic(filePath, value) {
+  const temporaryPath = `${filePath}.tmp-${process.pid}`;
+  const descriptor = fs.openSync(temporaryPath, "w", 0o600);
+  try {
+    fs.writeFileSync(descriptor, `${JSON.stringify(value, null, 2)}\n`);
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  fs.renameSync(temporaryPath, filePath);
+}
+
 function evaluate({ mode, receipts, identity, expectedRelease, sourceOrigin, stakeholderApprovalSha, now = Date.now() }) {
   const checks = [];
   const add = (id, ok, detail = null) => checks.push({ id, status: ok ? "PASS" : "BLOCKED", detail });
@@ -78,10 +90,21 @@ function evaluate({ mode, receipts, identity, expectedRelease, sourceOrigin, sta
   const fullParityComplete = Number(parityFull?.totals?.count) > 0
     && Number(parityFull?.totals?.checked) === Number(parityFull?.totals?.count)
     && Number(parityFull?.totals?.failed) === 0;
+  const parityContinuityMode = String(parityFull?.continuity?.mode || "");
+  const mutationCoverageComplete = parityContinuityMode === "full_scan"
+    || (parityContinuityMode === "anchored_incremental"
+      && parityFull?.continuity?.mutation_witness_complete === true
+      && parityFull?.continuity?.mutation_witness_unchanged === true);
+  add("full_parity_mutation_coverage", mutationCoverageComplete, {
+    mode: parityContinuityMode || "missing",
+    mutation_witness_complete: parityFull?.continuity?.mutation_witness_complete ?? null,
+    mutation_witness_unchanged: parityFull?.continuity?.mutation_witness_unchanged ?? null,
+  });
   add("fresh_full_mongo_parity", parityFull?.status === "pass"
     && /full required-field parity/i.test(String(parityFull?.scope || ""))
     && parityFull?.partial_run === false
     && parityFull?.continuity?.high_water_complete === true
+    && mutationCoverageComplete
     && fullParityComplete
     && fresh(parityFull, now), parityFull ? {
     status: parityFull.status,
@@ -221,6 +244,8 @@ function selfTest() {
     evaluate({ mode: "candidate", receipts: { ...base, parityFull: { ...base.parityFull, partial_run: true } }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).blockers.includes("fresh_full_mongo_parity"),
     evaluate({ mode: "candidate", receipts: { ...base, parityFull: { ...base.parityFull, totals: { count: 100, checked: 99, failed: 0 } } }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).blockers.includes("fresh_full_mongo_parity"),
     evaluate({ mode: "candidate", receipts: { ...base, parityFull: null }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).blockers.includes("fresh_full_mongo_parity"),
+    evaluate({ mode: "candidate", receipts: { ...base, parityFull: { ...base.parityFull, continuity: { mode: "anchored_incremental", high_water_complete: true } } }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).blockers.includes("full_parity_mutation_coverage"),
+    evaluate({ mode: "candidate", receipts: { ...base, parityFull: { ...base.parityFull, continuity: { mode: "anchored_incremental", high_water_complete: true, mutation_witness_complete: true, mutation_witness_unchanged: true } } }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).checks.find((check) => check.id === "full_parity_mutation_coverage")?.status === "PASS",
     evaluate({ mode: "candidate", receipts: { ...base, visualization: { ...base.visualization, checks: base.visualization.checks.map((check) => check.id === "transactions" ? { ...check, source_total_count: 21 } : check) } }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).blockers.includes("full_parity_source_counts_current"),
     evaluate({ mode: "candidate", receipts: { ...base, kpFeedback: { ...base.kpFeedback, candidate_identity: { ...candidateIdentity, git_sha: "c".repeat(40) } } }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).blockers.includes("kp_feedback_candidate_identity_matches"),
     evaluate({ mode: "candidate", receipts: { ...base, kpFeedback: { ...base.kpFeedback, checks: base.kpFeedback.checks.slice(0, 14) } }, identity, expectedRelease: {}, sourceOrigin, stakeholderApprovalSha: "b".repeat(64), now }).blockers.includes("kp_feedback_receipt_current_pass"),
@@ -245,7 +270,7 @@ function main() {
   const stakeholderApprovalSha = String(process.env.SWFIPN_STAKEHOLDER_ACCEPTANCE_SHA256 || "").trim();
   const result = evaluate({ mode, receipts, identity, expectedRelease, sourceOrigin, stakeholderApprovalSha });
   const receipt = {
-    schema_version: "swfipn.july31_release_gate.v1",
+    schema_version: "swfipn.july31_release_gate.v2",
     generated_at: new Date().toISOString(),
     mode,
     ...result,
@@ -256,7 +281,7 @@ function main() {
     checked_scope: ["July_31_search", "KP_feedback_browser", "section_visualizations", "numeric_truth", "sampled_Mongo_parity", "full_universe_Mongo_parity", "stakeholder_acceptance", "artifact_identity"],
     unchecked_scope: mode === "production" ? ["global_acceptance_outside_July_31_contract"] : ["deployed_production"],
   };
-  fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  writeJsonAtomic(receiptPath, receipt);
   console.log(JSON.stringify({ status: receipt.status, promotion_eligible: receipt.promotion_eligible, blockers: receipt.blockers, receipt: receiptPath }, null, 2));
   if (receipt.status !== "pass") process.exitCode = 1;
 }

@@ -21,6 +21,7 @@ const allowPartialExit = /^(1|true|yes)$/i.test(String(process.env.SWFIPN_ALLOW_
 const fromMappingSnapshot = /^(1|true|yes)$/i.test(String(process.env.SWFIPN_FIELD_PARITY_FROM_MAPPING || ""));
 const incrementalMode = /^(1|true|yes)$/i.test(String(process.env.SWFIPN_FIELD_PARITY_INCREMENTAL || ""));
 const mappingReceiptPath = path.join(outputDir, "swfipn-full-universe-mapping-latest.json");
+const stateSchemaVersion = 2;
 
 const specs = {
   entities: {
@@ -284,17 +285,54 @@ function selfTest() {
     ["live_alias_preserves_zero", amount.live({ amount: 0, capital: 12 }), 0],
     ["source_zero_fallback_preserved", assets.source({ assets: 0 }), 0],
     ["nonzero_source_alias_preferred", assets.source({ assets: 0, managedAssets: 12 }), 12],
-    ["append_only_tail_matches", appendOnlyDeltaPlan(10, 12, 2, false).status, "pass"],
-    ["append_only_tail_rejects_deletion", appendOnlyDeltaPlan(10, 9, 0, false).status, "blocked"],
-    ["append_only_tail_rejects_backfill", appendOnlyDeltaPlan(10, 11, 0, false).status, "blocked"],
-    ["append_only_tail_rejects_multiple_pages", appendOnlyDeltaPlan(10, 12, 2, true).status, "blocked"],
+    ["witnessed_unchanged_collection_passes", witnessedIncrementalPlan(10, 10, 0, false, witness("a"), witness("a")).status, "pass"],
+    ["incremental_rejects_missing_witness", witnessedIncrementalPlan(10, 10, 0, false, null, null).reason, "source_mutation_witness_unavailable_requires_full_scan"],
+    ["incremental_rejects_changed_witness", witnessedIncrementalPlan(10, 10, 0, false, witness("a"), witness("b")).reason, "source_mutation_witness_changed_requires_full_scan"],
+    ["incremental_rejects_deletion", witnessedIncrementalPlan(10, 9, 0, false, witness("a"), witness("a")).status, "blocked"],
+    ["incremental_rejects_unwitnessed_append", witnessedIncrementalPlan(10, 12, 2, false, witness("a"), witness("a")).reason, "source_mutation_witness_inconsistent_requires_full_scan"],
+    ["cursor_accepts_strict_page", validateCursorPage("000000000000000000000001", ["000000000000000000000002", "000000000000000000000003"], "000000000000000000000003", true).status, "pass"],
+    ["cursor_rejects_duplicate", validateCursorPage("", ["000000000000000000000002", "000000000000000000000002"], "000000000000000000000002", true).status, "blocked"],
+    ["cursor_rejects_reordered", validateCursorPage("", ["000000000000000000000003", "000000000000000000000002"], "000000000000000000000002", true).status, "blocked"],
+    ["cursor_rejects_replay_before_anchor", validateCursorPage("000000000000000000000003", ["000000000000000000000002"], "000000000000000000000002", true).status, "blocked"],
+    ["cursor_rejects_next_after_mismatch", validateCursorPage("", ["000000000000000000000002"], "000000000000000000000003", true).status, "blocked"],
+    ["cursor_rejects_empty_nonterminal_page", validateCursorPage("", [], "000000000000000000000003", true).status, "blocked"],
+    ["blocked_terminal_exits_nonzero", terminalExitCode("blocked", false), 1],
+    ["partial_terminal_requires_explicit_allow", terminalExitCode("partial_pass", false), 1],
+    ["explicit_partial_allow_exits_zero", terminalExitCode("partial_pass", true), 0],
   ];
   const failures = checks.filter(([, actual, expected]) => !Object.is(actual, expected));
   console.log(JSON.stringify({ status: failures.length ? "fail" : "pass", checks: checks.length, failures }, null, 2));
   if (failures.length) process.exit(1);
 }
 
-function appendOnlyDeltaPlan(priorCount, currentCount, returnedRows, hasMore) {
+function witness(seed) {
+  return { algorithm: "sha256", scope: "full_collection", value: seed.repeat(64).slice(0, 64) };
+}
+
+function sourceMutationWitness(data) {
+  const raw = data?.mutation_witness;
+  if (!raw || typeof raw !== "object") return null;
+  const algorithm = text(raw.algorithm).toLowerCase();
+  const scope = text(raw.scope).toLowerCase();
+  const value = text(raw.value).toLowerCase();
+  if (algorithm !== "sha256" || scope !== "full_collection" || !/^[a-f0-9]{64}$/.test(value)) return null;
+  return { algorithm, scope, value };
+}
+
+function sameWitness(left, right) {
+  return Boolean(left && right
+    && left.algorithm === right.algorithm
+    && left.scope === right.scope
+    && left.value === right.value);
+}
+
+function witnessedIncrementalPlan(priorCount, currentCount, returnedRows, hasMore, priorWitness, currentWitness) {
+  if (!priorWitness || !currentWitness) {
+    return { status: "blocked", reason: "source_mutation_witness_unavailable_requires_full_scan" };
+  }
+  if (!sameWitness(priorWitness, currentWitness)) {
+    return { status: "blocked", reason: "source_mutation_witness_changed_requires_full_scan" };
+  }
   if (!Number.isFinite(priorCount) || !Number.isFinite(currentCount) || currentCount < priorCount) {
     return { status: "blocked", reason: "source_count_decreased_requires_full_scan" };
   }
@@ -303,7 +341,40 @@ function appendOnlyDeltaPlan(priorCount, currentCount, returnedRows, hasMore) {
   if (returnedRows !== delta) {
     return { status: "blocked", reason: "non_append_or_backfilled_delta_requires_full_scan", delta, returned_rows: returnedRows };
   }
+  if (delta !== 0) {
+    return { status: "blocked", reason: "source_mutation_witness_inconsistent_requires_full_scan", delta, returned_rows: returnedRows };
+  }
   return { status: "pass", delta };
+}
+
+function validateCursorPage(after, ids, nextAfter, hasMore) {
+  if (!Array.isArray(ids) || ids.some((id) => !/^[a-f0-9]{24}$/i.test(String(id)))) {
+    return { status: "blocked", reason: "invalid_source_id_requires_full_scan" };
+  }
+  if (hasMore && ids.length === 0) {
+    return { status: "blocked", reason: "empty_nonterminal_page_requires_full_scan" };
+  }
+  let previous = String(after || "").toLowerCase();
+  for (const rawId of ids) {
+    const id = String(rawId).toLowerCase();
+    if (previous && id <= previous) {
+      return { status: "blocked", reason: id === previous ? "duplicate_source_id_requires_full_scan" : "non_monotonic_source_id_requires_full_scan", id, previous };
+    }
+    previous = id;
+  }
+  const expectedNext = ids.at(-1) || "";
+  const observedNext = String(nextAfter || "").toLowerCase();
+  if (hasMore && (!observedNext || observedNext !== expectedNext)) {
+    return { status: "blocked", reason: "next_after_mismatch_requires_full_scan", expected: expectedNext, observed: observedNext };
+  }
+  if (!hasMore && observedNext && expectedNext && observedNext !== expectedNext) {
+    return { status: "blocked", reason: "terminal_next_after_mismatch_requires_full_scan", expected: expectedNext, observed: observedNext };
+  }
+  return { status: "pass", ids: ids.map((id) => String(id).toLowerCase()) };
+}
+
+function terminalExitCode(status, partialAllowed) {
+  return status === "pass" || (status === "partial_pass" && partialAllowed) ? 0 : 1;
 }
 
 function sha256(raw) {
@@ -423,6 +494,7 @@ print(JSON.stringify(docs.map((doc) => EJSON.serialize(doc))));
 
 function emptyState() {
   return {
+    schema_version: stateSchemaVersion,
     collections: Object.fromEntries(Object.keys(specs).map((key) => [key, {
       count: 0,
       checked: 0,
@@ -432,6 +504,9 @@ function emptyState() {
       blocked: 0,
       after: "",
       pages: 0,
+      source_total_first: null,
+      source_total_latest: null,
+      mutation_witness: null,
     }])),
     failures: [],
   };
@@ -439,9 +514,18 @@ function emptyState() {
 
 function loadState() {
   if (process.env.SWFIPN_RESET_STATE === "1") return emptyState();
+  if (!fs.existsSync(statePath)) return emptyState();
   try {
     const parsed = JSON.parse(fs.readFileSync(statePath, "utf8"));
-    const state = { ...emptyState(), ...parsed, collections: { ...emptyState().collections, ...(parsed.collections || {}) } };
+    if (Number(parsed.schema_version) !== stateSchemaVersion) {
+      throw new Error(`state_schema_mismatch_requires_reset:${parsed.schema_version || "missing"}:${stateSchemaVersion}`);
+    }
+    const defaults = emptyState();
+    const collections = Object.fromEntries(Object.keys(specs).map((key) => [
+      key,
+      { ...defaults.collections[key], ...(parsed.collections?.[key] || {}) },
+    ]));
+    const state = { ...defaults, ...parsed, collections };
     if (process.env.SWFIPN_RESUME_CLEAR_BLOCKS === "1") {
       // 2026-07-10: resuming after transient infra blocks. The cursor never advances
       // past a blocked page (see runCollection), so those records re-check on resume.
@@ -451,13 +535,25 @@ function loadState() {
       for (const entry of Object.values(state.collections)) entry.blocked = 0;
     }
     return state;
-  } catch {
-    return emptyState();
+  } catch (error) {
+    throw new Error(`state_unreadable_requires_reset:${error.message}`);
   }
 }
 
 function saveState(state) {
-  fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+  writeJsonAtomic(statePath, state);
+}
+
+function writeJsonAtomic(filePath, value) {
+  const temporaryPath = `${filePath}.tmp-${process.pid}`;
+  const descriptor = fs.openSync(temporaryPath, "w", 0o600);
+  try {
+    fs.writeFileSync(descriptor, `${JSON.stringify(value, null, 2)}\n`);
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  fs.renameSync(temporaryPath, filePath);
 }
 
 function loadIncrementalAnchor(state) {
@@ -480,7 +576,10 @@ function loadIncrementalAnchor(state) {
       || Number(current.mismatched) !== Number(verified.mismatched)
       || Number(current.missing_source_record) !== Number(verified.missing_source_record)
       || Number(current.blocked) !== Number(verified.blocked)
-      || String(current.after || "") !== String(verified.high_water_id || "")) {
+      || String(current.after || "") !== String(verified.high_water_id || "")
+      || Number(current.source_total_first) !== Number(verified.source_total_first)
+      || Number(current.source_total_latest) !== Number(verified.source_total_latest)
+      || JSON.stringify(current.mutation_witness || null) !== JSON.stringify(verified.mutation_witness || null)) {
       throw new Error(`incremental_anchor_state_mismatch:${collection}`);
     }
     if (Number(current.count) > 0 && !/^[a-f0-9]{24}$/i.test(String(current.after || ""))) {
@@ -517,9 +616,46 @@ async function runCollection(collection, spec, mongoUri, state) {
     }
     const data = packet.body?.data || {};
     const rows = packetRows(packet.body);
-    if (state.collections[collection].count === 0) state.collections[collection].count = Number(data.source_total || data.count || 0);
-    if (!rows.length) break;
-    const idRows = rows.map((row) => ({ id: rowId(row, spec), row })).filter((item) => /^[a-f0-9]{24}$/i.test(item.id));
+    const current = state.collections[collection];
+    const packetTotal = Number(data.source_total);
+    if (!Number.isFinite(packetTotal) || packetTotal < 0) {
+      current.blocked += 1;
+      state.failures.push({ collection, id: "source_total_invalid", reason: "invalid_source_total_requires_full_scan" });
+      saveState(state);
+      break;
+    }
+    if (current.source_total_first === null) {
+      current.source_total_first = packetTotal;
+      current.count = packetTotal;
+      current.mutation_witness = sourceMutationWitness(data);
+    }
+    current.source_total_latest = packetTotal;
+    if (current.source_total_latest !== current.source_total_first) {
+      current.blocked += 1;
+      state.failures.push({ collection, id: "source_total_drift", reason: "source_total_drift_during_scan_requires_restart", first: current.source_total_first, latest: current.source_total_latest });
+      saveState(state);
+      break;
+    }
+    const packetWitness = sourceMutationWitness(data);
+    if (current.mutation_witness && !sameWitness(current.mutation_witness, packetWitness)) {
+      current.blocked += 1;
+      state.failures.push({ collection, id: "source_mutation_witness_drift", reason: "source_mutation_witness_drift_during_scan_requires_restart" });
+      saveState(state);
+      break;
+    }
+    const pageIds = rows.map((row) => rowId(row, spec));
+    const cursorPlan = validateCursorPage(after, pageIds, data.next_after, Boolean(data.has_more));
+    if (cursorPlan.status !== "pass") {
+      current.blocked += 1;
+      state.failures.push({ collection, id: "source_cursor_invalid", reason: cursorPlan.reason, detail: cursorPlan });
+      saveState(state);
+      break;
+    }
+    if (!rows.length) {
+      saveState(state);
+      break;
+    }
+    const idRows = rows.map((row, index) => ({ id: cursorPlan.ids[index], row }));
     let docs;
     let lookupError = null;
     // 2026-07-10: mongosh spawnSync can ETIMEDOUT transiently against Atlas; retry
@@ -593,20 +729,23 @@ async function runIncrementalCollection(collection, spec, mongoUri, state, ancho
   const data = packet.body?.data || {};
   const rows = packetRows(packet.body);
   const currentCount = Number(data.source_total || data.count || 0);
-  const plan = appendOnlyDeltaPlan(Number(prior.count), currentCount, rows.length, Boolean(data.has_more));
+  const currentWitness = sourceMutationWitness(data);
+  const plan = witnessedIncrementalPlan(Number(prior.count), currentCount, rows.length, Boolean(data.has_more), prior.mutation_witness, currentWitness);
   if (plan.status !== "pass") {
     current.blocked += 1;
     state.failures.push({ collection, id: "incremental_continuity_failed", reason: plan.reason, detail: plan });
     saveState(state);
     return;
   }
-  const idRows = rows.map((row) => ({ id: rowId(row, spec), row })).filter((item) => /^[a-f0-9]{24}$/i.test(item.id));
-  if (idRows.length !== rows.length) {
+  const pageIds = rows.map((row) => rowId(row, spec));
+  const cursorPlan = validateCursorPage(after, pageIds, data.next_after, Boolean(data.has_more));
+  if (cursorPlan.status !== "pass") {
     current.blocked += 1;
-    state.failures.push({ collection, id: "incremental_invalid_source_id", reason: "invalid_source_id_requires_full_scan" });
+    state.failures.push({ collection, id: "incremental_cursor_invalid", reason: cursorPlan.reason, detail: cursorPlan });
     saveState(state);
     return;
   }
+  const idRows = rows.map((row, index) => ({ id: cursorPlan.ids[index], row }));
   if (idRows.length) {
     let docs;
     let lookupError = null;
@@ -644,6 +783,8 @@ async function runIncrementalCollection(collection, spec, mongoUri, state, ancho
     current.after = idRows.at(-1).id;
   }
   current.count = currentCount;
+  current.source_total_latest = currentCount;
+  current.mutation_witness = currentWitness;
   saveState(state);
 }
 
@@ -748,7 +889,7 @@ async function main() {
       detail: "No governed non-local Mongo URI is available for full field parity. Local Mongo URIs are always rejected; there is no bypass.",
       rejected_sources: mongo.rejected || [],
     };
-    fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+    writeJsonAtomic(receiptPath, receipt);
     console.log(JSON.stringify({ status: receipt.status, receipt: receiptPath }, null, 2));
     process.exit(1);
   }
@@ -775,28 +916,25 @@ async function main() {
     }
   }
   const partialRun = Boolean(maxPages || process.env.SWFIPN_FIELD_PARITY_COLLECTIONS);
-  for (const collection of Object.keys(state.collections)) {
-    const item = state.collections[collection];
-    if (item.checked > item.count) item.count = item.checked;
-  }
   const failed = Object.values(state.collections).reduce((sum, item) => sum + item.mismatched + item.missing_source_record + item.blocked, 0);
   const hasDataFailures = Object.values(state.collections).some((item) => item.mismatched > 0 || item.missing_source_record > 0);
-  const hasOnlyMongoLookupFailures = failed > 0
+  const hasOnlyRecoverableBlocks = failed > 0
     && !hasDataFailures
     && state.failures.length > 0
-    && state.failures.every((failure) => failure.id === "mongo_lookup_failed");
+    && state.failures.every((failure) => failure.id === "mongo_lookup_failed" || /requires_(full_scan|restart)$/.test(String(failure.reason || "")));
   const totalChecked = Object.values(state.collections).reduce((sum, item) => sum + item.checked, 0);
   const totalCount = Object.values(state.collections).reduce((sum, item) => sum + item.count, 0);
   const receipt = {
-    status: hasOnlyMongoLookupFailures ? "blocked" : failed ? "fail" : partialRun ? "partial_pass" : totalChecked === totalCount && totalCount > 0 ? "pass" : "fail",
+    schema_version: "swfipn.record_field_parity_full.v3",
+    status: hasOnlyRecoverableBlocks ? "blocked" : failed ? "fail" : partialRun ? "partial_pass" : totalChecked === totalCount && totalCount > 0 ? "pass" : "fail",
     generated_at: new Date().toISOString(),
     scope: incrementalMode
-      ? "full required-field parity from prior verified high-water plus append-only SWFIPN source API delta to Mongo by source id"
+      ? "prior full required-field parity retained only by an unchanged full-collection SWFIPN mutation witness"
       : fromMappingSnapshot
       ? "full required-field parity from frozen SWFIPN mapping snapshot to Mongo by source id"
       : "full required-field parity from SWFIPN source API to Mongo by source id",
     verification_mode: incrementalMode
-      ? "anchored_append_only_delta_to_projected_mongo"
+      ? "witnessed_unchanged_collection_to_projected_mongo"
       : fromMappingSnapshot ? "frozen_mapping_source_fields_to_projected_mongo" : "live_scan_to_projected_mongo",
     mapping_receipt: fromMappingSnapshot ? "output/swfipn-full-universe-mapping-latest.json" : "",
     partial_run: partialRun,
@@ -819,6 +957,10 @@ async function main() {
       checked_after: totalChecked,
       delta_checked: totalChecked - (incrementalAnchor?.checked_before || 0),
       high_water_complete: Object.values(state.collections).every((item) => Number(item.count) === 0 || /^[a-f0-9]{24}$/i.test(String(item.after || ""))),
+      mutation_witness_complete: Object.values(state.collections).every((item) => Boolean(item.mutation_witness)),
+      mutation_witness_unchanged: incrementalMode
+        ? Object.keys(specs).every((collection) => sameWitness(incrementalAnchor?.prior?.collections?.[collection]?.mutation_witness, state.collections[collection].mutation_witness))
+        : null,
     },
     rules: {
       generic_missing_zero_distinct: "Missing generic numeric values and explicit zero are distinct; one-sided absence is a mismatch.",
@@ -833,9 +975,9 @@ async function main() {
     })),
     failures: state.failures.slice(0, 1000),
   };
-  fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  writeJsonAtomic(receiptPath, receipt);
   console.log(JSON.stringify({ status: receipt.status, totals: receipt.totals, receipt: receiptPath }, null, 2));
-  if (receipt.status === "fail" || (receipt.status === "partial_pass" && !allowPartialExit)) process.exit(1);
+  if (terminalExitCode(receipt.status, allowPartialExit) !== 0) process.exit(1);
 }
 
 if (process.argv.includes("--self-test")) {
@@ -843,7 +985,7 @@ if (process.argv.includes("--self-test")) {
 } else {
   main().catch((error) => {
     fs.mkdirSync(outputDir, { recursive: true });
-    fs.writeFileSync(receiptPath, `${JSON.stringify({ status: "fail", generated_at: new Date().toISOString(), error: error.message }, null, 2)}\n`);
+    writeJsonAtomic(receiptPath, { status: "fail", generated_at: new Date().toISOString(), error: error.message });
     console.error(error);
     process.exit(1);
   });
