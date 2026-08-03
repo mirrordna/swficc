@@ -462,7 +462,7 @@ export default function DashboardPage() {
       });
       const progressiveNewsPackets: Array<Packet | undefined> = Array.from({ length: queryVariants.length });
       const newsSearch = collectFactPacketsProgressively(queryVariants.map((variant) => (
-        fetchPacket(`/api/source-intelligence/news/v1?q=${encodeURIComponent(variant)}&limit=25`, 8_000, {
+        fetchPacket(`/api/source-intelligence/news/v1?q=${encodeURIComponent(variant)}&limit=25&count_mode=bounded`, 8_000, {
           signal: controller.signal,
           attempts: 1,
         })

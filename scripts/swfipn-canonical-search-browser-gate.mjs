@@ -23,6 +23,15 @@ const requiredSearchPaths = [
   "/api/live-opportunities/v1",
   "/api/live-mandates/v1",
 ];
+const fullPageRequiredLimits = {
+  "/api/v1/public/search": 100,
+  "/api/source-data/search/v1": 100,
+  "/api/source-intelligence/news/v1": 25,
+  "/api/people/search/v1": 100,
+  "/api/entity-transactions/v1": 100,
+  "/api/live-opportunities/v1": 100,
+  "/api/live-mandates/v1": 100,
+};
 
 function candidateIdentity() {
   let gitSha = String(process.env.SWFIPN_CANDIDATE_GIT_SHA || "").trim();
@@ -144,9 +153,12 @@ async function orderedResultSet(page) {
 
 function matchesRequiredRequest(observed, required, requiredLimit) {
   if (!observed.startsWith(required)) return false;
-  if (!requiredLimit) return true;
+  const expectedLimit = requiredLimit && typeof requiredLimit === "object"
+    ? requiredLimit[required]
+    : requiredLimit;
+  if (!expectedLimit) return true;
   try {
-    return new URL(observed, "https://candidate.invalid").searchParams.get("limit") === String(requiredLimit);
+    return new URL(observed, "https://candidate.invalid").searchParams.get("limit") === String(expectedLimit);
   } catch {
     return false;
   }
@@ -264,7 +276,7 @@ async function runQuery(browser, origin, testCase) {
     ]);
     const searchResultsRoot = page.locator("main[data-search-results-state]");
     const [fullPageSettlement] = await Promise.all([
-      waitForSearchLanes(page, networkTrace, 30_000, requiredSearchPaths, 100),
+      waitForSearchLanes(page, networkTrace, 30_000, requiredSearchPaths, fullPageRequiredLimits),
       page.locator('main[data-search-results-state]:not([data-search-results-state="loading"])').waitFor({ state: "attached", timeout: 30_000 }),
     ]);
     const searchResultsState = await searchResultsRoot.getAttribute("data-search-results-state");
@@ -302,12 +314,17 @@ async function runQuery(browser, origin, testCase) {
     const detailedPeoplePresent = detailedPeopleResult.present;
     const detailedAumPass = !testCase.aumDisplay || detailedEntityRow.includes(testCase.aumDisplay);
     const detailedForbiddenAbsent = testCase.forbidden.every((value) => !detailedBody.includes(value));
-    const detailedNewsRequests = networkTrace.filter((event) => {
+    const detailedNewsSearchRequests = networkTrace.filter((event) => {
       if (!event.path?.startsWith("/api/source-intelligence/news/v1")) return false;
-      return new URL(event.path, "https://candidate.invalid").searchParams.get("limit") === "25";
+      return new URL(event.path, "https://candidate.invalid").searchParams.has("q");
     });
-    const detailedNewsQueryBound = detailedNewsRequests.length > 0
-      && detailedNewsRequests.every((event) => /[?&]q=/.test(event.path));
+    const detailedNewsQueryBound = detailedNewsSearchRequests.length > 0
+      && detailedNewsSearchRequests.every((event) => {
+        const params = new URL(event.path, "https://candidate.invalid").searchParams;
+        return Boolean(params.get("q"))
+          && params.get("limit") === "25"
+          && params.get("count_mode") === "bounded";
+      });
     const detailedPublicSearchNotSharedCacheable = networkTrace
       .filter((event) => event.path?.startsWith("/api/v1/public/search"))
       .every((event) => String(event.cache_control || "").startsWith("no-store"));
@@ -388,6 +405,7 @@ async function runQuery(browser, origin, testCase) {
         aum_pass: detailedAumPass,
         forbidden_absent: detailedForbiddenAbsent,
         news_requests_query_bound: detailedNewsQueryBound,
+        news_search_request_paths: detailedNewsSearchRequests.map((event) => event.path),
         public_search_not_shared_cacheable: detailedPublicSearchNotSharedCacheable,
         network_trace: networkTrace.sort((left, right) => left.at_ms - right.at_ms),
         screenshot: detailedScreenshotPath,
@@ -466,6 +484,10 @@ async function main() {
   const sourceBackendOrigin = new URL(
     String(process.env.SWFIPN_BACKEND_ORIGIN || (liveTarget ? configuredOrigin : "https://dashboard.swfi.com")),
   ).origin;
+  const sourceBackendCandidateGitSha = String(process.env.SWFIPN_SOURCE_BACKEND_GIT_SHA || "").trim();
+  const sourceBackendCandidateGitDirty = /^(1|true|yes)$/i.test(
+    String(process.env.SWFIPN_SOURCE_BACKEND_GIT_DIRTY || ""),
+  );
   let child = null;
   let origin;
   if (configuredOrigin) {
@@ -517,6 +539,18 @@ async function main() {
     const releaseIdentityPinned = !liveTarget
       || (/^[a-f0-9]{40}$/i.test(testedReleaseGitSha) && Boolean(testedReleaseAssetVersion));
     const candidate = liveTarget ? null : candidateIdentity();
+    const sourceBackendCandidate = liveTarget ? null : {
+      git_sha: sourceBackendCandidateGitSha || null,
+      git_dirty: sourceBackendCandidateGitDirty,
+    };
+    const candidateIdentityPinned = liveTarget || Boolean(
+      candidate
+      && /^[a-f0-9]{40}$/i.test(candidate.git_sha)
+      && !candidate.git_dirty
+      && candidate.asset_version
+      && /^[a-f0-9]{40}$/i.test(sourceBackendCandidateGitSha)
+      && !sourceBackendCandidateGitDirty
+    );
     const receipt = {
       schema_version: "swfipn.canonical_search_browser_gate.v2",
       generated_at: new Date().toISOString(),
@@ -530,7 +564,9 @@ async function main() {
       tested_release_asset_version: testedReleaseAssetVersion || null,
       release_identity_pinned: releaseIdentityPinned,
       candidate_identity: candidate,
-      status: checks.every((check) => check.pass) && releaseIdentityPinned ? "pass" : "fail",
+      source_backend_candidate_identity: sourceBackendCandidate,
+      candidate_identity_pinned: candidateIdentityPinned,
+      status: checks.every((check) => check.pass) && releaseIdentityPinned && candidateIdentityPinned ? "pass" : "fail",
       checked_scope: [
         "top_aum_first_paint",
         "adia_entity_news_people_semantics",
@@ -544,7 +580,10 @@ async function main() {
       unchecked_scope: liveTarget
         ? ["stakeholder_acceptance", "Mongo_record_parity", "global_release_acceptance"]
         : ["deployed_production", "stakeholder_acceptance", "Mongo_record_parity"],
-      bad_news: releaseIdentityPinned ? [] : ["live_target_release_identity_unpinned"],
+      bad_news: [
+        ...(!releaseIdentityPinned ? ["live_target_release_identity_unpinned"] : []),
+        ...(!candidateIdentityPinned ? ["candidate_or_source_backend_identity_unpinned"] : []),
+      ],
       checks,
     };
     fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
