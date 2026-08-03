@@ -6,6 +6,7 @@ import Image from "next/image";
 import Link from "next/link";
 import type { Packet } from "@/lib/sourcePackets";
 import {
+  collectFactPacketsProgressively,
   count,
   fetchPacket,
   isFact,
@@ -459,16 +460,17 @@ export default function DashboardPage() {
         setSearchEntityPackets([]);
         setSearchCoreLoading(false);
       });
-      const newsSearch = Promise.allSettled(queryVariants.map((variant) => (
+      const progressiveNewsPackets: Array<Packet | undefined> = Array.from({ length: queryVariants.length });
+      const newsSearch = collectFactPacketsProgressively(queryVariants.map((variant) => (
         fetchPacket(`/api/source-intelligence/news/v1?q=${encodeURIComponent(variant)}&limit=25`, 8_000, {
           signal: controller.signal,
           attempts: 1,
-        }).then((packet) => {
-          if (controller.signal.aborted || !isFact(packet)) return;
-          setSearchNewsPackets((current) => [...current, packet]);
         })
-      ))).catch(() => {
-        if (!controller.signal.aborted) setSearchNewsPackets([]);
+      )), (packet, index) => {
+        progressiveNewsPackets[index] = packet;
+        if (!controller.signal.aborted) {
+          setSearchNewsPackets(progressiveNewsPackets.filter((item): item is Packet => Boolean(item)));
+        }
       }).finally(() => {
         if (!controller.signal.aborted) setSearchNewsLoading(false);
       });

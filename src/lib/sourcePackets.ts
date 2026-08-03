@@ -137,6 +137,27 @@ export async function fetchPacket(path: string, timeoutMs = 15_000, options: Fet
   return packet;
 }
 
+export async function collectFactPacketsProgressively(
+  requests: Array<Promise<Packet>>,
+  onPacket: (packet: Packet, index: number) => void,
+): Promise<Packet[]> {
+  const settled = await Promise.all(requests.map(async (request, index) => {
+    let packet: Packet;
+    try {
+      packet = await request;
+    } catch {
+      return null;
+    }
+    if (!isFact(packet)) return null;
+    onPacket(packet, index);
+    return { index, packet };
+  }));
+  return settled
+    .filter((item): item is { index: number; packet: Packet } => item !== null)
+    .sort((left, right) => left.index - right.index)
+    .map((item) => item.packet);
+}
+
 async function fetchPacketOnce(path: string, timeoutMs = 15_000, signal?: AbortSignal): Promise<Packet> {
   const origin = backendOrigin();
   if (!origin) return sourceGapPacket("frontend_backend_origin_missing_or_invalid");

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import SavedSearchManager from "@/components/SavedSearchManager";
 import SwfiBrandHeader from "@/components/SwfiBrandHeader";
 import type { Packet } from "@/lib/sourcePackets";
-import { fetchPacket, isFact, money, packetReason, rows, text } from "@/lib/sourcePackets";
+import { collectFactPacketsProgressively, fetchPacket, isFact, money, packetReason, rows, text } from "@/lib/sourcePackets";
 import { appHref, isSwfiPlatformRecordHref, selfContainedHref, swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
 import { businessSearchQueryVariants, canonicalSearchName, dedupeSearchRecords, hasVerifiedCanonicalSearchIdentity, mergeSearchRecordsPreferEnriched, mergeSearchRecordsPreferPrimary, rankSearchRecords } from "@/lib/searchRelevance";
 import { filterSmartSearchIntentRows, smartSearchIntentForQuery } from "@/lib/smartSearchIntent";
@@ -209,21 +209,16 @@ export default function SearchResultsPage() {
       : Promise.resolve([] as Packet[]);
 
     const shouldSearchNews = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "news");
+    const progressiveNewsPackets: Array<Packet | undefined> = Array.from({ length: sourceVariants.length });
     const newsSearch = shouldSearchNews
-      ? Promise.all(sourceVariants.map((variant) => (
-          fetchPacket(`/api/source-intelligence/news/v1?q=${encodeURIComponent(variant)}&limit=100`, 14_000, {
+      ? collectFactPacketsProgressively(sourceVariants.map((variant) => (
+          fetchPacket(`/api/source-intelligence/news/v1?q=${encodeURIComponent(variant)}&limit=25`, 8_000, {
             signal: controller.signal,
-            attempts: 2,
+            attempts: 1,
           })
-        ))).then((nextPackets) => {
-          const factPackets = nextPackets.filter(isFact);
-          if (active) {
-            setNewsPackets(factPackets);
-          }
-          return factPackets;
-        }).catch(() => {
-          if (active) setNewsPackets([]);
-          return [] as Packet[];
+        )), (nextPacket, index) => {
+          progressiveNewsPackets[index] = nextPacket;
+          if (active) setNewsPackets(progressiveNewsPackets.filter((packet): packet is Packet => Boolean(packet)));
         })
       : Promise.resolve([] as Packet[]);
 

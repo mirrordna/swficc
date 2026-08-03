@@ -304,7 +304,7 @@ async function runQuery(browser, origin, testCase) {
     const detailedForbiddenAbsent = testCase.forbidden.every((value) => !detailedBody.includes(value));
     const detailedNewsRequests = networkTrace.filter((event) => {
       if (!event.path?.startsWith("/api/source-intelligence/news/v1")) return false;
-      return new URL(event.path, "https://candidate.invalid").searchParams.get("limit") === "100";
+      return new URL(event.path, "https://candidate.invalid").searchParams.get("limit") === "25";
     });
     const detailedNewsQueryBound = detailedNewsRequests.length > 0
       && detailedNewsRequests.every((event) => /[?&]q=/.test(event.path));
