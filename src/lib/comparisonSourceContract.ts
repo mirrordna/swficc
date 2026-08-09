@@ -48,7 +48,10 @@ export function comparisonEntityListEndpoint(request: ComparisonEntityListReques
   const entityType = cleanText(request.entityType);
   const region = cleanText(request.region);
   if (query && query.toLowerCase() !== entityType.toLowerCase()) params.set("q", query);
-  if (entityType) params.set("entity_type", entityType);
+  if (entityType) {
+    params.set("entity_type", entityType);
+    params.set("entity_type_match", "exact");
+  }
   if (region) params.set("region", region);
   if (request.includeDefunct) params.set("include_defunct", "true");
   params.set("limit", String(normalizeLimit(request.limit, 25)));
@@ -99,6 +102,7 @@ export function inspectComparisonEntityListPacket(
     const filters = record(payload.filters);
     if (cleanText(filters.query) !== cleanText(request.query)) issues.push("query_filter_mismatch");
     if (cleanText(filters.entity_type) !== cleanText(request.entityType)) issues.push("entity_type_filter_mismatch");
+    if (request.entityType && cleanText(filters.entity_type_match) !== "exact") issues.push("entity_type_match_not_exact");
     if (cleanText(filters.region) !== cleanText(request.region)) issues.push("region_filter_mismatch");
     if (Boolean(filters.include_defunct) !== Boolean(request.includeDefunct)) issues.push("include_defunct_filter_mismatch");
 
@@ -112,6 +116,7 @@ export function inspectComparisonEntityListPacket(
       if (!request.includeDefunct && (row.defunct === true || cleanText(row.entity_status).toLowerCase() === "defunct")) {
         issues.push(`row_${index}_defunct_in_active_scope`);
       }
+      if (requestedTypeKey && comparisonPeerTypeKey(row) !== requestedTypeKey) issues.push(`row_${index}_entity_type_mismatch`);
       if (id && keys.has(id)) issues.push(`row_${index}_duplicate_entity_id`);
       if (id) keys.add(id);
     });
@@ -122,20 +127,14 @@ export function inspectComparisonEntityListPacket(
     : base.state === "ready" && packetRows.length === 0 && count === 0
       ? "empty"
       : base.state;
-  const exactRows = requestedTypeKey
-    ? packetRows.filter((row) => comparisonPeerTypeKey(row) === requestedTypeKey)
-    : packetRows;
   return {
     state,
     issues,
     reason: issues[0] || base.reason,
-    rows: state === "invalid" ? [] : exactRows,
+    rows: state === "invalid" ? [] : packetRows,
     count,
-    excludedByExactTypeGuard: requestedTypeKey ? packetRows.length - exactRows.length : 0,
-    // The live endpoint currently applies entity_type as a broad text match.
-    // Until the backend exposes exact semantics, its count cannot be presented
-    // as the exact peer-type universe.
-    exactTypeCountAvailable: !requestedTypeKey,
+    excludedByExactTypeGuard: 0,
+    exactTypeCountAvailable: true,
     page,
     requestedLimit,
     hasMore,

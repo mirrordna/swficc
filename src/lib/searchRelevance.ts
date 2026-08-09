@@ -26,6 +26,7 @@ const SOURCE_ALIAS_FIELDS = [
 // populate or replace a displayed business fact.
 const VERIFIED_QUERY_ALIASES: Readonly<Record<string, readonly string[]>> = {
   adia: ["Abu Dhabi Investment Authority"],
+  "abu dhabi investment authority": ["ADIA"],
   adq: ["Abu Dhabi Developmental Holding Company"],
   cic: ["China Investment Corporation"],
   gpfg: ["Government Pension Fund Global"],
@@ -41,6 +42,8 @@ const VERIFIED_QUERY_ALIASES: Readonly<Record<string, readonly string[]>> = {
   aimco: ["Alberta Investment Management Corporation"],
   icd: ["Investment Corporation of Dubai"],
   kic: ["Korea Investment Corporation"],
+  hkic: ["Hong Kong Investment Corporation"],
+  "hong kong investment corporation": ["HKIC"],
   "sovereign wealth funds": ["Sovereign Wealth Fund"],
   "pension funds": ["Public Pension"],
   "family offices": ["Family Office"],
@@ -113,6 +116,16 @@ export function rankSearchRecords<T extends Record<string, unknown>>(sourceRows:
       || a.index - b.index
     ))
     .map((item) => item.row);
+}
+
+export function rankSearchRecordsAcrossQueryVariants<T extends Record<string, unknown>>(
+  sourceRows: T[],
+  query: string,
+  kind: SearchKind = "entity",
+): T[] {
+  return dedupeSearchRecords(
+    businessSearchQueryVariants(query).flatMap((variant) => rankSearchRecords(sourceRows, variant, kind)),
+  );
 }
 
 // INTERIM hierarchy pending the official ordering list from the data team.

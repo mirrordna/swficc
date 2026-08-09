@@ -2,18 +2,21 @@
 import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
+import { validateSourceBoundTotal } from "./lib/source-total-contract.mjs";
 
 const repoRoot = process.cwd();
 const outputDir = path.join(repoRoot, "output");
 const receiptPath = path.join(outputDir, "swfipn-list-data-proof-latest.json");
 const origin = normalizeOrigin(process.env.SWFIPN_ORIGIN || "http://127.0.0.1:8353/swficc/");
+const backendOrigin = (process.env.SWFIPN_BACKEND_ORIGIN || new URL(origin).origin).replace(/\/$/, "");
+const maxAgeHours = Number(process.env.SWFIPN_MAX_PACKET_AGE_HOURS || 24);
 
 const routes = [
   { id: "profiles", route: "/profiles/", api: "/api/source-data/search/v1", required: ["Institutions", "Entity Name"], totalAtLeast: 590_000, recordHrefPattern: "/swficc/profiles/detail/\\?id=[0-9a-f]{24}", handoffPattern: "https://www\\.swfi\\.com/v1/signin/\\?[^#]*redirect=.*%2Fv1%2Fentities%2F[0-9a-f]{24}", sourcePattern: "https://www\\.swfi\\.com/v1/entities/[0-9a-f]{24}" },
   { id: "people", route: "/people/", api: "/api/source-data/search/v1", required: ["People", "Name"], totalAtLeast: 100_000, recordHrefPattern: "/swficc/people/detail/\\?id=[0-9a-f]{24}", handoffPattern: "https://www\\.swfi\\.com/v1/signin/\\?[^#]*redirect=.*%2Fv1%2Fpeople%2F[0-9a-f]{24}", sourcePattern: "https://www\\.swfi\\.com/v1/people/[0-9a-f]{24}" },
   { id: "transactions", route: "/transactions/", api: "/api/transactions/v1", required: ["Transactions", "Buyer Entity"], totalAtLeast: 180_000, recordHrefPattern: "/swficc/transactions/detail/\\?id=[0-9a-f]{24}", handoffPattern: "https://www\\.swfi\\.com/v1/signin/\\?[^#]*redirect=.*%2Fv1%2Ftransactions%2F[0-9a-f]{24}", sourcePattern: "https://www\\.swfi\\.com/v1/transactions/[0-9a-f]{24}" },
   { id: "deals", route: "/deals/", api: "/api/transactions/v1", required: ["Deals", "Buyer Entity"], totalAtLeast: 180_000, recordHrefPattern: "/swficc/transactions/detail/\\?id=[0-9a-f]{24}", handoffPattern: "https://www\\.swfi\\.com/v1/signin/\\?[^#]*redirect=.*%2Fv1%2Ftransactions%2F[0-9a-f]{24}", sourcePattern: "https://www\\.swfi\\.com/v1/transactions/[0-9a-f]{24}" },
-  { id: "mandates", route: "/mandates/", api: "/api/live-opportunities/v1", required: ["RFPs", "Title"], totalAtLeast: 30, recordHrefPattern: "/swficc/mandates/detail/\\?id=[0-9a-f]{24}", handoffPattern: "https://www\\.swfi\\.com/v1/signin/\\?[^#]*redirect=.*%2Fv1%2Fcompass%2F[0-9a-f]{24}", sourcePattern: "https://www\\.swfi\\.com/v1/compass/[0-9a-f]{24}" },
+  { id: "mandates", route: "/mandates/", api: "/api/live-opportunities/v1", required: ["RFPs", "Title"], totalAtLeast: 1, sourceBoundTotal: "/api/live-opportunities/v1?limit=25&page=1", expectedSourceCollection: "swfi_api.compass.opportunities", recordHrefPattern: "/swficc/mandates/detail/\\?id=[0-9a-f]{24}", handoffPattern: "https://www\\.swfi\\.com/v1/signin/\\?[^#]*redirect=.*%2Fv1%2Fcompass%2F[0-9a-f]{24}", sourcePattern: "https://www\\.swfi\\.com/v1/compass/[0-9a-f]{24}" },
   { id: "research", route: "/research/", api: "/api/source-intelligence/news/v1", required: ["Research", "Title"], totalAtLeast: 10, recordHrefPattern: "/swficc/research/detail/\\?" },
 ];
 
@@ -36,6 +39,14 @@ function loadPlaywright() {
 function numberFromShowing(text) {
   const match = text.match(/Showing\s+[0-9,]+\s+of\s+([0-9,]+)/i);
   return match ? Number(match[1].replaceAll(",", "")) : 0;
+}
+
+async function fetchSourcePacket(route) {
+  const response = await fetch(new URL(route, backendOrigin), {
+    headers: { Accept: "application/json", "X-SWFIPN-Public": "1" },
+  });
+  const packet = await response.json().catch(() => null);
+  return { status: response.status, packet };
 }
 
 async function inspectRoute(context, spec) {
@@ -74,6 +85,7 @@ async function inspectRoute(context, spec) {
     failed_requests: [],
     console_errors: [],
     screenshot: "",
+    source_total_contract: null,
   };
 
   try {
@@ -119,7 +131,20 @@ async function inspectRoute(context, spec) {
     if (result.status >= 400 || !result.status) result.failures.push(`http_${result.status || "missing"}`);
     if (!apiRequests.some((url) => url.includes(spec.api))) result.failures.push(`missing_api_request:${spec.api}`);
     if (!apiResponses.some((item) => item.url.includes(spec.api) && item.status === 200)) result.failures.push(`missing_api_200:${spec.api}`);
-    if (result.rendered_total < spec.totalAtLeast) result.failures.push(`total_too_low:${result.rendered_total}<${spec.totalAtLeast}`);
+    if (spec.sourceBoundTotal) {
+      const sourceResponse = await fetchSourcePacket(spec.sourceBoundTotal);
+      if (sourceResponse.status !== 200) result.failures.push(`source_packet_http_${sourceResponse.status}`);
+      result.source_total_contract = validateSourceBoundTotal({
+        packet: sourceResponse.packet,
+        renderedTotal: result.rendered_total,
+        minimum: spec.totalAtLeast,
+        maxAgeHours,
+        expectedSourceCollection: spec.expectedSourceCollection,
+      });
+      result.failures.push(...result.source_total_contract.failures);
+    } else if (result.rendered_total < spec.totalAtLeast) {
+      result.failures.push(`total_too_low:${result.rendered_total}<${spec.totalAtLeast}`);
+    }
     if (!result.row_links.length) result.failures.push(`missing_record_row_link:${spec.recordHrefPattern}`);
     if (!snapshot.sourceBackedLinks) result.failures.push("missing_source_backed_link_markers");
     if (snapshot.bodyText.includes("source_gap") || snapshot.bodyText.includes("Active Mirror") || snapshot.bodyText.includes("undefined") || snapshot.bodyText.includes("null")) {

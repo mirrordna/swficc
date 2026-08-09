@@ -65,7 +65,7 @@ import {
   verifiedPeopleLinkedInProfileUrl,
 } from "@/lib/peopleSourceContract";
 import { comparableAumCurrency, formatDisclosedAum } from "@/lib/aumRankingContract";
-import { allocatorSourceEndpoint, inspectAllocatorPacket, normalizeAllocatorRequest, type AllocatorSort, type AllocatorWindow } from "@/lib/allocatorSourceContract";
+import { allocatorSourceEndpoint, emptyAllocatorFilters, inspectAllocatorPacket, normalizeAllocatorFilters, normalizeAllocatorRequest, type AllocatorFilters, type AllocatorSort, type AllocatorWindow } from "@/lib/allocatorSourceContract";
 import { comparisonEntityListEndpoint } from "@/lib/comparisonSourceContract";
 import { comparisonPeerTypeKey } from "@/lib/competitionAnalysis";
 
@@ -199,8 +199,15 @@ function mandateListUrl({
   else url.searchParams.delete("q");
   url.searchParams.delete("filter");
   url.searchParams.delete("investment_type");
+  url.searchParams.set("record_type", mandateFilters.recordType);
   mandateFilters.investmentTypes.forEach((value) => url.searchParams.append("investment_type", value));
   for (const [key, value] of [
+    ["country", mandateFilters.country],
+    ["region", mandateFilters.region],
+    ["posted_from", mandateFilters.postedFrom],
+    ["posted_to", mandateFilters.postedTo],
+    ["due_from", mandateFilters.dueFrom],
+    ["due_to", mandateFilters.dueTo],
     ["ticket_min", mandateFilters.ticketMin],
     ["ticket_max", mandateFilters.ticketMax],
     ["ticket_currency", mandateFilters.ticketCurrency],
@@ -289,6 +296,7 @@ function allocatorListUrl({
   sort,
   sortDir,
   sectionView,
+  filters,
 }: {
   tableFilter: string;
   days: number;
@@ -297,19 +305,30 @@ function allocatorListUrl({
   sort: string;
   sortDir: "asc" | "desc";
   sectionView: "data" | "visualization";
+  filters: AllocatorFilters;
 }): string {
   const url = new URL(window.location.href);
   const cleanFilter = eligibleTextQuery(tableFilter);
   if (cleanFilter) url.searchParams.set("q", cleanFilter);
   else url.searchParams.delete("q");
   url.searchParams.delete("filter");
-  const request = normalizeAllocatorRequest({ days, limit: rowLimit, page: pageIndex + 1, sort: sort as AllocatorSort, direction: sortDir, query: cleanFilter });
+  const request = normalizeAllocatorRequest({ days, limit: rowLimit, page: pageIndex + 1, sort: sort as AllocatorSort, direction: sortDir, query: cleanFilter, ...filters });
   url.searchParams.set("days", String(request.days));
   url.searchParams.set("rows", String(request.limit));
   url.searchParams.set("page", String(request.page));
   url.searchParams.set("sort", request.sort);
   url.searchParams.set("dir", request.direction);
   url.searchParams.set("view", sectionView);
+  for (const [key, value] of [
+    ["country", request.country],
+    ["region", request.region],
+    ["entity_type", request.entityType],
+    ["aum_min", request.aumMin],
+    ["aum_max", request.aumMax],
+  ] as const) {
+    if (value) url.searchParams.set(key, value);
+    else url.searchParams.delete(key);
+  }
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
@@ -700,6 +719,9 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
   const [sortDir, setSortDir] = useState<"asc" | "desc">(() => defaultSortDir(kind));
   const [allocatorSort, setAllocatorSort] = useState<AllocatorSort>("activity_count");
   const [allocatorDays, setAllocatorDays] = useState<AllocatorWindow>(90);
+  const [allocatorFilters, setAllocatorFilters] = useState<AllocatorFilters>(emptyAllocatorFilters);
+  const [allocatorFilterDraft, setAllocatorFilterDraft] = useState<AllocatorFilters>(emptyAllocatorFilters);
+  const [allocatorFilterIssue, setAllocatorFilterIssue] = useState("");
   const [allocatorUrlReady, setAllocatorUrlReady] = useState(() => kind !== "allocators");
   const [selectedDealEntityTypes, setSelectedDealEntityTypes] = useState<string[]>([]);
   const [selectedDealIndustries, setSelectedDealIndustries] = useState<string[]>([]);
@@ -815,6 +837,13 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
         }
         if (kind === "mandates") {
           const restoredFilters: MandateFilters = {
+            recordType: params.get("record_type") === "rfp" || params.get("record_type") === "opportunity" ? params.get("record_type") as "rfp" | "opportunity" : "all",
+            country: params.get("country")?.trim() || "",
+            region: params.get("region")?.trim() || "",
+            postedFrom: params.get("posted_from")?.trim() || "",
+            postedTo: params.get("posted_to")?.trim() || "",
+            dueFrom: params.get("due_from")?.trim() || "",
+            dueTo: params.get("due_to")?.trim() || "",
             investmentTypes: params.getAll("investment_type").map((value) => value.trim()).filter(Boolean),
             ticketMin: params.get("ticket_min")?.trim() || "",
             ticketMax: params.get("ticket_max")?.trim() || "",
@@ -830,13 +859,15 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
           setMandateFilters(restoredSourceFilters);
           setMandateFilterDraft(restoredValidation.filters);
           setMandateFilterIssue(restoredValidation.issue);
-          setTableFilter(params.get("q")?.trim() || params.get("filter")?.trim() || "");
+          const restoredQuery = params.get("q")?.trim() || params.get("filter")?.trim() || "";
+          setTableFilter(restoredQuery);
+          setServerFilterTerm(eligibleTextQuery(restoredQuery));
           if ([5, 10, 25, 50, 100].includes(requestedRows)) setRowLimit(requestedRows);
           if (Number.isInteger(requestedPage) && requestedPage > 0) setPageIndex(requestedPage - 1);
           if (params.has("sort") && requestedSortSupported(kind, config.columns, requestedSort)) setSortColumn(requestedSort);
           if ((requestedDir === "asc" || requestedDir === "desc") && (!params.has("sort") || requestedSortSupported(kind, config.columns, requestedSort))) setSortDir(requestedDir);
           if (requestedView === "data" || requestedView === "visualization") setSectionView(requestedView);
-          else if (restoredFilters.investmentTypes.length || restoredFilters.ticketMin || restoredFilters.ticketMax || restoredFilters.ticketCurrency || params.has("q") || params.has("filter")) setSectionView("data");
+          else if (Object.values(restoredFilters).some((value) => Array.isArray(value) ? value.length > 0 : value !== "" && value !== "all") || restoredQuery) setSectionView("data");
           return;
         }
         if (kind === "research" || kind === "intelligence") {
@@ -866,6 +897,13 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
         }
         if (params.has("filter")) setSectionView("data");
         if (kind === "allocators") {
+          const restoredFilterValidation = normalizeAllocatorFilters({
+            country: params.get("country") || "",
+            region: params.get("region") || "",
+            entityType: params.get("entity_type") || "",
+            aumMin: params.get("aum_min") || "",
+            aumMax: params.get("aum_max") || "",
+          });
           const restored = normalizeAllocatorRequest({
             days: Number(params.get("days")),
             limit: Number(params.get("rows")),
@@ -873,6 +911,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
             sort: params.get("sort") || "activity_count",
             direction: params.get("dir") === "asc" ? "asc" : "desc",
             query: params.get("q")?.trim() || params.get("filter")?.trim() || "",
+            ...(restoredFilterValidation.ok ? restoredFilterValidation.filters : emptyAllocatorFilters()),
           });
           const requestedView = params.get("view");
           setAllocatorDays(restored.days);
@@ -883,6 +922,9 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
           setSortDir(restored.direction);
           setTableFilter(restored.query);
           setServerFilterTerm(eligibleTextQuery(restored.query));
+          setAllocatorFilters(restoredFilterValidation.ok ? restoredFilterValidation.filters : emptyAllocatorFilters());
+          setAllocatorFilterDraft(restoredFilterValidation.filters);
+          setAllocatorFilterIssue(restoredFilterValidation.issue);
           if (requestedView === "data" || requestedView === "visualization") setSectionView(requestedView);
           else if (restored.query || params.has("days") || params.has("sort") || params.has("page")) setSectionView("data");
           setAllocatorUrlReady(true);
@@ -1012,12 +1054,13 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
         sort: allocatorSort,
         sortDir,
         sectionView,
+        filters: allocatorFilters,
       });
       const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
       if (nextUrl !== currentUrl) window.history.replaceState(null, "", nextUrl);
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [allocatorDays, allocatorSort, allocatorUrlReady, kind, pageIndex, rowLimit, sectionView, sortDir, tableFilter]);
+  }, [allocatorDays, allocatorFilters, allocatorSort, allocatorUrlReady, kind, pageIndex, rowLimit, sectionView, sortDir, tableFilter]);
 
   useEffect(() => {
     if (!supportsServerFilter(kind)) return;
@@ -1044,14 +1087,17 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
     if (kind !== "search") {
       if (kind === "profiles" || kind === "comparisons") {
         if (routeEntityType === null) return {};
-        return { main: comparisonEntityListEndpoint({
-          query: serverFilterTerm,
-          entityType: routeEntityType,
-          region: routeRegion,
-          includeDefunct,
-          limit: serverRowLimit,
-          page: serverPageIndex + 1,
-        }) };
+        return {
+          main: comparisonEntityListEndpoint({
+            query: serverFilterTerm,
+            entityType: routeEntityType,
+            region: routeRegion,
+            includeDefunct,
+            limit: serverRowLimit,
+            page: serverPageIndex + 1,
+          }),
+          entityTypes: "/api/institution-types/v1?limit=100",
+        };
       }
       if (kind === "people") {
         if (!peopleUrlReady) return {};
@@ -1083,11 +1129,12 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
           query: serverFilterTerm,
           sort: allocatorSort,
           direction: serverSortDir,
+          ...allocatorFilters,
         }) };
       }
       if (kind === "mandates") {
         if (mandateFilters === null) return {};
-        return { main: mandateSourceEndpoint(mandateFilters, serverRowLimit, serverPageIndex) };
+        return { main: mandateSourceEndpoint(mandateFilters, serverRowLimit, serverPageIndex, serverFilterTerm) };
       }
       if (kind === "alerts") {
         return {
@@ -1113,7 +1160,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
     return {
       institutions: `/api/v1/public/search?q=${encoded}&limit=${rowLimit}`,
     };
-  }, [allocatorDays, allocatorSort, allocatorUrlReady, config.endpoint, config.sources, dealFieldFilters, includeDefunct, kind, mandateFilters, newsDateFilters, peopleUrlReady, routeEntityType, routeRegion, rowLimit, serverFilterTerm, serverPageIndex, serverRowLimit, serverSortDir, submittedQuery, transactionFilter]);
+  }, [allocatorDays, allocatorFilters, allocatorSort, allocatorUrlReady, config.endpoint, config.sources, dealFieldFilters, includeDefunct, kind, mandateFilters, newsDateFilters, peopleUrlReady, routeEntityType, routeRegion, rowLimit, serverFilterTerm, serverPageIndex, serverRowLimit, serverSortDir, submittedQuery, transactionFilter]);
 
   useEffect(() => {
     let active = true;
@@ -1211,7 +1258,8 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
     sort: allocatorSort,
     direction: serverSortDir,
     query: serverFilterTerm,
-  }), [allocatorDays, allocatorSort, packet, rowLimit, serverFilterTerm, serverPageIndex, serverRowLimit, serverSortDir]);
+    ...allocatorFilters,
+  }), [allocatorDays, allocatorFilters, allocatorSort, packet, rowLimit, serverFilterTerm, serverPageIndex, serverRowLimit, serverSortDir]);
   const sourceKeys = Object.keys(sources);
   const hasSectionVisualization = supportsSectionVisualization(kind);
   const showRecordData = !hasSectionVisualization || sectionView === "data";
@@ -1277,7 +1325,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
                     ? (packetNumber(packet, ["count", "row_count"]) ?? 0) > 0
                       ? "That page is outside the verified match range. Returning to the last available page…"
                       : /\s/.test(serverFilterTerm.trim())
-                        ? "The source returned zero matches, but multi-word news search is a known upstream gap and does not prove that no relevant article exists. Try one distinctive term."
+                        ? "The source returned zero matches. Try the institution acronym or one distinctive term."
                         : "No verified news or articles match the active query and date filters."
                     : "No verified entities match the active filters."
               : isLoading
@@ -1395,16 +1443,21 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
   const mandateCurrencyOptions = useMemo(() => (
     kind === "mandates" ? mandateFacetOptions(packet, "ticket_currencies", mandateFilterDraft.ticketCurrency ? [mandateFilterDraft.ticketCurrency] : []) : []
   ), [kind, mandateFilterDraft.ticketCurrency, packet]);
+  const canonicalEntityTypeOptions = useMemo(() => {
+    if (kind !== "profiles" && kind !== "comparisons") return [];
+    const values = new Set<string>([routeEntityType || "", entityTypeDraft].filter(Boolean));
+    rows(packets.entityTypes).forEach((row) => {
+      const label = businessText(row.name || row.type || row.entity_type);
+      if (label && label !== NOT_DISCLOSED) values.add(label);
+    });
+    return [...values].sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
+  }, [entityTypeDraft, kind, packets.entityTypes, routeEntityType]);
   const activeRoute = routeByKind[kind];
-  const visibleCountLabel = governedEntityList && routeEntityType
-    ? `Showing ${visibleRows.length.toLocaleString("en-US")} exact-type rows on this loaded page; upstream broad-match count ${totalRows.toLocaleString("en-US")}`
-    : incompleteCoverage
+  const visibleCountLabel = incompleteCoverage
     ? `Loaded Compass rows observed: ${sourceRows.length.toLocaleString("en-US")}; ${visibleRows.length.toLocaleString("en-US")} shown. Coverage partial: ${incompleteCoverage.reasonLabel}.`
       : `Showing ${visibleRows.length.toLocaleString("en-US")} of ${totalRows.toLocaleString("en-US")}`;
   const governedSourceFailed = governedSourceList && ["timed_out", "error", "unavailable", "cancelled"].includes(sourceListLifecycle);
-  const displayedEmptyMessage = governedEntityList && routeEntityType && isFact(packet) && rows(packet).length > 0 && sourceRows.length === 0
-    ? `No exact ${routeEntityType} rows appear on this loaded page. The upstream entity_type filter is broad-match, so its count cannot prove the exact-type universe.`
-    : emptyMessage;
+  const displayedEmptyMessage = emptyMessage;
 
   return (
     <div ref={rootRef} className="flex min-h-screen flex-col bg-[#F2F4F6] font-sans text-[#1B2733] lg:h-screen lg:overflow-hidden" data-entity-type-context={routeEntityType || undefined} data-region-context={routeRegion || undefined}>
@@ -1512,7 +1565,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="m-0 text-[16px] font-bold text-[#11314F]">{sectionVisualizationTitle(kind)}</h2>
-                <p className="m-0 mt-1 text-[12px] text-[#5C6D7E]">Visualization-first view. Select Data for records, filters, and pagination.</p>
+                <p className="m-0 mt-1 text-[12px] text-[#5C6D7E]">Visualization-first view. Select Records for filters, source rows, and pagination.</p>
               </div>
               <div className="flex rounded border border-[#C7D2DD] bg-[#F7F9FA] p-1 text-sm">
                 {[
@@ -1548,7 +1601,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
                       transactionContext={governedTransactionList ? transactionFilter || emptyTransactionFilter() : undefined}
                       newsContext={governedNewsList ? { query: serverFilterTerm, dateFilters: newsDateFilters || emptyNewsDateFilters() } : undefined}
                       peopleQueryContext={governedPeopleList ? serverFilterTerm : undefined}
-                      allocatorContext={governedAllocatorList ? { query: serverFilterTerm, days: allocatorDays, sort: allocatorSort, direction: sortDir, rowLimit, pageIndex } : undefined}
+                      allocatorContext={governedAllocatorList ? { query: serverFilterTerm, days: allocatorDays, sort: allocatorSort, direction: sortDir, rowLimit, pageIndex, filters: allocatorFilters } : undefined}
                     />
             ) : null}
           </section>
@@ -1571,11 +1624,11 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
         <section data-gsap-reveal className={`rounded border border-[#DCE3EA] bg-white px-4 py-3 text-sm text-[#41566B] ${showRecordData ? "" : "hidden"}`}>
 		          <strong className="text-[#11314F]">Data view — a limited preview, not the database.</strong>
 		          <span className="mt-1 block text-[#5C6D7E]">{kind === "profiles" || kind === "comparisons" ? (includeDefunct ? "Explicit lifecycle view: active and defunct entities are included and labeled by the source API." : "Active entities only by default. Defunct=true records are excluded from results, counts, rankings, and visualizations.") : kind === "people" ? `Verified SWFI People records for ${peopleFilterSummary(serverFilterTerm)}. The source query currently matches names only; header sorting applies only to the loaded page.` : kind === "transactions" ? transactionFilter?.field && transactionFilter.value ? `Exact source matches within the selected ${transactionFilter.days}-day window. The loaded page is sorted newest-first; the exact drill-down endpoint does not expose a verified global date-sort contract.` : `Newest verified recent records first within the selected ${transactionFilter?.days || 365}-day source window. The full historical universe remains on SWFI; this dashboard does not call a 12-month result complete history.` : kind === "allocators" ? `Verified active buyer/acquirer entities from completed transactions in the selected ${allocatorDays}-day window. The default ranking is Number of Deals descending, then disclosed deal value, then latest transaction date.` : kind === "mandates" ? `Currently open records from the combined source: ${mandateFilterSummary(mandateFilters || emptyMandateFilters())}. Every row keeps its RFP or Opportunity label. The source orders deadlines soonest first; header sorting and Filter loaded page apply only to the loaded page.` : kind === "research" || kind === "intelligence" ? `Newest source records first for ${newsFilterSummary(serverFilterTerm, newsDateFilters || emptyNewsDateFilters())}. Relevant historical records remain pageable without an age cutoff; header sorting applies only to the loaded page.` : "Reached from a chart, ranking, or filter, this table shows the matching records; unfiltered, it shows the first preview pages only. Every row links to its SWFI platform page, where the full record lives."}</span>
-	              {kind === "profiles" || kind === "comparisons" ? <span className="mt-1 block text-[#5C6D7E]">Name, type, country, and status sorting applies only to the loaded preview page. AUM preserves source currency and is not sortable across currencies; the upstream entity endpoint exposes no verified global AUM sort. Its entity_type parameter is broad-match, so visible rows are exact-type guarded locally and its broad count is never labeled the exact-type universe.</span> : null}
+              {kind === "profiles" || kind === "comparisons" ? <span className="mt-1 block text-[#5C6D7E]">Entity type uses an exact, case-insensitive source predicate selected from the canonical type list; its count and pagination use that same predicate. Region is source-backed. Name, type, country, and status sorting applies only to the loaded preview page. AUM preserves source currency and is not sortable across currencies.</span> : null}
               {kind === "people" ? <span className="mt-1 block text-[#5C6D7E]">Only approved SWFI-record LinkedIn profile URLs are exposed, in a separate tab. Email, phone, automated follow, connect, message, and contact actions are not exposed. Exact People category filters remain blocked until SWFI approves the list and the source implements them.</span> : null}
               {kind === "transactions" ? <span className="mt-1 block text-[#5C6D7E]">Closed At defaults to newest-first on the loaded page. Unfiltered recent paging is source-ordered; exact-filter paging is not claimed globally ordered. Header sorting and Filter loaded page never claim a source-wide sort.</span> : null}
-              {kind === "allocators" ? <span className="mt-1 block text-[#5C6D7E]">Name query, activity window, sort, direction, rows, page, and view are source-backed and retained in the URL. Country, region, and entity-type filters remain display-only because the live endpoint currently ignores them. AUM remains native-currency data and is not sortable.</span> : null}
-              {kind === "mandates" ? <span className="mt-1 block text-[#5C6D7E]">Record type and region filters are not sent because the combined endpoint does not support them. SWFI still owes the complete approved category-filter list and the product definition of Period.</span> : null}
+              {kind === "allocators" ? <span className="mt-1 block text-[#5C6D7E]">Name query, exact country, exact region, exact entity type, activity window, sort, direction, rows, page, and view are source-backed and retained in the URL. AUM bounds use disclosed USD AUM only; non-USD and undisclosed AUM rows are excluded when a bound is active, and no FX conversion is claimed.</span> : null}
+              {kind === "mandates" ? <span className="mt-1 block text-[#5C6D7E]">RFP vs Opportunity, text query, exact country and region, explicit posted and due date bounds, investment type, and ticket bounds are source-backed. There is no undefined Period filter; every time control names the source date it applies to.</span> : null}
               {kind === "research" || kind === "intelligence" ? <span className="mt-1 block text-[#5C6D7E]">The source supports exact date bounds and single-token matching. Multi-word phrase search is currently an upstream gap, and SWFI still owes the complete approved News / Articles filter list. The API supplies a legacy record ID but no canonical row-level source URL.</span> : null}
         </section>
 
@@ -1755,20 +1808,20 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
                 data-testid="entity-type-filter-form"
               >
                 <label className="grid min-w-0 gap-1">
-                  <span className="font-semibold text-[#41566B]">Entity type (broad source match)</span>
-                  <input
-                    type="search"
+                  <span className="font-semibold text-[#41566B]">Entity type (exact)</span>
+                  <select
                     value={entityTypeDraft}
                     onChange={(event) => {
                       setEntityTypeDraft(event.target.value);
                       setEntityTypeIssue("");
                     }}
-                    minLength={MIN_TEXT_QUERY_CHARACTERS}
                     aria-describedby="entity-type-filter-help"
-                    className="min-h-9 min-w-0 rounded border border-[#C7D2DD] px-2 outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#16538C]"
-                    placeholder="e.g. Sovereign Wealth Fund"
+                    className="min-h-9 min-w-0 rounded border border-[#C7D2DD] bg-white px-2 outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#16538C]"
                     data-testid="entity-type-filter"
-                  />
+                  >
+                    <option value="">All canonical entity types</option>
+                    {canonicalEntityTypeOptions.map((value) => <option key={value} value={value}>{value}</option>)}
+                  </select>
                 </label>
                 <button
                   type="submit"
@@ -1778,7 +1831,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
                   Apply
                 </button>
                 <span id="entity-type-filter-help" className={`col-span-2 text-[10px] ${entityTypeIssue ? "text-[#9B2C2C]" : "text-[#5C6D7E]"}`} aria-live="polite">
-                  {entityTypeIssue || (routeEntityType ? `Applied source type match: ${routeEntityType}. Returned rows are exact-type guarded on this loaded page; the upstream total remains broad-match. Clear and Apply to remove.` : "The upstream type parameter is broad-match; typing alone does not apply it, and loaded rows are exact-type guarded before display.")}
+                  {entityTypeIssue || (routeEntityType ? `Applied exact canonical source type: ${routeEntityType}. Source count and pagination use the same exact predicate. Clear and Apply to remove.` : "Choose a canonical source type, then Apply. Arbitrary broad text matching is not exposed by this control.")}
                 </span>
               </form>
 	          ) : null}
@@ -1885,7 +1938,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
 	          ) : null}
 	          {kind === "mandates" && mandateFilters ? (
               <form
-                className="grid gap-2 border-t border-[#E1E7ED] pt-3 sm:col-span-2 sm:grid-cols-2 xl:col-span-7 xl:grid-cols-[minmax(220px,1fr)_140px_140px_120px_auto_auto] xl:items-end"
+                className="grid gap-2 border-t border-[#E1E7ED] pt-3 sm:col-span-2 sm:grid-cols-2 xl:col-span-7 xl:grid-cols-4 xl:items-end"
                 data-testid="mandates-supported-filters"
                 data-contract-status="source-backed-subset"
                 onSubmit={(event) => {
@@ -1911,6 +1964,66 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
                   setSectionView("data");
                 }}
               >
+                <label className="grid gap-1">
+                  <span className="font-semibold text-[#41566B]">Record type</span>
+                  <select
+                    value={mandateFilterDraft.recordType}
+                    onChange={(event) => {
+                      const recordType = event.target.value === "rfp" || event.target.value === "opportunity" ? event.target.value : "all";
+                      setMandateFilterDraft((current) => ({ ...current, recordType }));
+                      setMandateFilterIssue("");
+                    }}
+                    className="min-h-9 rounded border border-[#C7D2DD] bg-white px-2"
+                    data-testid="mandates-record-type-filter"
+                  >
+                    <option value="all">All open records</option>
+                    <option value="rfp">RFP only</option>
+                    <option value="opportunity">Opportunity only</option>
+                  </select>
+                </label>
+                {([[
+                  "Country", "country", "e.g. United States",
+                ], [
+                  "Region", "region", "e.g. North America",
+                ]] as const).map(([label, key, placeholder]) => (
+                  <label key={key} className="grid gap-1">
+                    <span className="font-semibold text-[#41566B]">{label} (exact)</span>
+                    <input
+                      type="search"
+                      value={mandateFilterDraft[key]}
+                      placeholder={placeholder}
+                      onChange={(event) => {
+                        setMandateFilterDraft((current) => ({ ...current, [key]: event.target.value }));
+                        setMandateFilterIssue("");
+                      }}
+                      className="min-h-9 rounded border border-[#C7D2DD] px-2 outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#16538C]"
+                      data-testid={`mandates-${key}-filter`}
+                    />
+                  </label>
+                ))}
+                {([[
+                  "Posted from", "postedFrom",
+                ], [
+                  "Posted to", "postedTo",
+                ], [
+                  "Due from", "dueFrom",
+                ], [
+                  "Due to", "dueTo",
+                ]] as const).map(([label, key]) => (
+                  <label key={key} className="grid gap-1">
+                    <span className="font-semibold text-[#41566B]">{label}</span>
+                    <input
+                      type="date"
+                      value={mandateFilterDraft[key]}
+                      onChange={(event) => {
+                        setMandateFilterDraft((current) => ({ ...current, [key]: event.target.value }));
+                        setMandateFilterIssue("");
+                      }}
+                      className="min-h-9 rounded border border-[#C7D2DD] px-2 outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#16538C]"
+                      data-testid={`mandates-${key}-filter`}
+                    />
+                  </label>
+                ))}
                 <MultiSelectField
                   label="Investment type"
                   options={mandateInvestmentTypeOptions}
@@ -1996,8 +2109,8 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
                 >
                   Clear
                 </button>
-                <span className={`text-[11px] sm:col-span-2 xl:col-span-6 ${mandateFilterIssue ? "text-[#9B2C2C]" : "text-[#5C6D7E]"}`} aria-live="polite" data-testid="mandates-filter-help">
-                  {mandateFilterIssue || `Applied source scope: ${mandateFilterSummary(mandateFilters)}. Investment types combine with OR; ticket bounds combine with them using AND. Ticket amounts are compared only within the selected currency; no currency conversion is claimed. Record type, region, the complete filter list, and Period remain pending source/product contracts.`}
+                <span className={`text-[11px] sm:col-span-2 xl:col-span-4 ${mandateFilterIssue ? "text-[#9B2C2C]" : "text-[#5C6D7E]"}`} aria-live="polite" data-testid="mandates-filter-help">
+                  {mandateFilterIssue || `Applied source scope: ${mandateFilterSummary(mandateFilters)}. Record type, exact geography, explicit posted/due dates, investment types, and ticket bounds combine using AND; selected investment types combine with OR. Ticket amounts are compared only within the selected currency; no currency conversion is claimed. There is no undefined Period filter.`}
                 </span>
               </form>
 	          ) : null}
@@ -2122,6 +2235,80 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
                   {allocatorSortOptions.map(([value, label]) => <option key={`${value}-${label}`} value={value}>{label}</option>)}
                 </select>
               </label>
+              <form
+                className="grid gap-2 border-t border-[#E1E7ED] pt-3 sm:col-span-4 sm:grid-cols-2 xl:grid-cols-[minmax(150px,1fr)_minmax(150px,1fr)_minmax(170px,1fr)_130px_130px_auto_auto] xl:items-end"
+                data-testid="allocator-exact-filters"
+                data-contract-status="source-backed"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const validation = normalizeAllocatorFilters(allocatorFilterDraft);
+                  if (!validation.ok) {
+                    setAllocatorFilterIssue(validation.issue);
+                    return;
+                  }
+                  setAllocatorFilters(validation.filters);
+                  setAllocatorFilterDraft(validation.filters);
+                  setAllocatorFilterIssue("");
+                  setPageIndex(0);
+                  setSectionView("data");
+                }}
+              >
+                {([
+                  ["Country", "country", "e.g. United States"],
+                  ["Region", "region", "e.g. North America"],
+                  ["Entity type", "entityType", "e.g. Public Pension"],
+                ] as const).map(([label, key, placeholder]) => (
+                  <label key={key} className="grid gap-1">
+                    <span className="font-semibold text-[#41566B]">{label} (exact)</span>
+                    <input
+                      type="search"
+                      value={allocatorFilterDraft[key]}
+                      onChange={(event) => {
+                        setAllocatorFilterDraft((current) => ({ ...current, [key]: event.target.value }));
+                        setAllocatorFilterIssue("");
+                      }}
+                      placeholder={placeholder}
+                      className="min-h-9 rounded border border-[#C7D2DD] px-2 outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#16538C]"
+                      data-testid={`allocator-${key}-filter`}
+                    />
+                  </label>
+                ))}
+                {([{"label":"Minimum AUM (USD)","key":"aumMin"},{"label":"Maximum AUM (USD)","key":"aumMax"}] as const).map(({ label, key }) => (
+                  <label key={key} className="grid gap-1">
+                    <span className="font-semibold text-[#41566B]">{label}</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={allocatorFilterDraft[key]}
+                      onChange={(event) => {
+                        setAllocatorFilterDraft((current) => ({ ...current, [key]: event.target.value }));
+                        setAllocatorFilterIssue("");
+                      }}
+                      className="min-h-9 rounded border border-[#C7D2DD] px-2 outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#16538C]"
+                      data-testid={`allocator-${key}-filter`}
+                    />
+                  </label>
+                ))}
+                <button type="submit" className="min-h-9 self-end rounded border border-[#11314F] bg-[#11314F] px-3 font-semibold text-white" data-testid="allocator-apply-exact-filters">Apply</button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cleared = emptyAllocatorFilters();
+                    setAllocatorFilters(cleared);
+                    setAllocatorFilterDraft(cleared);
+                    setAllocatorFilterIssue("");
+                    setPageIndex(0);
+                  }}
+                  className="min-h-9 self-end rounded border border-[#C7D2DD] bg-white px-3 font-semibold text-[#5C6D7E]"
+                  data-testid="allocator-clear-exact-filters"
+                >
+                  Clear
+                </button>
+                <span className={`text-[11px] sm:col-span-2 xl:col-span-7 ${allocatorFilterIssue ? "text-[#9B2C2C]" : "text-[#5C6D7E]"}`} aria-live="polite" data-testid="allocator-filter-help">
+                  {allocatorFilterIssue || `Applied exact source filters: ${allocatorFilters.country || allocatorFilters.region || allocatorFilters.entityType || allocatorFilters.aumMin || allocatorFilters.aumMax ? [allocatorFilters.country && `country ${allocatorFilters.country}`, allocatorFilters.region && `region ${allocatorFilters.region}`, allocatorFilters.entityType && `entity type ${allocatorFilters.entityType}`, (allocatorFilters.aumMin || allocatorFilters.aumMax) && `disclosed USD AUM ${allocatorFilters.aumMin || "0"}–${allocatorFilters.aumMax || "unbounded"}`].filter(Boolean).join("; ") : "none"}. AUM bounds exclude non-USD and undisclosed AUM; no FX conversion is applied.`}
+                </span>
+              </form>
             </>
           ) : null}
         </section>
@@ -2787,7 +2974,7 @@ function isServerPagedKind(kind: Kind) {
 }
 
 function supportsServerFilter(kind: Kind) {
-  return kind === "profiles" || kind === "comparisons" || kind === "people" || kind === "deals" || kind === "allocators" || kind === "research" || kind === "intelligence";
+  return kind === "profiles" || kind === "comparisons" || kind === "people" || kind === "deals" || kind === "allocators" || kind === "mandates" || kind === "research" || kind === "intelligence";
 }
 
 function tableCountDetails(kind: Kind, packet: Packet | undefined, packets: Record<string, Packet>, total: number, loaded: number) {
@@ -2863,7 +3050,7 @@ function SectionVisualization({
   transactionContext?: TransactionFilter;
   newsContext?: { query: string; dateFilters: NewsDateFilters };
   peopleQueryContext?: string;
-  allocatorContext?: { query: string; days: number; sort: AllocatorSort; direction: "asc" | "desc"; rowLimit: number; pageIndex: number };
+  allocatorContext?: { query: string; days: number; sort: AllocatorSort; direction: "asc" | "desc"; rowLimit: number; pageIndex: number; filters: AllocatorFilters };
 }) {
   // Minutes item D: distributions computed source-side over the WHOLE
   // collection. Current-page charts remain only as the disclosed fallback
@@ -2920,6 +3107,11 @@ function SectionVisualization({
     contextParams.set("page", String(allocatorContext.pageIndex + 1));
     contextParams.set("sort", allocatorContext.sort);
     contextParams.set("dir", allocatorContext.direction);
+    if (allocatorContext.filters.country) contextParams.set("country", allocatorContext.filters.country);
+    if (allocatorContext.filters.region) contextParams.set("region", allocatorContext.filters.region);
+    if (allocatorContext.filters.entityType) contextParams.set("entity_type", allocatorContext.filters.entityType);
+    if (allocatorContext.filters.aumMin) contextParams.set("aum_min", allocatorContext.filters.aumMin);
+    if (allocatorContext.filters.aumMax) contextParams.set("aum_max", allocatorContext.filters.aumMax);
   }
   contextParams.set("view", "data");
   const dataViewHref = appHref(`${routeByKind[kind]}/?${contextParams.toString()}`);
@@ -2973,7 +3165,7 @@ function SectionVisualization({
           {newsKind ? <span>Newest source records appear first. Historical matches remain pageable without an automatic age cutoff; charts describe only the loaded page.</span> : null}
 	          {kind === "people" ? <span>People category facets are display-only because the live list source does not yet honor exact country, region, city, title, institution, or LinkedIn-availability filters.</span> : null}
 	          {kind === "comparisons" ? <span>This section describes the governed candidate directory scope, not the selected two-to-four institution peer set. Selected-peer metrics and evidence remain in the Competition Analysis panel above.</span> : null}
-	          {kind === "allocators" ? <span>Allocator entity type and geography distributions describe only the loaded packet and are display-only; the source does not honor those exact filters.</span> : null}
+	          {kind === "allocators" ? <span>Allocator entity type and geography distributions describe the loaded packet. Use the exact country, region, and entity-type controls in Records to apply source-backed filters.</span> : null}
 	          {aumRankingBlocked ? <span role="note" data-aum-ranking-state="blocked-mixed-currency">Largest AUM ranking is withheld in this view because the loaded records use multiple native currencies and the source supplies no approved FX conversion contract.</span> : null}
         </div>
         {/* Dashboard 2.0 P05: data export requires SWFI authentication — no public downloads. */}
@@ -2991,6 +3183,9 @@ function SectionVisualization({
         data-primary-cta="Click a tile to open its records"
         data-cta-href={dataViewHref}
       >
+        <div className="text-[12px] text-[#5C6D7E] sm:col-span-3">
+          “{scopedTotalLabel}” is the source-matched count for the active scope. “Items in View” is the number loaded here. “Leading Category” is the largest category among those loaded records, not an editorial recommendation.
+        </div>
         {summary.map(([label, value, href, cta]) => (
           <a key={label} href={href} className="rounded border border-[#DCE3EA] bg-[#F7F9FA] px-3 py-3 no-underline">
             <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#5C6D7E]">{label}</div>
@@ -3263,6 +3458,7 @@ function SectionTopRecords({ kind, rows: topRows }: { kind: Kind; rows: Row[] })
         <h3 className="m-0 text-[13px] font-bold text-[#11314F]">Highlighted SWFI Pages</h3>
         <span className="text-sm font-semibold text-[#5C6D7E]">Use Data for the analytical table</span>
       </div>
+      <div className="mb-2 text-[12px] text-[#5C6D7E]">Shortcuts to the first records in the currently loaded source packet. They are not editorial picks and are not highlighted because of an undisclosed score.</div>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
         {topRows.length ? topRows.map((row, index) => {
           const source = sourceHref(row);
@@ -3785,12 +3981,20 @@ function SectionInsights({
   );
 }
 
-function mandateRecordsHref(context: MandateFilters, investmentTypes = context.investmentTypes): string {
+function mandateRecordsHref(context: MandateFilters, investmentTypes = context.investmentTypes, overrides: Partial<MandateFilters> = {}): string {
+  const scope = { ...context, ...overrides, investmentTypes };
   const params = new URLSearchParams();
-  investmentTypes.forEach((value) => params.append("investment_type", value));
-  if (context.ticketMin) params.set("ticket_min", context.ticketMin);
-  if (context.ticketMax) params.set("ticket_max", context.ticketMax);
-  if ((context.ticketMin || context.ticketMax) && context.ticketCurrency) params.set("ticket_currency", context.ticketCurrency);
+  params.set("record_type", scope.recordType);
+  if (scope.country) params.set("country", scope.country);
+  if (scope.region) params.set("region", scope.region);
+  if (scope.postedFrom) params.set("posted_from", scope.postedFrom);
+  if (scope.postedTo) params.set("posted_to", scope.postedTo);
+  if (scope.dueFrom) params.set("due_from", scope.dueFrom);
+  if (scope.dueTo) params.set("due_to", scope.dueTo);
+  scope.investmentTypes.forEach((value) => params.append("investment_type", value));
+  if (scope.ticketMin) params.set("ticket_min", scope.ticketMin);
+  if (scope.ticketMax) params.set("ticket_max", scope.ticketMax);
+  if ((scope.ticketMin || scope.ticketMax) && scope.ticketCurrency) params.set("ticket_currency", scope.ticketCurrency);
   params.set("view", "data");
   return appHref(`/mandates/?${params.toString()}`);
 }
@@ -3833,7 +4037,7 @@ function CompassVisualization({
       data-title="Compass open-record visualization"
       data-purpose="Summarizes the loaded open RFP and Opportunity records by source type, investment type, region, and posted month."
       data-source="SWFI Compass open records loaded in this view"
-      data-primary-cta="Investment-type bars open exact source-filtered records; type and region remain display-only"
+      data-primary-cta="Source-type, investment-type, and region bars open exact source-filtered records"
       data-cta-href={recordsHref}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -3862,13 +4066,19 @@ function CompassVisualization({
         ))}
       </div>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <CompassBarChart title="Open records by source type" rows={recordTypeRows} displayOnlyReason="The combined source does not accept a record-type filter." />
+        <CompassBarChart title="Open records by source type" rows={recordTypeRows} recordsHref={(label) => mandateRecordsHref(mandateContext, mandateContext.investmentTypes, { recordType: mandateRecordType(label) })} />
         <CompassBarChart title="Open records by investment type" rows={investmentTypeRows} recordsHref={(label) => mandateRecordsHref(mandateContext, [label])} />
-        <CompassBarChart title="Open records by region" rows={regionRows} displayOnlyReason="The combined source does not accept a region filter." />
+        <CompassBarChart title="Open records by region" rows={regionRows} recordsHref={(label) => mandateRecordsHref(mandateContext, mandateContext.investmentTypes, { region: label === NOT_DISCLOSED ? "" : label })} />
         <CompassLineChart title="Open records posted per month" rows={monthRows} recordsHref={recordsHref} />
       </div>
     </div>
   );
+}
+
+function mandateRecordType(label: string): MandateFilters["recordType"] {
+  if (/^rfp$/i.test(label.trim())) return "rfp";
+  if (/opportunit|mandate/i.test(label)) return "opportunity";
+  return "all";
 }
 
 function CompassBarChart({

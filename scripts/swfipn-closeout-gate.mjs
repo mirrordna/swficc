@@ -2,6 +2,7 @@
 import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
+import { validateSourceBoundTotal } from "./lib/source-total-contract.mjs";
 
 const repoRoot = process.cwd();
 const outputDir = path.join(repoRoot, "output");
@@ -31,7 +32,7 @@ const listRoutes = [
   { id: "people", route: "/people/", api: "/api/source-data/search/v1", totalAtLeast: 100_000, kind: "person", pattern: /\/swficc\/people\/detail\/\?(?=[^#]*(?:name|id)=)/i },
   { id: "transactions", route: "/transactions/", api: "/api/recent-transactions/v1", totalAtLeast: 1, visibleEquals: 10, kind: "transaction", pattern: /\/swficc\/transactions\/detail\/\?(?=[^#]*(?:title|id)=)/i },
   { id: "deals", route: "/deals/", api: "/api/transactions/v1", totalAtLeast: 180_000, kind: "transaction", pattern: /\/swficc\/transactions\/detail\/\?(?=[^#]*(?:title|id)=)/i },
-  { id: "mandates", route: "/mandates/", api: "/api/live-opportunities/v1", totalAtLeast: 30, kind: "compass", pattern: /\/swficc\/mandates\/detail\/\?(?=[^#]*(?:title|id)=)/i },
+  { id: "mandates", route: "/mandates/", api: "/api/live-opportunities/v1", totalAtLeast: 1, sourceBoundTotal: endpoints.mandates, expectedSourceCollection: "swfi_api.compass.opportunities", kind: "compass", pattern: /\/swficc\/mandates\/detail\/\?(?=[^#]*(?:title|id)=)/i },
   { id: "intelligence", route: "/intelligence/", api: "/api/source-intelligence/news/v1", totalAtLeast: 10, kind: "legacy", pattern: /(?:\/swficc\/research\/detail\/\?(?:[^#]*&)?legacy=\d+|\/v1\/news\/\d{1,12})/i },
 ];
 
@@ -276,6 +277,7 @@ async function listPageCheck(browser) {
         rendered_total: 0,
         matching_links: 0,
         api_200: false,
+        source_total_contract: null,
       };
       const apiResponses = [];
       page.on("response", (response) => {
@@ -306,7 +308,19 @@ async function listPageCheck(browser) {
         row.api_200 = apiResponses.includes(200);
         if (!response || response.status() >= 400) row.failures.push(`http_${response?.status() || "missing"}`);
         if (!row.api_200) row.failures.push(`missing_api_200:${spec.api}`);
-        if (row.rendered_total < spec.totalAtLeast) row.failures.push(`total_too_low:${row.rendered_total}<${spec.totalAtLeast}`);
+        if (spec.sourceBoundTotal) {
+          const sourceResponse = await fetchJson(spec.sourceBoundTotal);
+          row.source_total_contract = validateSourceBoundTotal({
+            packet: sourceResponse.json,
+            renderedTotal: row.rendered_total,
+            minimum: spec.totalAtLeast,
+            maxAgeHours,
+            expectedSourceCollection: spec.expectedSourceCollection,
+          });
+          row.failures.push(...row.source_total_contract.failures);
+        } else if (row.rendered_total < spec.totalAtLeast) {
+          row.failures.push(`total_too_low:${row.rendered_total}<${spec.totalAtLeast}`);
+        }
         if (spec.visibleEquals && row.rendered_visible !== spec.visibleEquals) {
           row.failures.push(`visible_count_${row.rendered_visible}_ne_${spec.visibleEquals}`);
         }

@@ -49,6 +49,12 @@ export function elementContractIssues(el) {
   return issues;
 }
 
+export function contractReadinessIssue(contractRequired, elementCount, readinessTimedOut = false) {
+  if (!contractRequired) return null;
+  if (readinessTimedOut) return "contract_readiness_timeout";
+  return Number(elementCount) > 0 ? null : "no_contract_elements";
+}
+
 // --- Condition 4: every final path returns to SWFI core ---------------------
 export function ctaDestinationIssue(href, origin = ORIGIN) {
   const value = String(href || "").trim();
@@ -68,7 +74,7 @@ export function ctaDestinationIssue(href, origin = ORIGIN) {
 }
 
 const PAGES = [
-  { page: "/", contract: false, note: "home panels carry explains; data-attribute tagging is a follow-up pass" },
+  { page: "/", contract: true, note: "home KPI cards carry executable display contracts and visible explanations" },
   { page: "/profiles/", contract: true },
   { page: "/people/", contract: true },
   { page: "/transactions/", contract: true },
@@ -100,8 +106,10 @@ async function auditPage(page, spec) {
     failures.push({ displayId: "page", type: "page", issue: `http_${httpStatus}` });
     return { page: spec.page, status: "fail", httpStatus, reason: `Page did not respond cleanly (http ${httpStatus}).`, failures };
   }
-  await page.waitForTimeout(4_000);
-  await page.waitForFunction(() => !/Loading…/.test(document.body.innerText), null, { timeout: 60_000 }).catch(() => {});
+  const contractReady = spec.contract
+    ? await page.waitForSelector("[data-display-id]", { state: "attached", timeout: 60_000 }).then(() => true).catch(() => false)
+    : (await page.waitForTimeout(4_000), true);
+  await page.waitForFunction(() => !/Loading(?:…|\.{3})/.test(document.body.innerText), null, { timeout: 60_000 }).catch(() => {});
 
   // Layer 2: display contract.
   const elements = await page.evaluate(() => Array.from(document.querySelectorAll("[data-display-id]")).map((node) => ({
@@ -115,9 +123,8 @@ async function auditPage(page, spec) {
     requiresAuth: node.getAttribute("data-requires-auth") || "",
     text: (node.textContent || "").slice(0, 400),
   })));
-  if (spec.contract && elements.length === 0) {
-    failures.push({ displayId: "page", type: "page", issue: "no_contract_elements" });
-  }
+  const readinessIssue = contractReadinessIssue(spec.contract, elements.length, !contractReady);
+  if (readinessIssue) failures.push({ displayId: "page", type: "page", issue: readinessIssue });
   for (const el of elements) {
     for (const issue of elementContractIssues(el)) failures.push({ displayId: el.displayId, type: el.type, issue });
     const staleness = staleDataIssue(el.text);

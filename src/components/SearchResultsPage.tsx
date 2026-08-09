@@ -7,7 +7,7 @@ import SwfiBrandHeader from "@/components/SwfiBrandHeader";
 import type { Packet } from "@/lib/sourcePackets";
 import { fetchPacket, isFact, money, packetReason, rows, text } from "@/lib/sourcePackets";
 import { appHref, isSwfiPlatformRecordHref, selfContainedHref, swfiAuthHandoffHref } from "@/lib/selfContainedLinks";
-import { aggregateEntitySearchRecords, businessSearchQueryVariants, dedupeSearchRecords, mergeSearchRecordsPreferPrimary, prioritizeSearchRecords, rankSearchRecords, verifiedCanonicalSearchName } from "@/lib/searchRelevance";
+import { aggregateEntitySearchRecords, businessSearchQueryVariants, dedupeSearchRecords, mergeSearchRecordsPreferPrimary, prioritizeSearchRecords, rankSearchRecords, rankSearchRecordsAcrossQueryVariants, verifiedCanonicalSearchName } from "@/lib/searchRelevance";
 import { filterSmartSearchIntentRows, smartSearchIntentForQuery } from "@/lib/smartSearchIntent";
 import { entityLifecycleIntent } from "@/lib/entityLifecycle";
 import { isShortTextQuery, isTextQueryReady, MIN_TEXT_QUERY_CHARACTERS, textQueryEligibility } from "@/lib/textQueryPolicy";
@@ -77,9 +77,9 @@ export default function SearchResultsPage() {
   const [prefetchPacket, setPrefetchPacket] = useState<Packet | null>(null);
   const [entityPackets, setEntityPackets] = useState<Packet[]>([]);
   const [transactionPacket, setTransactionPacket] = useState<Packet | null>(null);
-  const [peoplePacket, setPeoplePacket] = useState<Packet | null>(null);
+  const [peoplePackets, setPeoplePackets] = useState<Packet[]>([]);
   const [opportunityPackets, setOpportunityPackets] = useState<Packet[]>([]);
-  const [newsPacket, setNewsPacket] = useState<Packet | null>(null);
+  const [newsPackets, setNewsPackets] = useState<Packet[]>([]);
   const [intentPackets, setIntentPackets] = useState<Packet[]>([]);
   const [sourceSettlements, setSourceSettlements] = useState<SearchSourceSettlements<SearchSourceKey>>(() => (
     beginSearchSourceSettlements(requiredSearchSources(urlQuery, urlCategory))
@@ -125,9 +125,9 @@ export default function SearchResultsPage() {
       setPacket(cached);
       setEntityPackets([]);
       setTransactionPacket(null);
-      setPeoplePacket(null);
+      setPeoplePackets([]);
       setOpportunityPackets([]);
-      setNewsPacket(null);
+      setNewsPackets([]);
       setHasCachedResults(Boolean(cached));
       setSourceSettlements(beginSearchSourceSettlements(requiredSources));
     }, 0);
@@ -184,20 +184,28 @@ export default function SearchResultsPage() {
       : Promise.resolve([] as Packet[]);
 
     const peopleSearch = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "people")
-      ? fetchPacket(`/api/people/search/v1?q=${encodeURIComponent(currentQuery)}&limit=50`, 25_000, {
-          signal: controller.signal,
-          attempts: 2,
-        }).then((nextPacket) => {
+      ? Promise.all(businessSearchQueryVariants(currentQuery).map((variant) => (
+          fetchPacket(`/api/people/search/v1?q=${encodeURIComponent(variant)}&limit=50`, 25_000, {
+            signal: controller.signal,
+            attempts: 2,
+          })
+        ))).then((nextPackets) => {
+          const factPackets = nextPackets.filter(isFact);
           if (active) {
-            if (isFact(nextPacket)) setPeoplePacket(nextPacket);
-            settlePacket("people", nextPacket);
+            setPeoplePackets(factPackets);
+            settleSource("people", combineSearchSourceSettlements(nextPackets.map((nextPacket) => (
+              searchSourceSettlementFromPacket(nextPacket, packetRows(nextPacket).length)
+            ))));
           }
-          return nextPacket;
+          return factPackets;
         }).catch(() => {
-          settleSource("people", unexpectedFailure("people_search_rejected"));
-          return null;
+          if (active) {
+            setPeoplePackets([]);
+            settleSource("people", unexpectedFailure("people_search_rejected"));
+          }
+          return [] as Packet[];
         })
-      : Promise.resolve(null);
+      : Promise.resolve([] as Packet[]);
 
     const opportunitySearch = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "opportunities")
       ? fetchAllOpportunitySearchPackets(controller.signal).then(({ factPackets, settlement }) => {
@@ -216,20 +224,28 @@ export default function SearchResultsPage() {
       : Promise.resolve([] as Packet[]);
 
     const newsSearch = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "news")
-      ? fetchPacket(`/api/source-intelligence/news/v1?q=${encodeURIComponent(currentQuery)}&limit=100&page=1`, 25_000, {
-          signal: controller.signal,
-          attempts: 2,
-        }).then((nextPacket) => {
+      ? Promise.all(businessSearchQueryVariants(currentQuery).map((variant) => (
+          fetchPacket(`/api/source-intelligence/news/v1?q=${encodeURIComponent(variant)}&limit=100&page=1`, 25_000, {
+            signal: controller.signal,
+            attempts: 2,
+          })
+        ))).then((nextPackets) => {
+          const factPackets = nextPackets.filter(isFact);
           if (active) {
-            if (isFact(nextPacket)) setNewsPacket(nextPacket);
-            settlePacket("news", nextPacket);
+            setNewsPackets(factPackets);
+            settleSource("news", combineSearchSourceSettlements(nextPackets.map((nextPacket) => (
+              searchSourceSettlementFromPacket(nextPacket, packetRows(nextPacket).length)
+            ))));
           }
-          return nextPacket;
+          return factPackets;
         }).catch(() => {
-          settleSource("news", unexpectedFailure("news_search_rejected"));
-          return null;
+          if (active) {
+            setNewsPackets([]);
+            settleSource("news", unexpectedFailure("news_search_rejected"));
+          }
+          return [] as Packet[];
         })
-      : Promise.resolve(null);
+      : Promise.resolve([] as Packet[]);
 
     const transactionSearch = !currentIntent && !lifecycleIntent.explicitDefunctRequest && (currentCategory === "all" || currentCategory === "transactions")
       ? Promise.all([publicSearch, entitySearch]).then(async ([publicPacket, nextEntityPackets]) => {
@@ -357,8 +373,8 @@ export default function SearchResultsPage() {
       dedupeSearchRecords([...intentTransactions, ...joinedTransactions, ...publicTransactions]),
       prefetchRows.filter((row) => row.__searchCategory === "transactions"),
     );
-    const people = prioritizeSearchRecords(rankSearchRecords(dedupeSearchRecords([
-      ...packetRows(peoplePacket).map((row) => categorizedSearchRow(row, "people")),
+    const people = prioritizeSearchRecords(rankSearchRecordsAcrossQueryVariants(dedupeSearchRecords([
+      ...peoplePackets.flatMap((peoplePacket) => packetRows(peoplePacket)).map((row) => categorizedSearchRow(row, "people")),
       ...publicRows.filter((row) => row.__searchCategory === "people"),
     ]), query, "person"), prefetchRows.filter((row) => row.__searchCategory === "people"));
     const keywordOpportunities = rankSearchRecords(dedupeSearchRecords([
@@ -369,13 +385,13 @@ export default function SearchResultsPage() {
       dedupeSearchRecords([...intentOpportunities, ...keywordOpportunities]),
       prefetchRows.filter((row) => row.__searchCategory === "opportunities"),
     );
-    const news = prioritizeSearchRecords(rankSearchRecords(dedupeSearchRecords([
-      ...packetRows(newsPacket).map((row) => categorizedSearchRow(row, "news")),
+    const news = prioritizeSearchRecords(rankSearchRecordsAcrossQueryVariants(dedupeSearchRecords([
+      ...newsPackets.flatMap((newsPacket) => packetRows(newsPacket)).map((row) => categorizedSearchRow(row, "news")),
       ...publicRows.filter((row) => row.__searchCategory === "news"),
     ]), query, "news"), prefetchRows.filter((row) => row.__searchCategory === "news"));
 
     return dedupeSearchRecords([...entities, ...transactions, ...opportunities, ...news, ...people]);
-  }, [category, entityPackets, intentPackets, newsPacket, opportunityPackets, packet, peoplePacket, prefetchPacket, query, transactionPacket]);
+  }, [category, entityPackets, intentPackets, newsPackets, opportunityPackets, packet, peoplePackets, prefetchPacket, query, transactionPacket]);
   const resultRows = useMemo(() => (
     category === "all"
       ? allResultRows
@@ -407,7 +423,8 @@ export default function SearchResultsPage() {
   const visibleRows = category === "all"
     ? balanceSearchResultRows(sortedRows as CategorizedSearchRow[], allCategoryLimit)
     : sortedRows.slice(0, rowLimit);
-  const peopleMatchedCount = packetCount(peoplePacket);
+  const peopleMatchedCounts = peoplePackets.map(packetCount).filter((value): value is number => value !== null);
+  const peopleMatchedCount = peopleMatchedCounts.length ? Math.max(...peopleMatchedCounts) : null;
   const categoryCounts = useMemo(() => {
     const counts = searchResultCategoryCounts(allResultRows as CategorizedSearchRow[]);
     if (peopleMatchedCount !== null && peopleMatchedCount > counts.people) {
@@ -457,9 +474,9 @@ export default function SearchResultsPage() {
     setPacket(null);
     setEntityPackets([]);
     setTransactionPacket(null);
-    setPeoplePacket(null);
+    setPeoplePackets([]);
     setOpportunityPackets([]);
-    setNewsPacket(null);
+    setNewsPackets([]);
     setIntentPackets([]);
     setHasCachedResults(false);
     setSourceSettlements(beginSearchSourceSettlements(requiredSearchSources(query, nextCategory)));

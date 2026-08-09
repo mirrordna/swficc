@@ -84,7 +84,6 @@ const ENDPOINTS = {
   allocators30: "/api/allocator-activity/v1?days=30&limit=25&page=1&sort=most_recent_activity_date&direction=desc",
   allocators90: allocatorCountEndpoint(90),
   rfps: "/api/live-opportunities/v1?limit=25&page=1",
-  mandates: "/api/live-mandates/v1?limit=25&page=1",
   transactions30: "/api/recent-transactions/v1?days=30&limit=50&page=1",
   entities: "/api/source-data/search/v1?collection=entities&limit=25&page=1",
   people: "/api/source-data/search/v1?collection=people&limit=25&page=1",
@@ -99,7 +98,13 @@ const NEWS_REFRESH_INTERVAL_MS = 5 * 60_000;
 const NEWS_REFRESH_MIN_GAP_MS = 60_000;
 const NEWS_REFRESH_EVENT = "swfi:refresh-news";
 const SEARCH_PREFETCH_CACHE_PREFIX = "swfipn.search.prefetch.v1:";
-const DASHBOARD_LOAD_ORDER: PacketKey[] = ["top20", "allocators30", "sectorFlows", "transactions30", "rfps", "mandates", "metrics", "institutionTypes", "allocators90", "entities", "people", "news"];
+// The first usable dashboard state depends on these four source packets. They
+// run together before the secondary visualizations so twelve simultaneous
+// source requests cannot starve the records needed for first use. The
+// integrated shadow receipt showed the same entity query at 5.6s amid the
+// homepage fan-out versus 1.1s on /profiles after that fan-out had settled.
+const DASHBOARD_PRIMARY_LOAD_ORDER: PacketKey[] = ["metrics", "rfps", "transactions30", "entities"];
+const DASHBOARD_SECONDARY_LOAD_ORDER: PacketKey[] = ["top20", "allocators30", "sectorFlows", "institutionTypes", "allocators90", "people", "news"];
 const SEARCH_CATEGORY_LABELS = ["All", "Entities", "RFPs & Opportunities", "Transactions", "News & Articles", "People"] as const;
 const insightNav = [
   ["Top Investors", "/allocators"],
@@ -204,6 +209,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
     const snapshot = freshHomeSnapshot();
     const snapshotTimer = window.setTimeout(() => {
       if (active && Object.keys(snapshot).length) {
@@ -216,9 +222,10 @@ export default function DashboardPage() {
         ...current,
         [key]: shouldReplacePacket(current[key], packet) ? packet : current[key],
       }));
-    });
+    }, controller.signal);
     return () => {
       active = false;
+      controller.abort();
       window.clearTimeout(snapshotTimer);
     };
   }, []);
@@ -281,12 +288,10 @@ export default function DashboardPage() {
   // do not change; limit=50 yields 28 disclosed, so the widget's own filter->sort->slice(0,10)
   // reliably lands 10. Same endpoint, no padding with undisclosed rows.
   const disclosedDealRows = factRows(packets.transactions30).slice(0, 50);
+  // The governed combined source returns both RFP and Opportunity records with
+  // an explicit record_type. Reuse that one packet everywhere instead of also
+  // loading the legacy /api/live-mandates route on first paint.
   const rfpRows = factRows(packets.rfps).slice(0, 25);
-  // Investment "Opportunities" live in a separate source (/api/live-mandates/v1 — 26 records,
-  // all type "Opportunity") that Smart Search never loaded (Jaykesh 2026-07-08: "Opportunities
-  // missing"). Merged into the RFPs & Opportunities SEARCH group only (below); the RFP-specific
-  // widgets keep the original rfpRows untouched so nothing that already works regresses.
-  const mandateRows = factRows(packets.mandates).slice(0, 25);
   const newsRows = useMemo(() => newestNewsRows(factRows(packets.news).slice(0, 25)), [packets.news]);
   const allocator30Contract = useMemo(() => inspectAllocatorPacket(packets.allocators30, {
     days: 30,
@@ -305,6 +310,9 @@ export default function DashboardPage() {
   const topAumContract = useMemo(() => inspectAumRankingPacket(packets.top20), [packets.top20]);
   const topAumRows = topAumContract.rows;
   const dashboardEntitySearchRows = useMemo(() => dedupeSearchRecords([...topAumRows, ...entityRows]), [entityRows, topAumRows]);
+  const dashboardPrimaryReady = useMemo(() => {
+    return DASHBOARD_PRIMARY_LOAD_ORDER.every((key) => isFact(packets[key]));
+  }, [packets]);
   const dashboardReady = useMemo(() => {
     return ["metrics", "institutionTypes", "sectorFlows", "rfps", "transactions30", "entities", "news"]
       .every((key) => isFact(packets[key as PacketKey]))
@@ -326,9 +334,9 @@ export default function DashboardPage() {
     entityRows: dashboardEntitySearchRows,
     peopleRows,
     transactionRows,
-    rfpRows: dedupeSearchRecords([...rfpRows, ...mandateRows]),
+    rfpRows,
     newsRows,
-  }), [searchQuery, dashboardEntitySearchRows, peopleRows, transactionRows, rfpRows, mandateRows, newsRows]);
+  }), [searchQuery, dashboardEntitySearchRows, peopleRows, transactionRows, rfpRows, newsRows]);
   const liveSearchGroups = useMemo(() => brdPublicSearchGroups(searchQuery, searchPacket, searchEntityPackets), [searchQuery, searchPacket, searchEntityPackets]);
   const searchIntent = useMemo(
     () => isTextQueryReady(searchQuery) ? smartSearchIntentForQuery(searchQuery) : null,
@@ -625,6 +633,7 @@ export default function DashboardPage() {
     <div
       ref={rootRef}
       data-client-hydrated={clientHydrated ? "true" : "false"}
+      data-dashboard-primary-ready={dashboardPrimaryReady ? "true" : "false"}
       data-dashboard-ready={dashboardReady ? "true" : "false"}
       className="min-h-screen bg-[#F4F6F8] font-sans text-[#101827]"
     >
@@ -745,13 +754,17 @@ function BrdCommandCenterSidebar({ topRows, rankingState, onRetry }: { topRows: 
         <div className="mb-2 flex items-center justify-between text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#4A5665]">
           {/* Honest label 2026-07-06: these are the top-AUM ranked rows, not a
               user-curated watchlist (this preview has no accounts). */}
-          <span>Top by AUM</span>
-          <span className="text-[#7B8996]">AUM</span>
+          <span>Top Ranked AUM</span>
+          <span className="text-[#7B8996]">USD AUM</span>
         </div>
+        <p className="mb-2 text-[10px] leading-snug text-[#657282]">Ranked by comparable USD AUM from the verified source. Each source AUM date is shown when supplied.</p>
         <div className="grid gap-2">
           {watched.length ? watched.map((row, index) => (
-            <DataLink key={`${brdText(row.name)}-${index}`} href={dashboardProfileHref(row)} sourceHref={sourceHref(row)} className="grid grid-cols-[minmax(0,1fr)_76px] gap-2 text-inherit no-underline">
-              <span className="truncate text-[11px] font-semibold text-[#223244]">{brdText(row.name)}</span>
+            <DataLink key={`${brdText(row.name)}-${index}`} href={dashboardProfileHref(row)} sourceHref={sourceHref(row)} className="grid grid-cols-[minmax(0,1fr)_82px] gap-2 text-inherit no-underline">
+              <span className="min-w-0">
+                <span className="block truncate text-[11px] font-semibold text-[#223244]">{brdText(row.name)}</span>
+                <span className="block truncate text-[9px] text-[#7B8996]">{aumDateDisplay(row)}</span>
+              </span>
               <span className="text-right text-[11px] font-bold text-[#071F48]">{aumDisplay(row)}</span>
             </DataLink>
           )) : rankingState === "pending" ? (
@@ -1998,18 +2011,24 @@ function brdNewestRows(
     };
   }
   const visibleRfps = tab === "opportunities"
-    ? rfpRows.filter((row) => /opportun/i.test(brdText(row.type || row.title || row.name, "")))
-    : rfpRows.filter((row) => !/opportun/i.test(brdText(row.type, "")));
-  const rowsToUse = visibleRfps.length ? visibleRfps : rfpRows;
+    ? rfpRows.filter((row) => compassRecordType(row) === "opportunity")
+    : rfpRows.filter((row) => compassRecordType(row) === "rfp");
   return {
     headers: ["Name", "Institution", "Deadline", "Action"],
-    rows: rowsToUse.map((row) => [
+    rows: visibleRfps.map((row) => [
       mandateCell(row),
       brdText(row.institution),
       timelineDate(row),
       "Review mandate",
     ]),
   };
+}
+
+function compassRecordType(row: Record<string, unknown>): "rfp" | "opportunity" | "" {
+  const value = brdText(row.type || row.record_type || row.opportunity_type, "").trim().toLowerCase();
+  if (value === "rfp") return "rfp";
+  if (!value || value === "not disclosed") return "";
+  return "opportunity";
 }
 
 function brdCompassTopRows(rfpRows: Record<string, unknown>[]): Cell[][] {
@@ -2236,7 +2255,20 @@ function ConceptKpiCard({ label, value, note, href, series, color, statusLabel =
   explain?: string;
 }) {
   return (
-    <DashboardLink href={href} title={explain || undefined} data-qa-min="150" data-kpi-label={label} className="min-w-0 border border-[#C9D3DE] bg-white px-3 py-2.5 text-inherit no-underline shadow-[0_1px_2px_rgba(20,44,70,0.05)] hover:border-[#D51E29]/50">
+    <DashboardLink
+      href={href}
+      title={explain || undefined}
+      data-qa-min="150"
+      data-kpi-label={label}
+      data-display-id={`home-kpi-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`}
+      data-display-type="metric"
+      data-title={label}
+      data-purpose={explain}
+      data-source="Verified SWFI source API"
+      data-primary-cta="Open source records"
+      data-cta-href={href}
+      className="min-w-0 border border-[#C9D3DE] bg-white px-3 py-2.5 text-inherit no-underline shadow-[0_1px_2px_rgba(20,44,70,0.05)] hover:border-[#D51E29]/50"
+    >
       <div className="text-[9px] font-extrabold uppercase tracking-[0.12em] text-[#7B8996]">{label}</div>
       <div className="mt-1 flex items-end justify-between gap-2">
         <div className="swfi-numeral break-words text-[20px] font-extrabold leading-none text-[#13283D]">{value}</div>
@@ -2246,6 +2278,7 @@ function ConceptKpiCard({ label, value, note, href, series, color, statusLabel =
         {statusLabel ? <span className={`shrink-0 font-bold ${/blocked|unavailable/i.test(statusLabel) ? "text-[#9B2C2C]" : "text-[#1A9A68]"}`}>{statusLabel}</span> : null}
         <span className="min-w-0 truncate text-[#7B8996]">{note}</span>
       </div>
+      {explain ? <div className="mt-1.5 line-clamp-2 text-[9px] leading-snug text-[#657282]">{explain}</div> : null}
       {sourceLabel ? <span hidden data-source-label={sourceLabel} /> : null}
     </DashboardLink>
   );
@@ -3082,7 +3115,7 @@ function dashboardMetricCards(
       color: "#0A66C2",
       statusLabel: topAumState === "invalid" || topAumState === "unavailable" ? "Source blocked" : topAumState === "ready" && !totalAum ? "Not disclosed" : "",
       sourceLabel: topAumState,
-      explain: "Shown only when the source proves active scope, canonical identities, stable rank order, comparable currency, and FX provenance. Click → active Sovereign Wealth Fund records; the directory does not preserve ranking order.",
+      explain: "Sum of comparable USD AUM for the currently loaded top-ranked active sovereign wealth funds; this is not a date count. Shown only when the source proves active scope, canonical identities, stable rank order, comparable currency, and FX provenance. Click → active Sovereign Wealth Fund records; the directory does not preserve ranking order.",
     },
     {
       label: "ACTIVE ALLOCATORS",
@@ -3635,12 +3668,14 @@ function researchRecordHref(row: Record<string, unknown>) {
   return dashboardSearchFallback(row, "/intelligence");
 }
 
-async function loadDashboardPackets(onPacket: (key: PacketKey, packet: Packet) => void) {
-  const entries = DASHBOARD_LOAD_ORDER.map((key) => [key, ENDPOINTS[key]] as [PacketKey, string]);
-  await Promise.all(entries.map(async ([key, path]) => {
-    const packet = await fetchPacket(path, dashboardTimeout(key), { attempts: dashboardAttempts(key) });
-    onPacket(key, packet);
-  }));
+async function loadDashboardPackets(onPacket: (key: PacketKey, packet: Packet) => void, signal: AbortSignal) {
+  for (const keys of [DASHBOARD_PRIMARY_LOAD_ORDER, DASHBOARD_SECONDARY_LOAD_ORDER]) {
+    await Promise.all(keys.map(async (key) => {
+      const packet = await fetchPacket(ENDPOINTS[key], dashboardTimeout(key), { attempts: dashboardAttempts(key), signal });
+      onPacket(key, packet);
+    }));
+    if (signal.aborted) return;
+  }
 }
 
 function dashboardAttempts(key: PacketKey) {
@@ -3817,12 +3852,16 @@ function publishedRecencyScore(row: Record<string, unknown>) {
 }
 
 function aumDisplay(row: Record<string, unknown>) {
-  const numeric = numericSortValue(text(row.aum, ""));
-  const currency = text(row.aum_currency, "").trim();
-  if (numeric == null || !currency) return "Not disclosed";
-  // Sidebar/watchlist columns are ~76px: raw integers (NOK 2,048,995,080,000)
-  // overflow and read as noise — compact to the native currency + magnitude.
-  return `${currency} ${compactNumber(numeric)}`;
+  const numeric = numericSortValue(text(row.aum_usd, ""));
+  if (numeric == null) return "Not disclosed";
+  return `$${compactNumber(numeric)}`;
+}
+
+function aumDateDisplay(row: Record<string, unknown>) {
+  const value = text(row.aum_date, "");
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) return "AUM date not disclosed";
+  return `AUM as of ${new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit", year: "numeric" }).format(new Date(parsed))}`;
 }
 
 function sourceHref(row: Record<string, unknown>): string | undefined {

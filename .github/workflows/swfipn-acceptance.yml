@@ -10,7 +10,7 @@ on:
 jobs:
   acceptance:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -32,6 +32,12 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+      - name: Source-bound dynamic total contract
+        run: npm run test:source-total-contract
+
+      - name: MSCI feedback source contract
+        run: npm run msci:email-complaint:gate
 
       - name: Build
         run: npm run build
@@ -74,6 +80,13 @@ jobs:
             SWFIPN_SEMANTIC_TIMEOUT_MS=120000 \
             SWFIPN_SEMANTIC_RECEIPT=output/swfipn-semantic-search-retest-candidate.json \
             npm run test:semantic-search-retest
+          SWFIPN_ORIGIN=http://127.0.0.1:4317/swficc/ \
+            npm run brd:section-visualization:gate
+          SWFIPN_ORIGIN=http://127.0.0.1:4317/swficc/ \
+            npm run brd:performance:gate
+
+      - name: MSCI feedback browser contract
+        run: npm run msci:email-complaint:browser
 
       - name: Public search acceptance gate
         run: |

@@ -15,6 +15,11 @@ export type AllocatorRequest = {
   sort: AllocatorSort;
   direction: AllocatorDirection;
   query: string;
+  country: string;
+  region: string;
+  entityType: string;
+  aumMin: string;
+  aumMax: string;
 };
 
 export type AllocatorRequestInput = {
@@ -24,7 +29,40 @@ export type AllocatorRequestInput = {
   sort?: string;
   direction?: string;
   query?: string;
+  country?: string;
+  region?: string;
+  entityType?: string;
+  aumMin?: string | number;
+  aumMax?: string | number;
 };
+
+export type AllocatorFilters = Pick<AllocatorRequest, "country" | "region" | "entityType" | "aumMin" | "aumMax">;
+
+export type AllocatorFilterValidation =
+  | { ok: true; filters: AllocatorFilters; issue: "" }
+  | { ok: false; filters: AllocatorFilters; issue: string };
+
+export function emptyAllocatorFilters(): AllocatorFilters {
+  return { country: "", region: "", entityType: "", aumMin: "", aumMax: "" };
+}
+
+export function normalizeAllocatorFilters(value: Partial<AllocatorFilters> = {}): AllocatorFilterValidation {
+  const bounds = [normalizeWholeNumber(value.aumMin), normalizeWholeNumber(value.aumMax)] as const;
+  const filters: AllocatorFilters = {
+    country: String(value.country || "").trim(),
+    region: String(value.region || "").trim(),
+    entityType: String(value.entityType || "").trim(),
+    aumMin: bounds[0].value,
+    aumMax: bounds[1].value,
+  };
+  if (!bounds[0].valid || !bounds[1].valid) {
+    return { ok: false, filters, issue: "AUM bounds must be non-negative whole USD amounts." };
+  }
+  if (filters.aumMin && filters.aumMax && Number(filters.aumMin) > Number(filters.aumMax)) {
+    return { ok: false, filters, issue: "Minimum AUM cannot exceed maximum AUM." };
+  }
+  return { ok: true, filters, issue: "" };
+}
 
 export type AllocatorContract = {
   state: AllocatorState;
@@ -42,7 +80,15 @@ export function normalizeAllocatorRequest(value: AllocatorRequestInput = {}): Al
   const sort = ALLOCATOR_SORTS.includes(String(value.sort) as AllocatorSort) ? String(value.sort) as AllocatorSort : "activity_count";
   const direction = value.direction === "asc" ? "asc" : "desc";
   const query = String(value.query || "").trim();
-  return { days, limit, page, sort, direction, query: query.length >= 3 ? query : "" };
+  const filterValidation = normalizeAllocatorFilters({
+    country: value.country,
+    region: value.region,
+    entityType: value.entityType,
+    aumMin: String(value.aumMin ?? ""),
+    aumMax: String(value.aumMax ?? ""),
+  });
+  const filters = filterValidation.ok ? filterValidation.filters : emptyAllocatorFilters();
+  return { days, limit, page, sort, direction, query: query.length >= 3 ? query : "", ...filters };
 }
 
 export function allocatorSourceEndpoint(value: AllocatorRequestInput = {}): string {
@@ -55,6 +101,11 @@ export function allocatorSourceEndpoint(value: AllocatorRequestInput = {}): stri
     direction: request.direction,
   });
   if (request.query) params.set("q", request.query);
+  if (request.country) params.set("country", request.country);
+  if (request.region) params.set("region", request.region);
+  if (request.entityType) params.set("entity_type", request.entityType);
+  if (request.aumMin) params.set("aum_min", request.aumMin);
+  if (request.aumMax) params.set("aum_max", request.aumMax);
   return `/api/allocator-activity/v1?${params.toString()}`;
 }
 
@@ -81,6 +132,14 @@ export function inspectAllocatorCountPacket(packet: Packet | undefined, days: nu
   if (data.sort !== "activity_count" || data.direction !== "desc") issues.push("sort_mismatch");
   if (data.entity_status_scope !== "active_only" || data.include_defunct !== false) issues.push("lifecycle_scope_not_active_only");
   if (data.count_basis !== "resolved_active_buyer_or_acquirer_entities") issues.push("count_basis_unapproved");
+  const responseFilters = record(data.filters);
+  if (String(responseFilters.country || "") !== request.country) issues.push("country_filter_mismatch");
+  if (String(responseFilters.region || "") !== request.region) issues.push("region_filter_mismatch");
+  if (String(responseFilters.entity_type || "") !== request.entityType) issues.push("entity_type_filter_mismatch");
+  if (optionalIntegerText(responseFilters.aum_min) !== request.aumMin) issues.push("aum_min_filter_mismatch");
+  if (optionalIntegerText(responseFilters.aum_max) !== request.aumMax) issues.push("aum_max_filter_mismatch");
+  if (responseFilters.currency_conversion !== false) issues.push("allocator_currency_conversion_must_be_false");
+  if ((request.aumMin || request.aumMax) && responseFilters.aum_currency !== "USD") issues.push("allocator_aum_filter_currency_must_be_usd");
   if (integer(data.defunct_entities_excluded) === null) issues.push("defunct_exclusion_count_missing");
   if (integer(data.unresolved_entity_lifecycle_excluded) === null) issues.push("unresolved_lifecycle_count_missing");
   if (count === null) issues.push("count_missing");
@@ -111,6 +170,14 @@ export function inspectAllocatorPacket(packet: Packet | undefined, value: Alloca
   if (data.activity_mode !== "completed_transactions") issues.push("activity_mode_unapproved");
   if (data.entity_status_scope !== "active_only" || data.include_defunct !== false) issues.push("lifecycle_scope_not_active_only");
   if (data.count_basis !== "resolved_active_buyer_or_acquirer_entities") issues.push("count_basis_unapproved");
+  const responseFilters = record(data.filters);
+  if (String(responseFilters.country || "") !== request.country) issues.push("country_filter_mismatch");
+  if (String(responseFilters.region || "") !== request.region) issues.push("region_filter_mismatch");
+  if (String(responseFilters.entity_type || "") !== request.entityType) issues.push("entity_type_filter_mismatch");
+  if (optionalIntegerText(responseFilters.aum_min) !== request.aumMin) issues.push("aum_min_filter_mismatch");
+  if (optionalIntegerText(responseFilters.aum_max) !== request.aumMax) issues.push("aum_max_filter_mismatch");
+  if (responseFilters.currency_conversion !== false) issues.push("allocator_currency_conversion_must_be_false");
+  if ((request.aumMin || request.aumMax) && responseFilters.aum_currency !== "USD") issues.push("allocator_aum_filter_currency_must_be_usd");
   if (integer(data.defunct_entities_excluded) === null) issues.push("defunct_exclusion_count_missing");
   if (integer(data.unresolved_entity_lifecycle_excluded) === null) issues.push("unresolved_lifecycle_count_missing");
   if (count === null) issues.push("count_missing");
@@ -228,6 +295,22 @@ function positiveInteger(value: unknown): number | null {
 function timestamp(value: unknown): number | null {
   const ms = Date.parse(String(value || ""));
   return Number.isFinite(ms) ? ms : null;
+}
+
+function optionalIntegerText(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "";
+  const number = finite(value);
+  return number !== null && Number.isSafeInteger(number) && number >= 0 ? String(number) : "invalid";
+}
+
+function normalizeWholeNumber(value: unknown): { value: string; valid: boolean } {
+  const clean = String(value ?? "").trim();
+  if (!clean) return { value: "", valid: true };
+  if (!/^\d+$/.test(clean)) return { value: clean, valid: false };
+  const number = Number(clean);
+  return Number.isSafeInteger(number) && number >= 0
+    ? { value: String(number), valid: true }
+    : { value: clean, valid: false };
 }
 
 function canonicalSource(value: unknown, collection: "entities" | "transactions"): string {

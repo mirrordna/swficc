@@ -187,7 +187,7 @@ check(
 check("non-numeric news id fails closed", swfiRecordPathFromHref("https://www.swfi.com/v1/news/not-a-post"), "");
 
 // Dashboard 2.0 E2E contract gate helpers (same module the browser gate runs)
-const { vagueLabelIssue, staleDataIssue, elementContractIssues, ctaDestinationIssue } = await import("./swfipn-dashboard20-e2e-contract-gate.mjs");
+const { vagueLabelIssue, staleDataIssue, elementContractIssues, ctaDestinationIssue, contractReadinessIssue } = await import("./swfipn-dashboard20-e2e-contract-gate.mjs");
 check("vague label: bare Data blocked", vagueLabelIssue("Data"), "vague_label");
 check("vague label: bare View blocked", vagueLabelIssue(" view "), "vague_label");
 check("vague label: specific label passes", vagueLabelIssue("View live mandates"), null);
@@ -209,6 +209,10 @@ check("cta destination: swfi.com passes", ctaDestinationIssue("https://www.swfi.
 check("cta destination: preview-layer filter link passes", ctaDestinationIssue("/swficc/profiles/?filter=Norway", "https://dashboard.swfi.com/swficc"), null);
 check("cta destination: linkedin exception passes", ctaDestinationIssue("https://www.linkedin.com/in/example", "https://dashboard.swfi.com/swficc"), null);
 check("cta destination: off-platform host flagged", String(ctaDestinationIssue("https://example.com/x", "https://dashboard.swfi.com/swficc")).split(":")[0], "off_platform_destination");
+check("contract readiness: non-contract page needs no marker", contractReadinessIssue(false, 0, true), null);
+check("contract readiness: attached marker passes", contractReadinessIssue(true, 1, false), null);
+check("contract readiness: empty DOM fails closed", contractReadinessIssue(true, 0, false), "no_contract_elements");
+check("contract readiness: timeout is explicit", contractReadinessIssue(true, 0, true), "contract_readiness_timeout");
 
 console.log(failures === 0 ? `ALL CHECKS PASS (${failures} failures)` : `${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);
