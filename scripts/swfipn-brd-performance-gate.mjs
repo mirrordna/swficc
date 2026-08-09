@@ -78,7 +78,7 @@ async function main() {
       await page.waitForFunction((routeId) => {
         const body = document.body.innerText || "";
         const sourceBackedLink = document.querySelector('a[data-source-state="on-file"], a[data-record-link="true"]');
-        const homeReady = document.querySelector('[data-dashboard-ready="true"]');
+        const homeReady = document.querySelector('[data-dashboard-primary-ready="true"]');
         return !/Source not verified|temporarily unavailable/i.test(body)
           && (routeId === "home" ? Boolean(homeReady && sourceBackedLink) : Boolean(sourceBackedLink));
       }, route.id, { timeout: 120_000 });

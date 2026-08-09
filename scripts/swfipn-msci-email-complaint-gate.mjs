@@ -65,6 +65,17 @@ const checks = [
     expected: "Home KPI explanations are visible and the Dashboard 2.0 contract gate requires home display-contract elements.",
   },
   {
+    id: "home_primary_sources_are_prioritized_without_legacy_mandate_duplicate",
+    ok: pageSource.includes('const DASHBOARD_PRIMARY_LOAD_ORDER: PacketKey[] = ["metrics", "rfps", "transactions30", "entities"]')
+      && pageSource.includes('data-dashboard-primary-ready={dashboardPrimaryReady ? "true" : "false"}')
+      && pageSource.includes("for (const keys of [DASHBOARD_PRIMARY_LOAD_ORDER, DASHBOARD_SECONDARY_LOAD_ORDER])")
+      && pageSource.includes("loadDashboardPackets((key, packet) =>")
+      && pageSource.includes("controller.abort()")
+      && pageSource.includes("{ attempts: dashboardAttempts(key), signal }")
+      && !pageSource.includes('mandates: "/api/live-mandates/v1?limit=25&page=1"'),
+    expected: "The four source packets needed for first use load before secondary analytics, navigation aborts the superseded fan-out, and the governed combined RFP/Opportunity packet replaces the redundant legacy mandate fetch.",
+  },
+  {
     id: "canonical_entity_type_is_exact_source_filter",
     ok: comparisonContract.includes('params.set("entity_type_match", "exact")')
       && comparisonContract.includes('cleanText(filters.entity_type_match) !== "exact"')
@@ -160,6 +171,7 @@ const receipt = {
   checked_scope: [
     "Top Ranked AUM visible source binding",
     "Home KPI visible and executable semantics",
+    "Home source-load priority and combined RFP/Opportunity request reuse",
     "Canonical exact entity-type filter/count/pagination contract",
     "RFP versus Opportunity, exact geography, posted/due date, and text-query contracts",
     "Allocator exact geography/entity-type and disclosed-USD AUM contracts",

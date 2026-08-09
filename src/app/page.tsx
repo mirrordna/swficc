@@ -84,7 +84,6 @@ const ENDPOINTS = {
   allocators30: "/api/allocator-activity/v1?days=30&limit=25&page=1&sort=most_recent_activity_date&direction=desc",
   allocators90: allocatorCountEndpoint(90),
   rfps: "/api/live-opportunities/v1?limit=25&page=1",
-  mandates: "/api/live-mandates/v1?limit=25&page=1",
   transactions30: "/api/recent-transactions/v1?days=30&limit=50&page=1",
   entities: "/api/source-data/search/v1?collection=entities&limit=25&page=1",
   people: "/api/source-data/search/v1?collection=people&limit=25&page=1",
@@ -99,7 +98,13 @@ const NEWS_REFRESH_INTERVAL_MS = 5 * 60_000;
 const NEWS_REFRESH_MIN_GAP_MS = 60_000;
 const NEWS_REFRESH_EVENT = "swfi:refresh-news";
 const SEARCH_PREFETCH_CACHE_PREFIX = "swfipn.search.prefetch.v1:";
-const DASHBOARD_LOAD_ORDER: PacketKey[] = ["top20", "allocators30", "sectorFlows", "transactions30", "rfps", "mandates", "metrics", "institutionTypes", "allocators90", "entities", "people", "news"];
+// The first usable dashboard state depends on these four source packets. They
+// run together before the secondary visualizations so twelve simultaneous
+// source requests cannot starve the records needed for first use. The
+// integrated shadow receipt showed the same entity query at 5.6s amid the
+// homepage fan-out versus 1.1s on /profiles after that fan-out had settled.
+const DASHBOARD_PRIMARY_LOAD_ORDER: PacketKey[] = ["metrics", "rfps", "transactions30", "entities"];
+const DASHBOARD_SECONDARY_LOAD_ORDER: PacketKey[] = ["top20", "allocators30", "sectorFlows", "institutionTypes", "allocators90", "people", "news"];
 const SEARCH_CATEGORY_LABELS = ["All", "Entities", "RFPs & Opportunities", "Transactions", "News & Articles", "People"] as const;
 const insightNav = [
   ["Top Investors", "/allocators"],
@@ -204,6 +209,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
     const snapshot = freshHomeSnapshot();
     const snapshotTimer = window.setTimeout(() => {
       if (active && Object.keys(snapshot).length) {
@@ -216,9 +222,10 @@ export default function DashboardPage() {
         ...current,
         [key]: shouldReplacePacket(current[key], packet) ? packet : current[key],
       }));
-    });
+    }, controller.signal);
     return () => {
       active = false;
+      controller.abort();
       window.clearTimeout(snapshotTimer);
     };
   }, []);
@@ -281,12 +288,10 @@ export default function DashboardPage() {
   // do not change; limit=50 yields 28 disclosed, so the widget's own filter->sort->slice(0,10)
   // reliably lands 10. Same endpoint, no padding with undisclosed rows.
   const disclosedDealRows = factRows(packets.transactions30).slice(0, 50);
+  // The governed combined source returns both RFP and Opportunity records with
+  // an explicit record_type. Reuse that one packet everywhere instead of also
+  // loading the legacy /api/live-mandates route on first paint.
   const rfpRows = factRows(packets.rfps).slice(0, 25);
-  // Investment "Opportunities" live in a separate source (/api/live-mandates/v1 — 26 records,
-  // all type "Opportunity") that Smart Search never loaded (Jaykesh 2026-07-08: "Opportunities
-  // missing"). Merged into the RFPs & Opportunities SEARCH group only (below); the RFP-specific
-  // widgets keep the original rfpRows untouched so nothing that already works regresses.
-  const mandateRows = factRows(packets.mandates).slice(0, 25);
   const newsRows = useMemo(() => newestNewsRows(factRows(packets.news).slice(0, 25)), [packets.news]);
   const allocator30Contract = useMemo(() => inspectAllocatorPacket(packets.allocators30, {
     days: 30,
@@ -305,6 +310,9 @@ export default function DashboardPage() {
   const topAumContract = useMemo(() => inspectAumRankingPacket(packets.top20), [packets.top20]);
   const topAumRows = topAumContract.rows;
   const dashboardEntitySearchRows = useMemo(() => dedupeSearchRecords([...topAumRows, ...entityRows]), [entityRows, topAumRows]);
+  const dashboardPrimaryReady = useMemo(() => {
+    return DASHBOARD_PRIMARY_LOAD_ORDER.every((key) => isFact(packets[key]));
+  }, [packets]);
   const dashboardReady = useMemo(() => {
     return ["metrics", "institutionTypes", "sectorFlows", "rfps", "transactions30", "entities", "news"]
       .every((key) => isFact(packets[key as PacketKey]))
@@ -326,9 +334,9 @@ export default function DashboardPage() {
     entityRows: dashboardEntitySearchRows,
     peopleRows,
     transactionRows,
-    rfpRows: dedupeSearchRecords([...rfpRows, ...mandateRows]),
+    rfpRows,
     newsRows,
-  }), [searchQuery, dashboardEntitySearchRows, peopleRows, transactionRows, rfpRows, mandateRows, newsRows]);
+  }), [searchQuery, dashboardEntitySearchRows, peopleRows, transactionRows, rfpRows, newsRows]);
   const liveSearchGroups = useMemo(() => brdPublicSearchGroups(searchQuery, searchPacket, searchEntityPackets), [searchQuery, searchPacket, searchEntityPackets]);
   const searchIntent = useMemo(
     () => isTextQueryReady(searchQuery) ? smartSearchIntentForQuery(searchQuery) : null,
@@ -625,6 +633,7 @@ export default function DashboardPage() {
     <div
       ref={rootRef}
       data-client-hydrated={clientHydrated ? "true" : "false"}
+      data-dashboard-primary-ready={dashboardPrimaryReady ? "true" : "false"}
       data-dashboard-ready={dashboardReady ? "true" : "false"}
       className="min-h-screen bg-[#F4F6F8] font-sans text-[#101827]"
     >
@@ -2002,12 +2011,11 @@ function brdNewestRows(
     };
   }
   const visibleRfps = tab === "opportunities"
-    ? rfpRows.filter((row) => /opportun/i.test(brdText(row.type || row.title || row.name, "")))
-    : rfpRows.filter((row) => !/opportun/i.test(brdText(row.type, "")));
-  const rowsToUse = visibleRfps.length ? visibleRfps : rfpRows;
+    ? rfpRows.filter((row) => /^(opportunity|mandate)$/i.test(brdText(row.record_type || row.opportunity_type, "")))
+    : rfpRows.filter((row) => /^rfp$/i.test(brdText(row.record_type || row.opportunity_type, "")));
   return {
     headers: ["Name", "Institution", "Deadline", "Action"],
-    rows: rowsToUse.map((row) => [
+    rows: visibleRfps.map((row) => [
       mandateCell(row),
       brdText(row.institution),
       timelineDate(row),
@@ -3653,12 +3661,14 @@ function researchRecordHref(row: Record<string, unknown>) {
   return dashboardSearchFallback(row, "/intelligence");
 }
 
-async function loadDashboardPackets(onPacket: (key: PacketKey, packet: Packet) => void) {
-  const entries = DASHBOARD_LOAD_ORDER.map((key) => [key, ENDPOINTS[key]] as [PacketKey, string]);
-  await Promise.all(entries.map(async ([key, path]) => {
-    const packet = await fetchPacket(path, dashboardTimeout(key), { attempts: dashboardAttempts(key) });
-    onPacket(key, packet);
-  }));
+async function loadDashboardPackets(onPacket: (key: PacketKey, packet: Packet) => void, signal: AbortSignal) {
+  for (const keys of [DASHBOARD_PRIMARY_LOAD_ORDER, DASHBOARD_SECONDARY_LOAD_ORDER]) {
+    await Promise.all(keys.map(async (key) => {
+      const packet = await fetchPacket(ENDPOINTS[key], dashboardTimeout(key), { attempts: dashboardAttempts(key), signal });
+      onPacket(key, packet);
+    }));
+    if (signal.aborted) return;
+  }
 }
 
 function dashboardAttempts(key: PacketKey) {
