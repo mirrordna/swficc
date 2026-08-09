@@ -542,7 +542,7 @@ export default function CompetitionAnalysisWorkbench({
           ) : null}
           {peerTypeKey ? (
             <div className="rounded border border-[#D7E3EE] bg-white px-3 py-2 text-[11px] text-[#41566B]">
-              Peer group locked to <strong>{peerType}</strong> from the anchor institution. The upstream type parameter is broad-match, so every loaded candidate is exact-type guarded before selection.
+              Peer group locked to the canonical <strong>{peerType}</strong> type from the anchor institution. The source request uses exact, case-insensitive type matching, and its count and pagination use the same predicate.
             </div>
           ) : null}
         </div>

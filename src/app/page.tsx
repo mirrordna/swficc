@@ -746,12 +746,16 @@ function BrdCommandCenterSidebar({ topRows, rankingState, onRetry }: { topRows: 
           {/* Honest label 2026-07-06: these are the top-AUM ranked rows, not a
               user-curated watchlist (this preview has no accounts). */}
           <span>Top Ranked AUM</span>
-          <span className="text-[#7B8996]">AUM</span>
+          <span className="text-[#7B8996]">USD AUM</span>
         </div>
+        <p className="mb-2 text-[10px] leading-snug text-[#657282]">Ranked by comparable USD AUM from the verified source. Each source AUM date is shown when supplied.</p>
         <div className="grid gap-2">
           {watched.length ? watched.map((row, index) => (
-            <DataLink key={`${brdText(row.name)}-${index}`} href={dashboardProfileHref(row)} sourceHref={sourceHref(row)} className="grid grid-cols-[minmax(0,1fr)_76px] gap-2 text-inherit no-underline">
-              <span className="truncate text-[11px] font-semibold text-[#223244]">{brdText(row.name)}</span>
+            <DataLink key={`${brdText(row.name)}-${index}`} href={dashboardProfileHref(row)} sourceHref={sourceHref(row)} className="grid grid-cols-[minmax(0,1fr)_82px] gap-2 text-inherit no-underline">
+              <span className="min-w-0">
+                <span className="block truncate text-[11px] font-semibold text-[#223244]">{brdText(row.name)}</span>
+                <span className="block truncate text-[9px] text-[#7B8996]">{aumDateDisplay(row)}</span>
+              </span>
               <span className="text-right text-[11px] font-bold text-[#071F48]">{aumDisplay(row)}</span>
             </DataLink>
           )) : rankingState === "pending" ? (
@@ -2236,7 +2240,20 @@ function ConceptKpiCard({ label, value, note, href, series, color, statusLabel =
   explain?: string;
 }) {
   return (
-    <DashboardLink href={href} title={explain || undefined} data-qa-min="150" data-kpi-label={label} className="min-w-0 border border-[#C9D3DE] bg-white px-3 py-2.5 text-inherit no-underline shadow-[0_1px_2px_rgba(20,44,70,0.05)] hover:border-[#D51E29]/50">
+    <DashboardLink
+      href={href}
+      title={explain || undefined}
+      data-qa-min="150"
+      data-kpi-label={label}
+      data-display-id={`home-kpi-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`}
+      data-display-type="metric"
+      data-title={label}
+      data-purpose={explain}
+      data-source="Verified SWFI source API"
+      data-primary-cta="Open source records"
+      data-cta-href={href}
+      className="min-w-0 border border-[#C9D3DE] bg-white px-3 py-2.5 text-inherit no-underline shadow-[0_1px_2px_rgba(20,44,70,0.05)] hover:border-[#D51E29]/50"
+    >
       <div className="text-[9px] font-extrabold uppercase tracking-[0.12em] text-[#7B8996]">{label}</div>
       <div className="mt-1 flex items-end justify-between gap-2">
         <div className="swfi-numeral break-words text-[20px] font-extrabold leading-none text-[#13283D]">{value}</div>
@@ -2246,6 +2263,7 @@ function ConceptKpiCard({ label, value, note, href, series, color, statusLabel =
         {statusLabel ? <span className={`shrink-0 font-bold ${/blocked|unavailable/i.test(statusLabel) ? "text-[#9B2C2C]" : "text-[#1A9A68]"}`}>{statusLabel}</span> : null}
         <span className="min-w-0 truncate text-[#7B8996]">{note}</span>
       </div>
+      {explain ? <div className="mt-1.5 line-clamp-2 text-[9px] leading-snug text-[#657282]">{explain}</div> : null}
       {sourceLabel ? <span hidden data-source-label={sourceLabel} /> : null}
     </DashboardLink>
   );
@@ -3082,7 +3100,7 @@ function dashboardMetricCards(
       color: "#0A66C2",
       statusLabel: topAumState === "invalid" || topAumState === "unavailable" ? "Source blocked" : topAumState === "ready" && !totalAum ? "Not disclosed" : "",
       sourceLabel: topAumState,
-      explain: "Shown only when the source proves active scope, canonical identities, stable rank order, comparable currency, and FX provenance. Click → active Sovereign Wealth Fund records; the directory does not preserve ranking order.",
+      explain: "Sum of comparable USD AUM for the currently loaded top-ranked active sovereign wealth funds; this is not a date count. Shown only when the source proves active scope, canonical identities, stable rank order, comparable currency, and FX provenance. Click → active Sovereign Wealth Fund records; the directory does not preserve ranking order.",
     },
     {
       label: "ACTIVE ALLOCATORS",
@@ -3817,12 +3835,16 @@ function publishedRecencyScore(row: Record<string, unknown>) {
 }
 
 function aumDisplay(row: Record<string, unknown>) {
-  const numeric = numericSortValue(text(row.aum, ""));
-  const currency = text(row.aum_currency, "").trim();
-  if (numeric == null || !currency) return "Not disclosed";
-  // Sidebar/watchlist columns are ~76px: raw integers (NOK 2,048,995,080,000)
-  // overflow and read as noise — compact to the native currency + magnitude.
-  return `${currency} ${compactNumber(numeric)}`;
+  const numeric = numericSortValue(text(row.aum_usd, ""));
+  if (numeric == null) return "Not disclosed";
+  return `$${compactNumber(numeric)}`;
+}
+
+function aumDateDisplay(row: Record<string, unknown>) {
+  const value = text(row.aum_date, "");
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) return "AUM date not disclosed";
+  return `AUM as of ${new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit", year: "numeric" }).format(new Date(parsed))}`;
 }
 
 function sourceHref(row: Record<string, unknown>): string | undefined {

@@ -74,7 +74,7 @@ export function ctaDestinationIssue(href, origin = ORIGIN) {
 }
 
 const PAGES = [
-  { page: "/", contract: false, note: "home panels carry explains; data-attribute tagging is a follow-up pass" },
+  { page: "/", contract: true, note: "home KPI cards carry executable display contracts and visible explanations" },
   { page: "/profiles/", contract: true },
   { page: "/people/", contract: true },
   { page: "/transactions/", contract: true },

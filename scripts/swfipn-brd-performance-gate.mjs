@@ -18,15 +18,24 @@ const criticalApi = [
   "/api/recent-transactions/v1",
   "/api/live-opportunities/v1",
   "/api/source-intelligence/news/v1",
-  "/api/sector-flows/v1"
+  "/api/sector-flows/v1",
+  "/api/allocator-activity/v1",
+  "/api/institution-types/v1"
+];
+const routes = [
+  { id: "home", path: "", api: ["/api/swfi/dashboard-metrics/v1", "/api/source-data/search/v1?collection=entities", "/api/recent-transactions/v1", "/api/live-opportunities/v1"] },
+  { id: "profiles", path: "profiles/", api: ["/api/source-data/search/v1?collection=entities", "/api/institution-types/v1"] },
+  { id: "mandates", path: "mandates/", api: ["/api/live-opportunities/v1"] },
+  { id: "allocators", path: "allocators/", api: ["/api/allocator-activity/v1"] },
 ];
 
 async function main() {
-  const browser = await chromium.launch({ channel: "chrome", headless: true });
+  const browser = await chromium.launch({ channel: "chrome", headless: true }).catch(() => chromium.launch({ headless: true }));
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const consoleErrors = [];
   const starts = new Map();
   const apiResponses = [];
+  let activeRoute = "startup";
 
   page.on("request", (request) => starts.set(request, Date.now()));
   page.on("response", (response) => {
@@ -36,7 +45,8 @@ async function main() {
     apiResponses.push({
       url,
       status: response.status(),
-      duration_ms: Date.now() - started
+      duration_ms: Date.now() - started,
+      route: activeRoute,
     });
   });
   page.on("console", (msg) => {
@@ -44,38 +54,73 @@ async function main() {
   });
   page.on("pageerror", (error) => consoleErrors.push(error.message));
 
-  const started = Date.now();
-  await page.goto(origin, { waitUntil: "commit", timeout: 120_000 });
-  const committedMs = Date.now() - started;
-  await page.waitForLoadState("domcontentloaded", { timeout: 120_000 });
-  const domContentLoadedMs = Date.now() - started;
-  await page.waitForSelector("text=Global Capital Map", { timeout: 120_000 });
-  const overviewVisibleMs = Date.now() - started;
-  await page.waitForSelector("text=Recent Activity", { timeout: 120_000 });
-  const newestDataMs = Date.now() - started;
-  await page.waitForSelector("text=Top 10", { timeout: 120_000 });
-  const topTenMs = Date.now() - started;
-  await page.waitForFunction(() => {
-    const text = document.body.innerText || "";
-    const sourceBackedLink = document.querySelector('a[data-source-state="on-file"], a[data-record-link="true"]');
-    return /Latest Intelligence|Most Referenced|Topics/.test(text)
-      && /Recent Activity/.test(text)
-      && /Top 10/.test(text)
-      && Boolean(sourceBackedLink);
-  }, null, { timeout: 120_000 });
-  const dashboardTtiMs = Date.now() - started;
-  const dashboardDataMs = Math.max(0, dashboardTtiMs - domContentLoadedMs);
-  await page.waitForTimeout(1500);
+  const failures = [];
+  const routeTimings = [];
+
+  for (const route of routes) {
+    activeRoute = route.id;
+    const apiStart = apiResponses.length;
+    const routeConsoleStart = consoleErrors.length;
+    const started = Date.now();
+    const responseWaits = route.api.map((needle) => page.waitForResponse((response) => response.url().includes(needle), { timeout: 120_000 }));
+    let navigation = null;
+    let navigationError = null;
+    try {
+      navigation = await page.goto(new URL(route.path, origin).href, { waitUntil: "domcontentloaded", timeout: 120_000 });
+    } catch (error) {
+      navigationError = error instanceof Error ? error.message : String(error);
+    }
+    const domContentLoadedMs = Date.now() - started;
+    const apiSettlements = await Promise.allSettled(responseWaits);
+    let sourceBackedReady = false;
+    let sourceBackedError = null;
+    try {
+      await page.waitForFunction((routeId) => {
+        const body = document.body.innerText || "";
+        const sourceBackedLink = document.querySelector('a[data-source-state="on-file"], a[data-record-link="true"]');
+        const homeReady = document.querySelector('[data-dashboard-ready="true"]');
+        return !/Source not verified|temporarily unavailable/i.test(body)
+          && (routeId === "home" ? Boolean(homeReady && sourceBackedLink) : Boolean(sourceBackedLink));
+      }, route.id, { timeout: 120_000 });
+      sourceBackedReady = true;
+    } catch (error) {
+      sourceBackedError = error instanceof Error ? error.message : String(error);
+    }
+    const usableMs = Date.now() - started;
+    const dataMs = Math.max(0, usableMs - domContentLoadedMs);
+    const routeApi = apiResponses.slice(apiStart).filter((item) => route.api.some((needle) => item.url.includes(needle)));
+    const successfulCritical = routeApi.filter((item) => item.status === 200);
+    const requiredApi200Count = route.api.filter((needle) => successfulCritical.some((item) => item.url.includes(needle))).length;
+    const apiMaxMs = successfulCritical.length ? Math.max(...successfulCritical.map((item) => item.duration_ms)) : null;
+    const routeFailures = [];
+    if (navigationError) routeFailures.push("navigation_failed");
+    if ((navigation?.status() || 0) >= 400) routeFailures.push(`http_${navigation?.status() || 0}`);
+    if (!sourceBackedReady) routeFailures.push("source_backed_state_missing");
+    if (usableMs > ttiTargetMs) routeFailures.push(`usable_${usableMs}_gt_${ttiTargetMs}`);
+    if (dataMs > dataTargetMs) routeFailures.push(`data_${dataMs}_gt_${dataTargetMs}`);
+    if (apiSettlements.some((item) => item.status === "rejected")) routeFailures.push("required_api_missing");
+    if (requiredApi200Count !== route.api.length) routeFailures.push(`required_api_200_${requiredApi200Count}_of_${route.api.length}`);
+    if (apiMaxMs === null || apiMaxMs > dataTargetMs) routeFailures.push(`api_max_${apiMaxMs ?? "missing"}_gt_${dataTargetMs}`);
+    if (consoleErrors.length > routeConsoleStart) routeFailures.push("console_errors_present");
+    routeTimings.push({
+      id: route.id,
+      url: new URL(route.path, origin).href,
+      status: routeFailures.length ? "fail" : "pass",
+      dom_content_loaded_ms: domContentLoadedMs,
+      usable_source_backed_ms: usableMs,
+      data_after_dom_ms: dataMs,
+      required_api_max_ms: apiMaxMs,
+      required_api: route.api,
+      api_responses: routeApi,
+      navigation_error: navigationError,
+      source_backed_error: sourceBackedError,
+      failures: routeFailures,
+    });
+    failures.push(...routeFailures.map((failure) => `${route.id}:${failure}`));
+  }
 
   const successfulCritical = apiResponses.filter((item) => item.status === 200);
-  const liveRefreshMaxMs = successfulCritical.length
-    ? Math.max(...successfulCritical.map((item) => item.duration_ms))
-    : null;
-  const body = await page.locator("body").innerText();
-  const failures = [];
-  if (dashboardTtiMs > ttiTargetMs) failures.push(`dashboard_tti_${dashboardTtiMs}_gt_${ttiTargetMs}`);
-  if (dashboardDataMs > dataTargetMs) failures.push(`dashboard_data_${dashboardDataMs}_gt_${dataTargetMs}`);
-  if (consoleErrors.length) failures.push("console_errors_present");
+  const liveRefreshMaxMs = successfulCritical.length ? Math.max(...successfulCritical.map((item) => item.duration_ms)) : null;
   const status = failures.length ? "fail" : "pass";
   const receipt = {
     schema_version: "swfipn.brd_performance_gate.v1",
@@ -83,25 +128,21 @@ async function main() {
     origin,
     status,
     summary: {
-      navigation_commit_ms: committedMs,
-      dom_content_loaded_ms: domContentLoadedMs,
-      overview_visible_ms: overviewVisibleMs,
-      newest_data_visible_ms: newestDataMs,
-      top_10_visible_ms: topTenMs,
-      dashboard_tti_ms: dashboardTtiMs,
+      routes_checked: routeTimings.length,
+      routes_passed: routeTimings.filter((route) => route.status === "pass").length,
+      dashboard_tti_ms: routeTimings[0]?.usable_source_backed_ms ?? null,
       dashboard_tti_target_ms: ttiTargetMs,
-      dashboard_data_ms: dashboardDataMs,
+      dashboard_data_ms: routeTimings[0]?.data_after_dom_ms ?? null,
       dashboard_data_target_ms: dataTargetMs,
       live_refresh_max_ms: liveRefreshMaxMs,
       critical_api_200_count: successfulCritical.length,
-      still_refreshing_after_first_use: body.includes("Loading"),
       console_errors: consoleErrors.slice(0, 10),
       failures
     },
     caveats: [
-      "dashboard_data_ms measures visible business data after DOM readiness; live_refresh_max_ms records background source refresh latency separately.",
-      body.includes("Loading") ? "Some background modules were still refreshing after first usable render." : ""
-    ].filter(Boolean),
+      "Every checked route must reach a source-backed usable state and receive each required live API response within the blocking targets; bundled fallback content alone cannot pass.",
+    ],
+    routes: routeTimings,
     api_responses: apiResponses
   };
   fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2));

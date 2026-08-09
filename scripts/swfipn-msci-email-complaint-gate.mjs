@@ -13,17 +13,108 @@ fs.mkdirSync(runDir, { recursive: true });
 const { businessSearchQueryVariants } = await import(
   pathToFileURL(path.join(repoRoot, "src/lib/searchRelevance.ts")).href
 );
+const { emptyMandateFilters, mandateSourceEndpoint, normalizeMandateFilters } = await import(
+  pathToFileURL(path.join(repoRoot, "src/lib/mandateSourceContract.ts")).href
+);
+const { allocatorSourceEndpoint, normalizeAllocatorFilters } = await import(
+  pathToFileURL(path.join(repoRoot, "src/lib/allocatorSourceContract.ts")).href
+);
 
 const pageSource = fs.readFileSync(path.join(repoRoot, "src/app/page.tsx"), "utf8");
 const searchSource = fs.readFileSync(path.join(repoRoot, "src/components/SearchResultsPage.tsx"), "utf8");
 const sourceList = fs.readFileSync(path.join(repoRoot, "src/components/SourceListPage.tsx"), "utf8");
 const aumContract = fs.readFileSync(path.join(repoRoot, "src/lib/aumRankingContract.ts"), "utf8");
+const comparisonContract = fs.readFileSync(path.join(repoRoot, "src/lib/comparisonSourceContract.ts"), "utf8");
+const dashboardContractGate = fs.readFileSync(path.join(repoRoot, "scripts/swfipn-dashboard20-e2e-contract-gate.mjs"), "utf8");
+
+const mandateFilters = {
+  ...emptyMandateFilters(),
+  recordType: "opportunity",
+  country: "United States",
+  region: "North America",
+  postedFrom: "2026-08-01",
+  postedTo: "2026-08-31",
+  dueFrom: "2026-09-01",
+  dueTo: "2026-10-31",
+  investmentTypes: ["Infrastructure"],
+};
+const mandateEndpoint = new URL(mandateSourceEndpoint(mandateFilters, 25, 0, "energy transition"), "https://dashboard.swfi.com");
+const allocatorEndpoint = new URL(allocatorSourceEndpoint({
+  country: "United States",
+  region: "North America",
+  entityType: "Public Pension",
+  aumMin: "1000000",
+  aumMax: "5000000",
+}), "https://dashboard.swfi.com");
 
 const checks = [
   {
     id: "top_ranked_aum_is_visible_and_source_bound",
-    ok: pageSource.includes("Top Ranked AUM") && aumContract.includes("/v1/swfi/top20?"),
-    expected: "The dashboard visibly names Top Ranked AUM and binds it to the canonical ranking endpoint.",
+    ok: pageSource.includes("Top Ranked AUM")
+      && pageSource.includes("Ranked by comparable USD AUM from the verified source")
+      && pageSource.includes("text(row.aum_usd")
+      && pageSource.includes("AUM date not disclosed")
+      && aumContract.includes("/v1/swfi/top20?"),
+    expected: "The dashboard visibly names Top Ranked AUM, displays the contract-approved comparable USD value, labels source-date absence, and binds to the canonical ranking endpoint.",
+  },
+  {
+    id: "home_kpis_have_executable_visible_semantics",
+    ok: pageSource.includes('data-display-id={`home-kpi-${label.toLowerCase()')
+      && pageSource.includes("{explain ? <div")
+      && dashboardContractGate.includes('{ page: "/", contract: true'),
+    expected: "Home KPI explanations are visible and the Dashboard 2.0 contract gate requires home display-contract elements.",
+  },
+  {
+    id: "canonical_entity_type_is_exact_source_filter",
+    ok: comparisonContract.includes('params.set("entity_type_match", "exact")')
+      && comparisonContract.includes('cleanText(filters.entity_type_match) !== "exact"')
+      && sourceList.includes('entityTypes: "/api/institution-types/v1?limit=100"')
+      && sourceList.includes("Entity type (exact)")
+      && sourceList.includes("Source count and pagination use the same exact predicate")
+      && !sourceList.includes("upstream total remains broad-match"),
+    expected: "The Institutions/Entities control is restricted to source-provided canonical types and requests coherent exact count/pagination semantics.",
+  },
+  {
+    id: "mandate_record_type_geography_and_explicit_dates_are_source_bound",
+    ok: mandateEndpoint.pathname === "/api/live-opportunities/v1"
+      && mandateEndpoint.searchParams.get("record_type") === "opportunity"
+      && mandateEndpoint.searchParams.get("q") === "energy transition"
+      && mandateEndpoint.searchParams.get("country") === "United States"
+      && mandateEndpoint.searchParams.get("region") === "North America"
+      && mandateEndpoint.searchParams.get("posted_from") === "2026-08-01"
+      && mandateEndpoint.searchParams.get("posted_to") === "2026-08-31"
+      && mandateEndpoint.searchParams.get("due_from") === "2026-09-01"
+      && mandateEndpoint.searchParams.get("due_to") === "2026-10-31"
+      && mandateEndpoint.searchParams.get("investment_type") === "Infrastructure"
+      && sourceList.includes("There is no undefined Period filter.")
+      && sourceList.includes('data-primary-cta="Source-type, investment-type, and region bars open exact source-filtered records"')
+      && !sourceList.includes("type and region remain display-only")
+      && !sourceList.includes("does not accept a record-type filter")
+      && !sourceList.includes("does not accept a region filter"),
+    expected: "RFP/Opportunity selection and the approved exact geography and posted/due date fields compose on the combined source route without inventing Period semantics.",
+  },
+  {
+    id: "mandate_date_validation_fails_closed",
+    ok: normalizeMandateFilters({ ...emptyMandateFilters(), postedFrom: "2026-08-32" }).ok === false
+      && normalizeMandateFilters({ ...emptyMandateFilters(), dueFrom: "2026-10-02", dueTo: "2026-10-01" }).ok === false,
+    expected: "Malformed and reversed explicit date bounds fail before a source request is applied.",
+  },
+  {
+    id: "allocator_approved_filters_are_source_bound",
+    ok: allocatorEndpoint.pathname === "/api/allocator-activity/v1"
+      && allocatorEndpoint.searchParams.get("country") === "United States"
+      && allocatorEndpoint.searchParams.get("region") === "North America"
+      && allocatorEndpoint.searchParams.get("entity_type") === "Public Pension"
+      && allocatorEndpoint.searchParams.get("aum_min") === "1000000"
+      && allocatorEndpoint.searchParams.get("aum_max") === "5000000"
+      && sourceList.includes("AUM bounds exclude non-USD and undisclosed AUM; no FX conversion is applied."),
+    expected: "Approved allocator geography/entity filters and disclosed-USD AUM bounds are sent exactly and the no-FX scope is visible.",
+  },
+  {
+    id: "allocator_aum_validation_fails_closed",
+    ok: normalizeAllocatorFilters({ aumMin: "-1" }).ok === false
+      && normalizeAllocatorFilters({ aumMin: "5000001", aumMax: "5000000" }).ok === false,
+    expected: "Negative or reversed allocator AUM bounds fail before a source request is applied.",
   },
   {
     id: "adia_news_queries_full_name_and_acronym",
@@ -68,6 +159,10 @@ const receipt = {
   generated_at: new Date().toISOString(),
   checked_scope: [
     "Top Ranked AUM visible source binding",
+    "Home KPI visible and executable semantics",
+    "Canonical exact entity-type filter/count/pagination contract",
+    "RFP versus Opportunity, exact geography, posted/due date, and text-query contracts",
+    "Allocator exact geography/entity-type and disclosed-USD AUM contracts",
     "ADIA entity-name/acronym news query coverage",
     "Hong Kong Investment Corporation/HKIC news query coverage",
     "Smart Search multi-source result merge",

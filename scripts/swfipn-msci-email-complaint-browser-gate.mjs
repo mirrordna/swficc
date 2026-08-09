@@ -101,6 +101,57 @@ async function main() {
         return;
       }
       requests.push(parsed.href);
+      if (parsed.pathname === "/api/institution-types/v1") {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(packet([
+            { name: "Sovereign Wealth Fund", count: 200 },
+            { name: "Public Pension", count: 100 },
+          ])),
+        });
+        return;
+      }
+      if (parsed.pathname === "/api/source-data/search/v1" && parsed.searchParams.get("collection") === "entities" && parsed.searchParams.get("entity_type")) {
+        const entityType = parsed.searchParams.get("entity_type") || "";
+        const row = {
+          _id: "507f1f77bcf86cd799439011",
+          name: "Canonical exact-type result",
+          entity_type: entityType,
+          type: entityType,
+          country: "United States",
+          region: "North America",
+          defunct: false,
+          entity_status: "active",
+          source_url: "https://www.swfi.com/v1/entities/507f1f77bcf86cd799439011",
+        };
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            status: "ok",
+            fact: true,
+            result_qualifier: "fact",
+            data: {
+              collection: "entities",
+              count: 1,
+              rows: [row],
+              results: [row],
+              page: Number(parsed.searchParams.get("page") || 1),
+              requested_limit: Number(parsed.searchParams.get("limit") || 25),
+              has_more: false,
+              filters: {
+                query: parsed.searchParams.get("q") || "",
+                entity_type: entityType,
+                entity_type_match: parsed.searchParams.get("entity_type_match"),
+                region: parsed.searchParams.get("region") || "",
+                include_defunct: false,
+              },
+            },
+          }),
+        });
+        return;
+      }
       if (parsed.pathname === "/api/source-intelligence/news/v1") {
         const query = parsed.searchParams.get("q") || "";
         const newsRows = query === "HKIC"
@@ -118,6 +169,119 @@ async function main() {
     checks.push({
       id: "top_ranked_aum_visible",
       ok: await page.getByText("Top Ranked AUM", { exact: true }).isVisible(),
+    });
+    checks.push({
+      id: "home_kpi_semantics_visible_and_executable",
+      ok: await page.locator("[data-display-id^='home-kpi-']").count() > 0
+        && await page.getByText(/Sum of comparable USD AUM for the currently loaded top-ranked active sovereign wealth funds/i).isVisible(),
+    });
+
+    await page.goto(`${origin}profiles/`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Records", exact: true }).click();
+    const profileRequestMarker = requests.length;
+    await page.getByTestId("entity-type-filter").selectOption("Sovereign Wealth Fund");
+    await page.getByTestId("entity-type-apply").click();
+    await page.waitForTimeout(500);
+    const profileRequests = requests.slice(profileRequestMarker)
+      .map((href) => new URL(href))
+      .filter((url) => url.pathname === "/api/source-data/search/v1" && url.searchParams.get("collection") === "entities");
+    checks.push({
+      id: "canonical_entity_type_drives_exact_source_request",
+      ok: profileRequests.some((url) => url.searchParams.get("entity_type") === "Sovereign Wealth Fund" && url.searchParams.get("entity_type_match") === "exact")
+        && profileRequests.some((url) => url.searchParams.get("limit") === "25" && url.searchParams.get("page") === "1")
+        && await page.getByText(/Source count and pagination use the same exact predicate/i).isVisible()
+        && await page.getByText("Showing 1 of 1", { exact: false }).first().isVisible(),
+      observed_requests: profileRequests.map((url) => url.href),
+    });
+
+    await page.goto(`${origin}mandates/`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Records", exact: true }).click();
+    checks.push({
+      id: "mandate_source_filters_visible",
+      ok: await page.getByTestId("mandates-record-type-filter").isVisible()
+        && await page.getByTestId("mandates-country-filter").isVisible()
+        && await page.getByTestId("mandates-region-filter").isVisible()
+        && await page.getByTestId("mandates-postedFrom-filter").isVisible()
+        && await page.getByTestId("mandates-dueTo-filter").isVisible()
+        && await page.getByText("There is no undefined Period filter.", { exact: false }).isVisible(),
+    });
+    const mandateRequestMarker = requests.length;
+    await page.getByTestId("source-table-filter").fill("energy transition");
+    await page.getByTestId("mandates-record-type-filter").selectOption("opportunity");
+    await page.getByTestId("mandates-country-filter").fill("United States");
+    await page.getByTestId("mandates-region-filter").fill("North America");
+    await page.getByTestId("mandates-postedFrom-filter").fill("2026-08-01");
+    await page.getByTestId("mandates-postedTo-filter").fill("2026-08-31");
+    await page.getByTestId("mandates-dueFrom-filter").fill("2026-09-01");
+    await page.getByTestId("mandates-dueTo-filter").fill("2026-10-31");
+    await page.getByTestId("mandates-apply-filters").click();
+    await page.waitForTimeout(750);
+    const mandateRequests = requests.slice(mandateRequestMarker)
+      .map((href) => new URL(href))
+      .filter((url) => url.pathname === "/api/live-opportunities/v1");
+    const composedMandateRequest = mandateRequests.find((url) =>
+      url.searchParams.get("record_type") === "opportunity"
+      && url.searchParams.get("q") === "energy transition"
+      && url.searchParams.get("country") === "United States"
+      && url.searchParams.get("region") === "North America"
+      && url.searchParams.get("posted_from") === "2026-08-01"
+      && url.searchParams.get("posted_to") === "2026-08-31"
+      && url.searchParams.get("due_from") === "2026-09-01"
+      && url.searchParams.get("due_to") === "2026-10-31");
+    checks.push({
+      id: "mandate_filters_drive_composed_source_request",
+      ok: Boolean(composedMandateRequest),
+      observed_requests: mandateRequests.map((url) => url.href),
+    });
+    await page.getByTestId("mandates-dueFrom-filter").fill("2026-11-01");
+    await page.getByTestId("mandates-dueTo-filter").fill("2026-10-31");
+    await page.getByTestId("mandates-apply-filters").click();
+    checks.push({
+      id: "mandate_reversed_date_validation_visible",
+      ok: await page.getByTestId("mandates-filter-help").getByText("Due from cannot be after due to.", { exact: true }).isVisible(),
+    });
+
+    await page.goto(`${origin}allocators/`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Records", exact: true }).click();
+    checks.push({
+      id: "allocator_source_filters_visible",
+      ok: await page.getByTestId("allocator-country-filter").isVisible()
+        && await page.getByTestId("allocator-region-filter").isVisible()
+        && await page.getByTestId("allocator-entityType-filter").isVisible()
+        && await page.getByTestId("allocator-aumMin-filter").isVisible()
+        && await page.getByTestId("allocator-aumMax-filter").isVisible()
+        && await page.getByText(/AUM bounds exclude non-USD and undisclosed AUM; no FX conversion is applied/i).isVisible(),
+    });
+    const allocatorRequestMarker = requests.length;
+    await page.getByTestId("source-table-filter").fill("public pension");
+    await page.getByTestId("allocator-country-filter").fill("United States");
+    await page.getByTestId("allocator-region-filter").fill("North America");
+    await page.getByTestId("allocator-entityType-filter").fill("Public Pension");
+    await page.getByTestId("allocator-aumMin-filter").fill("1000000");
+    await page.getByTestId("allocator-aumMax-filter").fill("5000000");
+    await page.getByTestId("allocator-apply-exact-filters").click();
+    await page.waitForTimeout(750);
+    const allocatorRequests = requests.slice(allocatorRequestMarker)
+      .map((href) => new URL(href))
+      .filter((url) => url.pathname === "/api/allocator-activity/v1");
+    const composedAllocatorRequest = allocatorRequests.find((url) =>
+      url.searchParams.get("q") === "public pension"
+      && url.searchParams.get("country") === "United States"
+      && url.searchParams.get("region") === "North America"
+      && url.searchParams.get("entity_type") === "Public Pension"
+      && url.searchParams.get("aum_min") === "1000000"
+      && url.searchParams.get("aum_max") === "5000000");
+    checks.push({
+      id: "allocator_filters_drive_composed_source_request",
+      ok: Boolean(composedAllocatorRequest),
+      observed_requests: allocatorRequests.map((url) => url.href),
+    });
+    await page.getByTestId("allocator-aumMin-filter").fill("6000000");
+    await page.getByTestId("allocator-aumMax-filter").fill("5000000");
+    await page.getByTestId("allocator-apply-exact-filters").click();
+    checks.push({
+      id: "allocator_reversed_aum_validation_visible",
+      ok: await page.getByTestId("allocator-filter-help").getByText("Minimum AUM cannot exceed maximum AUM.", { exact: true }).isVisible(),
     });
 
     const scenarios = [

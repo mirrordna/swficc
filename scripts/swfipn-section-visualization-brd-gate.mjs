@@ -10,16 +10,31 @@ const receiptPath = path.join(outputDir, "swfipn-section-visualization-brd-gate-
 fs.mkdirSync(outputDir, { recursive: true });
 
 const ROUTES = [
-  { id: "entities", route: "/profiles/", selector: "[data-brd-section-visualization='profiles']", required: ["Institution Data Visualization", "Records by Category", "Records by Geography", "Highlighted SWFI Pages"] },
-  { id: "people", route: "/people/", selector: "[data-brd-section-visualization='people']", required: ["People Data Visualization", "Records by Category", "Records by Geography", "Highlighted SWFI Pages"] },
+  {
+    id: "entities",
+    route: "/profiles/",
+    selector: "[data-brd-section-visualization='profiles']",
+    required: ["Institution Data Visualization", "Highlighted SWFI Pages"],
+    requiredAny: [
+      ["All records by Entity Type", "Records by Category (current page)"],
+      ["All records by Country", "Records by Geography (current page)"],
+    ],
+  },
+  {
+    id: "people",
+    route: "/people/",
+    selector: "[data-brd-section-visualization='people']",
+    required: ["People Data Visualization", "Highlighted SWFI Pages"],
+    requiredAny: [["All records by Country", "Records by Geography (current page)"]],
+  },
   { id: "transactions", route: "/transactions/", selector: "[data-brd-section-visualization='transactions']", required: ["Transaction Data Visualization", "Records by Category", "Records by Geography", "Highlighted SWFI Pages"] },
   { id: "deals", route: "/deals/", selector: "[data-brd-section-visualization='deals']", required: ["Transaction Data Visualization", "Records by Category", "Records by Geography", "Highlighted SWFI Pages"] },
-  { id: "compass", route: "/mandates/", selector: "[data-brd-compass-visualization='true']", required: ["Compass RFP Analytics", "RFPs by Investment Type", "RFPs by Region", "RFPs Posted Per Month"] },
+  { id: "compass", route: "/mandates/", selector: "[data-brd-compass-visualization='true']", required: ["Compass RFP / Opportunity Analytics", "Open records by source type", "Open records by investment type", "Open records by region", "Open records posted per month"] },
   { id: "reports", route: "/reports/", selector: "[data-brd-reports-visualization='true']", required: ["Reports / League Tables Visualization", "Reports by Type", "Market Activity by Sector", "League Tables"] },
 ];
 
 async function main() {
-  const browser = await chromium.launch({ channel: "chrome", headless: true });
+  const browser = await chromium.launch({ channel: "chrome", headless: true }).catch(() => chromium.launch({ headless: true }));
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const consoleErrors = [];
   page.on("console", (msg) => {
@@ -82,30 +97,40 @@ async function checkRoute(page, spec) {
   await page.waitForFunction((selector) => {
     const panel = document.querySelector(selector);
     if (!panel) return false;
-    return panel.querySelectorAll("a[href*='filter=']").length > 0 || panel.querySelectorAll("svg").length > 0;
+    return panel.querySelectorAll("a[href*='filter='],a[href*='record_type='],a[href*='investment_type='],a[href*='entity_type='],a[href*='country='],a[href*='region=']").length > 0
+      || panel.querySelectorAll("svg").length > 0
+      || panel.querySelectorAll("[data-display-type='chart'],[data-display-type='ranking']").length > 0;
   }, spec.selector, { timeout: 30_000 }).catch(() => null);
   await page.screenshot({ path: screenshot, fullPage: true });
 
   const body = await page.locator("body").innerText();
   const panelText = await page.locator(spec.selector).innerText({ timeout: 10_000 }).catch(() => "");
   const missing = spec.required.filter((item) => !body.includes(item));
+  const missingAlternatives = (spec.requiredAny || [])
+    .filter((alternatives) => !alternatives.some((item) => body.includes(item)))
+    .map((alternatives) => alternatives.join(" OR "));
   // Dashboard 2.0 P05: exports are sign-in gated — the gate asserts the
   // sign-in export link instead of public download buttons.
   const signinExportLinks = await page.locator(`${spec.selector} a`, { hasText: "Sign in on SWFI to export" }).count();
-  const { chartFilterLinks, svgCount } = await page.evaluate((selector) => {
+  const exportCsvButtons = await page.locator(`${spec.selector} button`, { hasText: /export csv/i }).count();
+  const exportPngButtons = await page.locator(`${spec.selector} button`, { hasText: /export png/i }).count();
+  const { chartFilterLinks, svgCount, contractChartCount } = await page.evaluate((selector) => {
     const panel = document.querySelector(selector);
     return {
-      chartFilterLinks: panel?.querySelectorAll("a[href*='filter=']").length || 0,
+      chartFilterLinks: panel?.querySelectorAll("a[href*='filter='],a[href*='record_type='],a[href*='investment_type='],a[href*='entity_type='],a[href*='country='],a[href*='region=']").length || 0,
       svgCount: panel?.querySelectorAll("svg").length || 0,
+      contractChartCount: panel?.querySelectorAll("[data-display-type='chart'],[data-display-type='ranking']").length || 0,
     };
   }, spec.selector);
   const internalLeaks = ["Active Mirror", "source_gap", "backend_http", "undefined", "null", "Loaded Rows", "Top Loaded Records"].filter((needle) => panelText.includes(needle));
 
   if ((response?.status() || 0) >= 400) failures.push(`http_${response?.status() || 0}`);
-  if (missing.length) failures.push(`missing_text:${missing.join("|")}`);
+  if (missing.length || missingAlternatives.length) failures.push(`missing_text:${[...missing, ...missingAlternatives].join("|")}`);
   if (signinExportLinks < 1) failures.push("missing_signin_gated_export");
-  if (chartFilterLinks < 1) failures.push("missing_clickable_chart_filters");
-  if (chartFilterLinks < 1 && svgCount < 1) failures.push("missing_chart_visual");
+  if (exportCsvButtons > 0) failures.push("public_csv_export_button_present");
+  if (exportPngButtons > 0) failures.push("public_png_export_button_present");
+  if (chartFilterLinks < 1 && contractChartCount < 1) failures.push("missing_clickable_or_declared_chart");
+  if (chartFilterLinks < 1 && svgCount < 1 && contractChartCount < 1) failures.push("missing_chart_visual");
   if (internalLeaks.length) failures.push(`internal_leaks:${internalLeaks.join("|")}`);
 
   return {
@@ -113,11 +138,12 @@ async function checkRoute(page, spec) {
     route: spec.route,
     url,
     status: failures.length ? "fail" : "pass",
-    missing,
+    missing: [...missing, ...missingAlternatives],
     chart_filter_links: chartFilterLinks,
     export_csv_buttons: exportCsvButtons,
     export_png_buttons: exportPngButtons,
     svg_count: svgCount,
+    contract_chart_count: contractChartCount,
     screenshot,
     failures,
   };
