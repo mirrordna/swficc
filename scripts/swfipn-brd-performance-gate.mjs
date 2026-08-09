@@ -72,13 +72,24 @@ async function main() {
     }
     const domContentLoadedMs = Date.now() - started;
     const apiSettlements = await Promise.allSettled(responseWaits);
+    let primaryUsableMs = null;
+    if (route.id === "home") {
+      await page.waitForFunction(() => {
+        const body = document.body.innerText || "";
+        const sourceBackedLink = document.querySelector('a[data-source-state="on-file"], a[data-record-link="true"]');
+        const primaryReady = document.querySelector('[data-dashboard-primary-ready="true"]');
+        return !/Source not verified|temporarily unavailable/i.test(body) && Boolean(primaryReady && sourceBackedLink);
+      }, null, { timeout: 120_000 }).then(() => {
+        primaryUsableMs = Date.now() - started;
+      }).catch(() => null);
+    }
     let sourceBackedReady = false;
     let sourceBackedError = null;
     try {
       await page.waitForFunction((routeId) => {
         const body = document.body.innerText || "";
         const sourceBackedLink = document.querySelector('a[data-source-state="on-file"], a[data-record-link="true"]');
-        const homeReady = document.querySelector('[data-dashboard-primary-ready="true"]');
+        const homeReady = document.querySelector('[data-dashboard-ready="true"]');
         return !/Source not verified|temporarily unavailable/i.test(body)
           && (routeId === "home" ? Boolean(homeReady && sourceBackedLink) : Boolean(sourceBackedLink));
       }, route.id, { timeout: 120_000 });
@@ -107,6 +118,7 @@ async function main() {
       url: new URL(route.path, origin).href,
       status: routeFailures.length ? "fail" : "pass",
       dom_content_loaded_ms: domContentLoadedMs,
+      primary_usable_source_backed_ms: primaryUsableMs,
       usable_source_backed_ms: usableMs,
       data_after_dom_ms: dataMs,
       required_api_max_ms: apiMaxMs,
@@ -131,6 +143,7 @@ async function main() {
       routes_checked: routeTimings.length,
       routes_passed: routeTimings.filter((route) => route.status === "pass").length,
       dashboard_tti_ms: routeTimings[0]?.usable_source_backed_ms ?? null,
+      dashboard_primary_tti_ms: routeTimings[0]?.primary_usable_source_backed_ms ?? null,
       dashboard_tti_target_ms: ttiTargetMs,
       dashboard_data_ms: routeTimings[0]?.data_after_dom_ms ?? null,
       dashboard_data_target_ms: dataTargetMs,
@@ -141,6 +154,7 @@ async function main() {
     },
     caveats: [
       "Every checked route must reach a source-backed usable state and receive each required live API response within the blocking targets; bundled fallback content alone cannot pass.",
+      "The homepage primary-ready timing is diagnostic only; a homepage PASS still requires the full dashboard-ready contract, including secondary source panels.",
     ],
     routes: routeTimings,
     api_responses: apiResponses

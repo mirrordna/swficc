@@ -2011,8 +2011,8 @@ function brdNewestRows(
     };
   }
   const visibleRfps = tab === "opportunities"
-    ? rfpRows.filter((row) => /^(opportunity|mandate)$/i.test(brdText(row.record_type || row.opportunity_type, "")))
-    : rfpRows.filter((row) => /^rfp$/i.test(brdText(row.record_type || row.opportunity_type, "")));
+    ? rfpRows.filter((row) => compassRecordType(row) === "opportunity")
+    : rfpRows.filter((row) => compassRecordType(row) === "rfp");
   return {
     headers: ["Name", "Institution", "Deadline", "Action"],
     rows: visibleRfps.map((row) => [
@@ -2022,6 +2022,13 @@ function brdNewestRows(
       "Review mandate",
     ]),
   };
+}
+
+function compassRecordType(row: Record<string, unknown>): "rfp" | "opportunity" | "" {
+  const value = brdText(row.type || row.record_type || row.opportunity_type, "").trim().toLowerCase();
+  if (value === "rfp") return "rfp";
+  if (!value || value === "not disclosed") return "";
+  return "opportunity";
 }
 
 function brdCompassTopRows(rfpRows: Record<string, unknown>[]): Cell[][] {

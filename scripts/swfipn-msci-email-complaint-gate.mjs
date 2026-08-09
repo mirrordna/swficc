@@ -26,6 +26,7 @@ const sourceList = fs.readFileSync(path.join(repoRoot, "src/components/SourceLis
 const aumContract = fs.readFileSync(path.join(repoRoot, "src/lib/aumRankingContract.ts"), "utf8");
 const comparisonContract = fs.readFileSync(path.join(repoRoot, "src/lib/comparisonSourceContract.ts"), "utf8");
 const dashboardContractGate = fs.readFileSync(path.join(repoRoot, "scripts/swfipn-dashboard20-e2e-contract-gate.mjs"), "utf8");
+const performanceGate = fs.readFileSync(path.join(repoRoot, "scripts/swfipn-brd-performance-gate.mjs"), "utf8");
 
 const mandateFilters = {
   ...emptyMandateFilters(),
@@ -72,8 +73,19 @@ const checks = [
       && pageSource.includes("loadDashboardPackets((key, packet) =>")
       && pageSource.includes("controller.abort()")
       && pageSource.includes("{ attempts: dashboardAttempts(key), signal }")
+      && performanceGate.includes("[data-dashboard-ready=\"true\"]")
+      && performanceGate.includes("dashboard_primary_tti_ms")
       && !pageSource.includes('mandates: "/api/live-mandates/v1?limit=25&page=1"'),
-    expected: "The four source packets needed for first use load before secondary analytics, navigation aborts the superseded fan-out, and the governed combined RFP/Opportunity packet replaces the redundant legacy mandate fetch.",
+    expected: "The four source packets needed for first use load before secondary analytics, navigation aborts the superseded fan-out, the governed combined RFP/Opportunity packet replaces the redundant legacy mandate fetch, and performance still requires full dashboard readiness.",
+  },
+  {
+    id: "home_combined_compass_rows_use_canonical_type_partition",
+    ok: pageSource.includes('function compassRecordType(row: Record<string, unknown>): "rfp" | "opportunity" | ""')
+      && pageSource.includes("row.type || row.record_type || row.opportunity_type")
+      && pageSource.includes('if (value === "rfp") return "rfp"')
+      && pageSource.includes('if (!value || value === "not disclosed") return ""')
+      && pageSource.includes('return "opportunity"'),
+    expected: "Homepage RFP and Opportunity tabs give canonical row.type precedence over legacy aliases: exact RFP versus every disclosed non-RFP source type, while excluding undisclosed values.",
   },
   {
     id: "canonical_entity_type_is_exact_source_filter",
@@ -172,6 +184,7 @@ const receipt = {
     "Top Ranked AUM visible source binding",
     "Home KPI visible and executable semantics",
     "Home source-load priority and combined RFP/Opportunity request reuse",
+    "Home combined Compass packet canonical RFP/Opportunity partition",
     "Canonical exact entity-type filter/count/pagination contract",
     "RFP versus Opportunity, exact geography, posted/due date, and text-query contracts",
     "Allocator exact geography/entity-type and disclosed-USD AUM contracts",

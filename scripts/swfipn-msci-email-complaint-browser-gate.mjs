@@ -152,6 +152,37 @@ async function main() {
         });
         return;
       }
+      if (parsed.pathname === "/api/live-opportunities/v1") {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(packet([
+            {
+              title: "Source-backed RFP partition record",
+              type: "RFP",
+              record_type: "Not disclosed",
+              institution: "RFP institution",
+              due_at: "2026-09-15",
+              source_url: "https://www.swfi.com/v1/rfps/101",
+            },
+            {
+              title: "Source-backed Opportunity partition record",
+              type: "Opportunity",
+              institution: "Opportunity institution",
+              due_at: "2026-09-30",
+              source_url: "https://www.swfi.com/v1/opportunities/202",
+            },
+            {
+              title: "Source-backed non-RFP partition record",
+              type: "Manager Search",
+              institution: "Manager search institution",
+              due_at: "2026-10-15",
+              source_url: "https://www.swfi.com/v1/opportunities/303",
+            },
+          ])),
+        });
+        return;
+      }
       if (parsed.pathname === "/api/source-intelligence/news/v1") {
         const query = parsed.searchParams.get("q") || "";
         const newsRows = query === "HKIC"
@@ -174,6 +205,21 @@ async function main() {
       id: "home_kpi_semantics_visible_and_executable",
       ok: await page.locator("[data-display-id^='home-kpi-']").count() > 0
         && await page.getByText(/Sum of comparable USD AUM for the currently loaded top-ranked active sovereign wealth funds/i).isVisible(),
+    });
+    await page.getByRole("button", { name: "RFPs", exact: true }).click();
+    const rfpPartitionVisible = await page.getByRole("link", { name: "Source-backed RFP partition record", exact: true }).isVisible();
+    await page.getByRole("button", { name: "Opportunities", exact: true }).click();
+    const opportunityPartitionVisible = await page.getByRole("link", { name: "Source-backed Opportunity partition record", exact: true }).isVisible();
+    const nonRfpPartitionVisible = await page.getByRole("link", { name: "Source-backed non-RFP partition record", exact: true }).isVisible();
+    checks.push({
+      id: "home_combined_compass_packet_partitions_canonical_type",
+      ok: rfpPartitionVisible && opportunityPartitionVisible && nonRfpPartitionVisible,
+      observed: {
+        rfp_partition_visible: rfpPartitionVisible,
+        canonical_type_overrode_stale_alias: rfpPartitionVisible,
+        opportunity_partition_visible: opportunityPartitionVisible,
+        disclosed_non_rfp_partition_visible: nonRfpPartitionVisible,
+      },
     });
 
     await page.goto(`${origin}profiles/`, { waitUntil: "networkidle" });
