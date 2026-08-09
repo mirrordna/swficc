@@ -50,6 +50,8 @@
     "brd:search:gate": "node scripts/swfipn-global-search-brd-gate.mjs",
     "brd:search:gate:public": "SWFIPN_ORIGIN=https://swfipn.activemirror.ai/swficc/ SWFIPN_SEARCH_PERFORMANCE_BLOCKING=0 node scripts/swfipn-global-search-brd-gate.mjs",
     "brd:search:relevance": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/swfipn-search-relevance-regression.mjs",
+    "msci:email-complaint:gate": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/swfipn-msci-email-complaint-gate.mjs",
+    "msci:email-complaint:browser": "node scripts/swfipn-msci-email-complaint-browser-gate.mjs",
     "search:category:gate": "node scripts/swfipn-search-category-gate.mjs",
     "search:category:gate:public": "SWFIPN_ORIGIN=https://dashboard.swfi.com/swficc/ node scripts/swfipn-search-category-gate.mjs",
     "brd:performance:gate": "node scripts/swfipn-brd-performance-gate.mjs",

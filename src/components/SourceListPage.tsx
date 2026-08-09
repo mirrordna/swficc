@@ -1277,7 +1277,7 @@ export default function SourceListPage({ kind }: { kind: Kind }) {
                     ? (packetNumber(packet, ["count", "row_count"]) ?? 0) > 0
                       ? "That page is outside the verified match range. Returning to the last available page…"
                       : /\s/.test(serverFilterTerm.trim())
-                        ? "The source returned zero matches, but multi-word news search is a known upstream gap and does not prove that no relevant article exists. Try one distinctive term."
+                        ? "The source returned zero matches. Try the institution acronym or one distinctive term."
                         : "No verified news or articles match the active query and date filters."
                     : "No verified entities match the active filters."
               : isLoading

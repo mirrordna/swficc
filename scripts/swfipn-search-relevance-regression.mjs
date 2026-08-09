@@ -13,6 +13,7 @@ fs.mkdirSync(outputDir, { recursive: true });
 
 const {
   businessSearchQueryVariants,
+  rankSearchRecordsAcrossQueryVariants,
   rankSearchRecords,
   searchSubjectQuery,
   verifiedCanonicalSearchName,
@@ -64,6 +65,32 @@ const checks = [
     query: "PIF",
     actual: businessSearchQueryVariants("PIF"),
     expected: ["PIF", "Public Investment Fund"],
+  },
+  {
+    id: "query_variant_adia_full_name_includes_acronym",
+    query: "Abu Dhabi Investment Authority",
+    actual: businessSearchQueryVariants("Abu Dhabi Investment Authority"),
+    expected: ["Abu Dhabi Investment Authority", "ADIA"],
+  },
+  {
+    id: "query_variant_hkic",
+    query: "HKIC",
+    actual: businessSearchQueryVariants("HKIC"),
+    expected: ["HKIC", "Hong Kong Investment Corporation"],
+  },
+  {
+    id: "query_variant_hkic_full_name_includes_acronym",
+    query: "Hong Kong Investment Corporation",
+    actual: businessSearchQueryVariants("Hong Kong Investment Corporation"),
+    expected: ["Hong Kong Investment Corporation", "HKIC"],
+  },
+  {
+    id: "hkic_full_name_keeps_acronym_news",
+    query: "Hong Kong Investment Corporation",
+    actual: rankSearchRecordsAcrossQueryVariants([
+      { id: "news-1", title: "HKIC expands its institutional investment program" },
+    ], "Hong Kong Investment Corporation", "news").map((row) => row.title),
+    expected: ["HKIC expands its institutional investment program"],
   },
   {
     id: "verified_alias_beats_exact_name_collision",

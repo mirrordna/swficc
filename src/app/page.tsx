@@ -745,7 +745,7 @@ function BrdCommandCenterSidebar({ topRows, rankingState, onRetry }: { topRows: 
         <div className="mb-2 flex items-center justify-between text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#4A5665]">
           {/* Honest label 2026-07-06: these are the top-AUM ranked rows, not a
               user-curated watchlist (this preview has no accounts). */}
-          <span>Top by AUM</span>
+          <span>Top Ranked AUM</span>
           <span className="text-[#7B8996]">AUM</span>
         </div>
         <div className="grid gap-2">
