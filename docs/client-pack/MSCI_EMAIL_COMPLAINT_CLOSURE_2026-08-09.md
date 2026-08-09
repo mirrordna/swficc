@@ -36,4 +36,4 @@ The release is not accepted merely because generic dashboard or API tests pass. 
 - This candidate does not change production.
 - Source data may legitimately contain no people or news row for an institution. The live gate must distinguish a genuine source-empty result from an alias/query failure and preserve that evidence.
 - The current production release was previously recorded from a dirty worktree, so a git SHA alone does not bind its full deployed source. A clean immutable release binding is required at the next approved deployment.
-- The current high-threshold dependency audit reports 14 findings (two moderate, 12 high, zero critical). They are not silently upgraded in this complaint fix; they remain separate security hardening debt requiring compatible, tested upgrades.
+- The first exact-head high-threshold dependency audit failed with 14 findings (two moderate, 12 high, zero critical). The candidate must preserve that failed evidence and use compatible pinned transitive updates plus a fresh zero-high audit before it can advance.
