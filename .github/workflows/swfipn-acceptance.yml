@@ -33,6 +33,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Source-bound dynamic total contract
+        run: npm run test:source-total-contract
+
       - name: Build
         run: npm run build
 

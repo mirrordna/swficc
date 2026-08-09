@@ -29,6 +29,7 @@ The release is not accepted merely because generic dashboard or API tests pass. 
 - Independently reviewed exact source head.
 - Staging run against real source data proving non-empty, correctly categorized ADIA and HKIC entity, people, and news results where those source records exist.
 - Separate backend `/v1/entities` staging receipt for the MSCI field contract.
+- For time-varying open-opportunity totals, a fresh fact packet with an explicit integer count, an exact UI/API total match, the expected source collection, and declared complete source coverage. A stale hard-coded minimum is not completeness proof.
 - Explicit production approval, rollback-safe deployment, then fresh production browser/API receipts. Local or staging evidence must never be relabeled as production proof.
 
 ## Bad news and remaining risk
@@ -37,3 +38,4 @@ The release is not accepted merely because generic dashboard or API tests pass. 
 - Source data may legitimately contain no people or news row for an institution. The live gate must distinguish a genuine source-empty result from an alias/query failure and preserve that evidence.
 - The current production release was previously recorded from a dirty worktree, so a git SHA alone does not bind its full deployed source. A clean immutable release binding is required at the next approved deployment.
 - The first exact-head high-threshold dependency audit failed with 14 findings (two moderate, 12 high, zero critical). The candidate must preserve that failed evidence and use compatible pinned transitive updates plus a fresh zero-high audit before it can advance.
+- GitHub acceptance run 31308313513 failed because production rendered 23 open opportunities while the prior gate assumed at least 30. The observation proves only that the UI rendered 23 and the production packet exposed 23; it does not prove canonical completeness. The failed run remains evidence. The replacement gate fails closed unless the backend declares complete direct-query coverage and the rendered total exactly matches that source packet.
